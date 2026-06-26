@@ -1,6 +1,6 @@
 services:
   lightningcounter:
-    image: ghcr.io/sembauke/ligthningcounter:latest
+    image: ghcr.io/sembauke/lightning-counter:latest
     restart: unless-stopped
     ports:
       - "3000:3000"
