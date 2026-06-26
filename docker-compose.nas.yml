@@ -2,13 +2,23 @@ services:
   lightningcounter:
     image: ghcr.io/sembauke/lightning-counter:latest
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     volumes:
-      - ./data:/data
+      - /volume1/docker/lightning-counter-data:/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/lib/tailscale/certs:/certs:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
