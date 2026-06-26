@@ -1,4 +1,0 @@
-nassem.tail018382.ts.net {
-	tls /certs/nassem.tail018382.ts.net.crt /certs/nassem.tail018382.ts.net.key
-	reverse_proxy lightningcounter:3000
-}
