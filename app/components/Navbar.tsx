@@ -14,13 +14,13 @@ export default function Navbar() {
       </div>
       <div className="navbar-tabs">
         <Link href="/" className={`nav-tab${path === '/' ? ' active' : ''}`}>
-          Map
+          Strike Map
         </Link>
         <Link href="/countries" className={`nav-tab${path === '/countries' ? ' active' : ''}`}>
-          By Country
+          Strikes per Country
         </Link>
         <Link href="/stats" className={`nav-tab${path === '/stats' ? ' active' : ''}`}>
-          Stats
+          Strike Archive
         </Link>
       </div>
     </nav>

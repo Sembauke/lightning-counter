@@ -12,7 +12,7 @@ export interface Strike {
 
 export type CountryCounts = Record<string, number>;
 
-const MAX_STRIKES = 5000;
+const MAX_STRIKES = 20000;
 const STRIKE_LIFETIME_MS = 30 * 60 * 1000;
 
 export function useBlitzortung() {

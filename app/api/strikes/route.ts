@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks } from '../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -9,8 +9,14 @@ export const runtime = 'nodejs';
 const { total, countries } = loadCounters();
 let serverTotal = total;
 const serverCountryCounts: Record<string, number> = { ...countries };
-// Sync to globalThis so server.mjs WebSocket can broadcast the total
 (globalThis as any)._serverTotal = serverTotal;
+
+// Today tracking
+function todayDate() { return new Date().toISOString().slice(0, 10); }
+let currentDay = todayDate();
+let todayCounts: Record<string, number> = { ...loadDailyStrikes(currentDay) };
+(globalThis as any)._todayCounts = todayCounts;
+(globalThis as any)._todayDate = currentDay;
 
 // Ring buffer of recent strikes for map history on reconnect (last 30 min, max 5000)
 interface RecentStrike { lat: number; lon: number; cc: string | null; time: number }
@@ -26,7 +32,10 @@ setInterval(() => {
 
 // Flush to SQLite every 30 seconds
 setInterval(() => {
-  try { saveCounters(serverTotal, serverCountryCounts); } catch (err) { console.error('[db] flush failed:', err); }
+  try {
+    saveCounters(serverTotal, serverCountryCounts);
+    saveDailyAndPeaks(currentDay, todayCounts);
+  } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 
 export async function GET() {
@@ -45,7 +54,6 @@ export async function GET() {
       heartbeatTimer = setInterval(() => send(': heartbeat\n\n'), 25_000);
 
       send(`event: init\ndata: ${JSON.stringify({ total: serverTotal, countries: serverCountryCounts })}\n\n`);
-      // Send map history so dots reappear after a page refresh
       if (recentStrikes.length > 0) {
         send(`event: history\ndata: ${JSON.stringify(recentStrikes)}\n\n`);
       }
@@ -65,11 +73,24 @@ export async function GET() {
         try {
           const d = JSON.parse(payload.toString()) as { lat: number; lon: number };
           if (typeof d.lat === 'number' && typeof d.lon === 'number') {
+            // Day rollover check
+            const today = todayDate();
+            if (today !== currentDay) {
+              saveDailyAndPeaks(currentDay, todayCounts);
+              todayCounts = {};
+              currentDay = today;
+              (globalThis as any)._todayDate = currentDay;
+              (globalThis as any)._todayCounts = todayCounts;
+            }
+
             let cc: string | null = null;
             try { cc = getCountryCode(d.lat, d.lon); } catch { /* non-fatal */ }
             serverTotal++;
             (globalThis as any)._serverTotal = serverTotal;
-            if (cc) serverCountryCounts[cc] = (serverCountryCounts[cc] ?? 0) + 1;
+            if (cc) {
+              serverCountryCounts[cc] = (serverCountryCounts[cc] ?? 0) + 1;
+              todayCounts[cc] = (todayCounts[cc] ?? 0) + 1;
+            }
             recentStrikes.push({ lat: d.lat, lon: d.lon, cc, time: Date.now() });
             if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
             send(`data: ${JSON.stringify({ lat: d.lat, lon: d.lon, cc })}\n\n`);
