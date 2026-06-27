@@ -34,7 +34,6 @@ export default function CountriesPage() {
     <div className="country-list-page">
       <div className="country-list-header">
         <span className="country-list-title">{t('title')}</span>
-        <span className="country-list-meta">{t('totalStrikes', { count: fmt(totalCount) })}</span>
       </div>
 
       <div className="country-list-body">
