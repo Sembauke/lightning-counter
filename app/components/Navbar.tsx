@@ -69,13 +69,13 @@ export default function Navbar() {
         </div>
 
         {/* Satellite toggle */}
-        <button
-          className={`satellite-btn${satellite ? ' active' : ''}`}
-          onClick={toggleSatellite}
-          aria-label="Toggle satellite view"
-        >
-          🛰 Satellite
-        </button>
+        <label className="satellite-switch" aria-label="Toggle satellite view">
+          <input type="checkbox" checked={satellite} onChange={toggleSatellite} />
+          <span className="satellite-track">
+            <span className="satellite-thumb" />
+          </span>
+          <span className="satellite-label">Satellite</span>
+        </label>
 
         {/* Desktop count — right side */}
         <div className="navbar-count">

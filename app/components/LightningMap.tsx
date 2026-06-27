@@ -47,6 +47,9 @@ const TILE_SAT = {
 
 export default function LightningMap({ strikes, satellite }: { strikes: Strike[]; satellite: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const satelliteRef = useRef(satellite);
+  satelliteRef.current = satellite;
+
   const stateRef = useRef<MapState>({
     map: null, layer: null, renderer: null, tileLayer: null,
     markers: new Map(), processed: new Set(),
@@ -69,7 +72,12 @@ export default function LightningMap({ strikes, satellite }: { strikes: Strike[]
       });
       map.zoomControl.setPosition('bottomright');
 
-      s.tileLayer = L.tileLayer(TILE_DARK.url, TILE_DARK.options).addTo(map);
+      const initTile = satelliteRef.current ? TILE_SAT : TILE_DARK;
+      s.tileLayer = L.tileLayer(initTile.url, initTile.options).addTo(map);
+
+      if (satelliteRef.current) {
+        (map.getPanes().tilePane as HTMLElement).style.filter = 'brightness(0.55)';
+      }
 
       s.renderer = L.canvas({ padding: 0.5 });
       s.layer = L.layerGroup().addTo(map);
@@ -173,6 +181,7 @@ export default function LightningMap({ strikes, satellite }: { strikes: Strike[]
     const s = stateRef.current;
     if (!s.ready || !s.tileLayer) return;
     s.tileLayer.setUrl(satellite ? TILE_SAT.url : TILE_DARK.url);
+    (s.map.getPanes().tilePane as HTMLElement).style.filter = satellite ? 'brightness(0.55)' : '';
   }, [satellite]);
 
   useEffect(() => {

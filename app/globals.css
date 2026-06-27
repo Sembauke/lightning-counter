@@ -68,30 +68,56 @@ html, body {
   text-shadow: 0 0 8px rgba(255,220,0,0.5);
 }
 
-/* ── Satellite toggle button ── */
-.satellite-btn {
+/* ── Satellite toggle switch ── */
+.satellite-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+.satellite-switch input {
+  display: none;
+}
+.satellite-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+.satellite-switch input:checked + .satellite-track {
+  background: rgba(255,220,0,0.25);
+  border-color: #ffe040;
+}
+.satellite-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.5);
+  transition: transform 0.2s, background 0.2s;
+}
+.satellite-switch input:checked + .satellite-track .satellite-thumb {
+  transform: translateX(16px);
+  background: #ffe040;
+}
+.satellite-label {
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.75);
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 8px;
-  padding: 0.35rem 0.8rem;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  color: rgba(255,255,255,0.6);
+  transition: color 0.2s;
 }
-.satellite-btn:hover {
-  color: #fff;
-  background: rgba(255,255,255,0.14);
-  border-color: rgba(255,255,255,0.3);
-}
-.satellite-btn.active {
+.satellite-switch:has(input:checked) .satellite-label {
   color: #ffe040;
-  background: rgba(255,220,0,0.15);
-  border-color: rgba(255,220,0,0.5);
 }
 
 /* ── Navbar count (desktop, right side) ── */
