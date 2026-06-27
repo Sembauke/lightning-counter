@@ -38,21 +38,26 @@ function animateFlash(L: any, layer: any, svgRenderer: any, lat: number, lon: nu
   const ring = L.circleMarker([lat, lon], {
     radius: 3,
     color: '#ffffff',
-    weight: 2,
+    weight: 1.5,
     fillOpacity: 0,
     opacity: 0.9,
     renderer: svgRenderer,
   }).addTo(layer);
 
-  let frame = 0;
-  const totalFrames = 8;
+  const duration = 4000; // ~4 s, fades like rolling thunder
+  const start = performance.now();
 
-  const tick = () => {
-    frame++;
-    const p = frame / totalFrames;
+  const tick = (now: number) => {
+    const p = Math.min((now - start) / duration, 1);
     if (p >= 1) { layer.removeLayer(ring); return; }
-    ring.setRadius(3 + p * 28);
-    ring.setStyle({ opacity: (1 - p) * 0.9 });
+
+    // Fast burst then slow drift — sound wave expanding outward
+    const expand = 1 - Math.pow(1 - p, 0.35);
+    ring.setRadius(3 + expand * 44);
+
+    // Inverse-square-ish fade — loud up close, inaudible at distance
+    ring.setStyle({ opacity: Math.pow(1 - p, 2) * 0.9 });
+
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
