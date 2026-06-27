@@ -14,6 +14,7 @@ const LOCALE_FLAGS: Record<Locale, string> = { en: 'gb', nl: 'nl', de: 'de', fr:
 function useNavCount() {
   const [display, setDisplay] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [viewers, setViewers] = useState(0);
   const targetRef = useRef(0);
   const seededRef = useRef(false);
 
@@ -30,6 +31,7 @@ function useNavCount() {
             setDisplay(d.total);
           }
         }
+        if (typeof d.viewers === 'number') setViewers(d.viewers);
       } catch { /* ignore */ }
     };
     ws.onopen  = () => setConnected(true);
@@ -50,16 +52,22 @@ function useNavCount() {
     return () => clearInterval(id);
   }, []);
 
-  return { display, connected };
+  return { display, connected, viewers };
 }
 
-function StrikeCount({ display, t }: { display: number; connected: boolean; t: ReturnType<typeof useTranslations> }) {
+function StrikeCount({ display, viewers, t }: { display: number; connected: boolean; viewers: number; t: ReturnType<typeof useTranslations> }) {
   return (
     <>
       <span className="navbar-count-num">
         <CountUp preserveValue end={display} separator="," duration={0.1} />
       </span>
       <span className="navbar-count-label">{t('strikes')}</span>
+      {viewers > 0 && (
+        <>
+          <span className="navbar-count-sep">·</span>
+          <span className="navbar-viewers">{viewers} {t('watching')}</span>
+        </>
+      )}
     </>
   );
 }
@@ -83,7 +91,7 @@ export default function Navbar() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const more = usePopover();
   const settings = usePopover();
-  const { display, connected } = useNavCount();
+  const { display, connected, viewers } = useNavCount();
   const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
   const { locale, setLocale } = useLocale();
@@ -173,7 +181,7 @@ export default function Navbar() {
         </div>
 
         <div className="navbar-count">
-          <StrikeCount display={display} connected={connected} t={t} />
+          <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />
         </div>
 
         <button
@@ -199,7 +207,7 @@ export default function Navbar() {
       </div>
 
       <div className="navbar-stats-bar">
-        <StrikeCount display={display} connected={connected} t={t} />
+        <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />
       </div>
     </>
   );

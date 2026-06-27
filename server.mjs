@@ -22,21 +22,26 @@ const server = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+const broadcast = () => {
+  const msg = JSON.stringify({ total: globalThis._serverTotal, viewers: globalThis._wsClients.size });
+  for (const ws of globalThis._wsClients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  }
+};
+
 wss.on('connection', (ws) => {
-  // Send current total immediately on connect
-  ws.send(JSON.stringify({ total: globalThis._serverTotal }));
   globalThis._wsClients.add(ws);
-  ws.on('close', () => globalThis._wsClients.delete(ws));
-  ws.on('error', () => globalThis._wsClients.delete(ws));
+  // Send current state immediately, then notify everyone of new viewer count
+  ws.send(JSON.stringify({ total: globalThis._serverTotal, viewers: globalThis._wsClients.size }));
+  broadcast();
+  ws.on('close', () => { globalThis._wsClients.delete(ws); broadcast(); });
+  ws.on('error', () => { globalThis._wsClients.delete(ws); broadcast(); });
 });
 
 // Broadcast total to all clients every second
 setInterval(() => {
   if (globalThis._wsClients.size === 0) return;
-  const msg = JSON.stringify({ total: globalThis._serverTotal });
-  for (const ws of globalThis._wsClients) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
-  }
+  broadcast();
 }, 1000);
 
 server.listen(port, '0.0.0.0', () => {

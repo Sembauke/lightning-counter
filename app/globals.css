@@ -147,6 +147,21 @@ html, body {
   text-transform: uppercase;
 }
 
+.navbar-count-sep {
+  color: rgba(255,255,255,0.25);
+  font-size: 1rem;
+  margin: 0 0.1rem;
+}
+
+.navbar-viewers {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(255,255,255,0.45);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 /* ── Live dot ── */
 .strike-badge-dot {
   display: inline-block;
