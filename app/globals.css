@@ -189,7 +189,7 @@ html, body {
 
 @media (max-width: 640px) {
   .navbar { padding: 0 1rem; }
-  .navbar-tabs { display: none; }
+  .navbar-tabs { display: none !important; }
   .navbar-count { display: none; }
   .navbar > .satellite-switch { display: none; }
   .navbar-menu-btn { display: block; }
@@ -862,7 +862,27 @@ html, body {
   background: rgba(255,220,0,0.12);
 }
 
-/* hide desktop settings btn and separator on mobile — drawer handles it */
+.more-popover {
+  min-width: 200px;
+}
+
+.more-link {
+  display: block;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: rgba(255,255,255,0.7);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  transition: color 0.15s, background 0.15s;
+}
+.more-link:last-child { border-bottom: none; }
+.more-link:hover { color: #fff; background: rgba(255,255,255,0.05); }
+.more-link.active { color: #ffe040; background: rgba(255,220,0,0.08); }
+
+/* hide desktop popovers and separator on mobile — drawer handles it */
 @media (max-width: 640px) {
   .settings-btn-wrap { display: none; }
   .navbar-sep { display: none; }

@@ -64,27 +64,30 @@ function StrikeCount({ display, t }: { display: number; connected: boolean; t: R
   );
 }
 
+function usePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  return { open, setOpen, ref };
+}
+
 export default function Navbar() {
   const path = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsRef = useRef<HTMLDivElement>(null);
+  const more = usePopover();
+  const settings = usePopover();
   const { display, connected } = useNavCount();
   const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
-        setSettingsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [settingsOpen]);
 
   const tabs = [
     { href: '/',          label: t('strikemap') },
@@ -127,26 +130,42 @@ export default function Navbar() {
           <span className="site-title">Lightning Stats</span>
         </div>
 
-        <div className="navbar-tabs">
-          {tabs.map(tab => (
-            <Link key={tab.href} href={tab.href} className={`nav-tab${path === tab.href ? ' active' : ''}`}>
-              {tab.label}
-            </Link>
-          ))}
+        {/* Desktop "More" pages dropdown */}
+        <div className="settings-btn-wrap" ref={more.ref}>
+          <button
+            className={`settings-btn${more.open ? ' active' : ''}`}
+            onClick={() => more.setOpen(o => !o)}
+          >
+            {t('more')} ▾
+          </button>
+          {more.open && (
+            <div className="settings-popover more-popover">
+              {tabs.map(tab => (
+                <Link
+                  key={tab.href}
+                  href={tab.href}
+                  className={`more-link${path === tab.href ? ' active' : ''}`}
+                  onClick={() => more.setOpen(false)}
+                >
+                  {tab.label}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="navbar-sep" aria-hidden="true" />
 
-        {/* Desktop ⚙ settings button + popover */}
-        <div className="settings-btn-wrap" ref={settingsRef}>
+        {/* Desktop ⚙ settings popover */}
+        <div className="settings-btn-wrap" ref={settings.ref}>
           <button
-            className={`settings-btn${settingsOpen ? ' active' : ''}`}
-            onClick={() => setSettingsOpen(o => !o)}
+            className={`settings-btn${settings.open ? ' active' : ''}`}
+            onClick={() => settings.setOpen(o => !o)}
             aria-label={t('settings')}
           >
             ⚙ {t('settings')}
           </button>
-          {settingsOpen && (
+          {settings.open && (
             <div className="settings-popover">
               {switches}
             </div>
