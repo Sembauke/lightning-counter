@@ -86,8 +86,9 @@ html, body {
 }
 
 .navbar-count-label {
-  font-size: 0.72rem;
-  color: rgba(255, 220, 80, 0.55);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #ffe040;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
