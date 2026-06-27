@@ -49,10 +49,31 @@ const TILE_SAT = {
 // ESRI reference: country borders + place names, no roads
 const TILE_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
 
-export default function LightningMap({ strikes, satellite }: { strikes: Strike[]; satellite: boolean }) {
+function playTick(ctx: AudioContext) {
+  const duration = 0.018;
+  const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    // White noise with sharp exponential decay = Geiger-counter click
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 10);
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const gain = ctx.createGain();
+  gain.gain.value = 0.5;
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+}
+
+export default function LightningMap({ strikes, satellite, sound }: { strikes: Strike[]; satellite: boolean; sound: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const satelliteRef = useRef(satellite);
   satelliteRef.current = satellite;
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastTickRef = useRef(0);
 
   const stateRef = useRef<MapState>({
     map: null, layer: null, renderer: null, tileLayer: null, labelsLayer: null,
@@ -211,6 +232,15 @@ export default function LightningMap({ strikes, satellite }: { strikes: Strike[]
 
         if (!strike.id.startsWith('hist-')) {
           s.rings.push({ lat: strike.lat, lon: strike.lon, startTime: performance.now() });
+
+          if (soundRef.current && s.map.getBounds().contains([strike.lat, strike.lon])) {
+            if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+            const now = performance.now();
+            if (now - lastTickRef.current > 30) { // max ~33 ticks/sec
+              lastTickRef.current = now;
+              playTick(audioCtxRef.current);
+            }
+          }
         }
 
         const style = getMarkerStyle(0);

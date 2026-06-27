@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import Navbar from './components/Navbar';
 import { SatelliteProvider } from './context/SatelliteContext';
+import { SoundProvider } from './context/SoundContext';
 
 export const metadata: Metadata = {
   title: 'Lightning Stats',
@@ -13,8 +14,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body style={{ margin: 0, padding: 0 }}>
         <SatelliteProvider>
-          <Navbar />
-          {children}
+          <SoundProvider>
+            <Navbar />
+            {children}
+          </SoundProvider>
         </SatelliteProvider>
       </body>
     </html>

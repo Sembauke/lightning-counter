@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import CountUp from 'react-countup';
 import { useSatellite } from '../context/SatelliteContext';
+import { useSound } from '../context/SoundContext';
 
 function useNavCount() {
   const [display, setDisplay] = useState(0);
@@ -65,6 +66,7 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const { display, connected } = useNavCount();
   const { satellite, toggle: toggleSatellite } = useSatellite();
+  const { sound, toggle: toggleSound } = useSound();
 
   const tabs = [
     { href: '/',          label: 'Strike Map' },
@@ -96,6 +98,15 @@ export default function Navbar() {
             <span className="satellite-thumb" />
           </span>
           <span className="satellite-label">Satellite</span>
+        </label>
+
+        {/* Sound toggle */}
+        <label className="satellite-switch" aria-label="Toggle strike sounds">
+          <input type="checkbox" checked={sound} onChange={toggleSound} />
+          <span className="satellite-track">
+            <span className="satellite-thumb" />
+          </span>
+          <span className="satellite-label">Sound</span>
         </label>
 
         {/* Desktop count — right side */}
