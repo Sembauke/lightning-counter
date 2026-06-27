@@ -2,13 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import CountUp from 'react-countup';
 import { useSatellite } from '../context/SatelliteContext';
 
 function useNavCount() {
-  const [total, setTotal] = useState(0);
+  const [display, setDisplay] = useState(0);
   const [connected, setConnected] = useState(false);
+  const targetRef = useRef(0);
+  const seededRef = useRef(false);
 
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -16,7 +18,13 @@ function useNavCount() {
     ws.onmessage = (e) => {
       try {
         const d = JSON.parse(e.data);
-        if (typeof d.total === 'number') setTotal(d.total);
+        if (typeof d.total === 'number') {
+          targetRef.current = d.total;
+          if (!seededRef.current) {
+            seededRef.current = true;
+            setDisplay(d.total); // jump to real value on first message
+          }
+        }
       } catch { /* ignore */ }
     };
     ws.onopen  = () => setConnected(true);
@@ -25,14 +33,27 @@ function useNavCount() {
     return () => ws.close();
   }, []);
 
-  return { total, connected };
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDisplay(prev => {
+        const target = targetRef.current;
+        if (prev >= target) return prev;
+        const delta = target - prev;
+        // catch up faster when far behind, tick by 1 when close
+        return prev + (delta > 50 ? Math.ceil(delta / 20) : 1);
+      });
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
+
+  return { display, connected };
 }
 
-function StrikeCount({ total }: { total: number; connected: boolean }) {
+function StrikeCount({ display }: { display: number; connected: boolean }) {
   return (
     <>
       <span className="navbar-count-num">
-        <CountUp preserveValue end={total} separator="," />
+        <CountUp preserveValue end={display} separator="," duration={0.1} />
       </span>
       <span className="navbar-count-label">strikes</span>
     </>
@@ -42,7 +63,7 @@ function StrikeCount({ total }: { total: number; connected: boolean }) {
 export default function Navbar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
-  const { total, connected } = useNavCount();
+  const { display, connected } = useNavCount();
   const { satellite, toggle: toggleSatellite } = useSatellite();
 
   const tabs = [
@@ -79,7 +100,7 @@ export default function Navbar() {
 
         {/* Desktop count — right side */}
         <div className="navbar-count">
-          <StrikeCount total={total} connected={connected} />
+          <StrikeCount display={display} connected={connected} />
         </div>
 
         {/* Mobile hamburger */}
@@ -104,7 +125,7 @@ export default function Navbar() {
 
       {/* Mobile stats bar — fixed below navbar, same styling */}
       <div className="navbar-stats-bar">
-        <StrikeCount total={total} connected={connected} />
+        <StrikeCount display={display} connected={connected} />
       </div>
     </>
   );
