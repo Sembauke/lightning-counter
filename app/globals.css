@@ -348,10 +348,11 @@ html, body {
 .cl-num {
   width: 8rem;
   text-align: right;
-  font-size: 0.95rem;
+  font-size: 1.2rem;
+  font-weight: 700;
   color: #ffe040;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
 }
 
 .cl-bar-col { width: 30%; padding-left: 1rem !important; }
@@ -505,15 +506,19 @@ html, body {
 }
 
 .today-val {
-  font-size: 0.95rem;
+  font-size: 1.2rem;
+  font-weight: 700;
   color: #ffe040;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .peak-val {
-  font-size: 0.95rem;
-  color: rgba(255,200,100,0.85);
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #ffe040;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .col-date {
