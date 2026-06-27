@@ -220,10 +220,27 @@ html, body {
     z-index: 1999;
     align-items: center;
     justify-content: center;
-    gap: 0.6rem;
+    gap: 0.5rem;
     background: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(12px);
     border-bottom: 1px solid rgba(255, 220, 0, 0.15);
+  }
+
+  .navbar-stats-bar .navbar-count-num {
+    font-size: 0.95rem;
+  }
+
+  .navbar-stats-bar .navbar-count-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+  }
+
+  .navbar-stats-bar .navbar-count-sep {
+    font-size: 0.85rem;
+  }
+
+  .navbar-stats-bar .navbar-viewers {
+    font-size: 0.75rem;
   }
 
   .navbar-dropdown {
