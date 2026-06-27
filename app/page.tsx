@@ -2,8 +2,6 @@
 
 import dynamic from 'next/dynamic';
 import { useBlitzortung } from './hooks/useBlitzortung';
-import ColorLegend from './components/ColorLegend';
-import StrikeCounter from './components/StrikeCounter';
 
 const LightningMap = dynamic(() => import('./components/LightningMap'), {
   ssr: false,
@@ -11,19 +9,13 @@ const LightningMap = dynamic(() => import('./components/LightningMap'), {
 });
 
 export default function Home() {
-  const { strikes, totalCount, connected } = useBlitzortung();
+  const { strikes } = useBlitzortung();
 
   return (
     <main className="app">
       <div className="map-container">
         <LightningMap strikes={strikes} />
       </div>
-
-      <div className="bottom-panel">
-        <StrikeCounter totalCount={totalCount} connected={connected} />
-        <ColorLegend />
-      </div>
-
       <div className="attribution">
         © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>{' '}
         © <a href="https://carto.com/" target="_blank" rel="noreferrer">CARTO</a>

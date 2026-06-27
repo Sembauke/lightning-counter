@@ -2,39 +2,100 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import CountUp from 'react-countup';
+
+function useNavCount() {
+  const [total, setTotal] = useState(0);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        if (typeof d.total === 'number') setTotal(d.total);
+      } catch { /* ignore */ }
+    };
+    ws.onopen  = () => setConnected(true);
+    ws.onclose = () => setConnected(false);
+    ws.onerror = () => setConnected(false);
+    return () => ws.close();
+  }, []);
+
+  return { total, connected };
+}
+
+function StrikeCount({ total, connected }: { total: number; connected: boolean }) {
+  return (
+    <>
+      <span className={`strike-badge-dot${connected ? ' live' : ''}`} />
+      <span className="navbar-count-num">
+        <CountUp preserveValue end={total} separator="," />
+      </span>
+      <span className="navbar-count-label">strikes</span>
+    </>
+  );
+}
 
 export default function Navbar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const { total, connected } = useNavCount();
+
+  const tabs = [
+    { href: '/',          label: 'Strike Map' },
+    { href: '/countries', label: 'By Country' },
+    { href: '/stats',     label: 'Archive' },
+  ];
 
   return (
-    <nav className="navbar">
-      <div className="navbar-brand">
-        <span className="site-icon">⚡</span>
-        <span className="site-title">Lightning Stats</span>
+    <>
+      <nav className="navbar">
+        <div className="navbar-brand">
+          <span className="site-icon">⚡</span>
+          <span className="site-title">Lightning Stats</span>
+        </div>
+
+        {/* Desktop tabs */}
+        <div className="navbar-tabs">
+          {tabs.map(t => (
+            <Link key={t.href} href={t.href} className={`nav-tab${path === t.href ? ' active' : ''}`}>
+              {t.label}
+            </Link>
+          ))}
+        </div>
+
+        {/* Desktop count — right side */}
+        <div className="navbar-count">
+          <StrikeCount total={total} connected={connected} />
+        </div>
+
+        {/* Mobile hamburger */}
+        <button
+          className="navbar-menu-btn"
+          onClick={() => setOpen(o => !o)}
+          aria-label="Toggle navigation"
+          aria-expanded={open}
+        >
+          {open ? '✕' : '☰'}
+        </button>
+      </nav>
+
+      {/* Mobile dropdown — sits below the stats bar */}
+      <div className={`navbar-dropdown${open ? ' open' : ''}`} onClick={() => setOpen(false)}>
+        {tabs.map(t => (
+          <Link key={t.href} href={t.href} className={`nav-tab${path === t.href ? ' active' : ''}`}>
+            {t.label}
+          </Link>
+        ))}
       </div>
 
-      <button
-        className="navbar-menu-btn"
-        onClick={() => setOpen(o => !o)}
-        aria-label="Toggle navigation"
-        aria-expanded={open}
-      >
-        {open ? '✕' : '☰'}
-      </button>
-
-      <div className={`navbar-tabs${open ? ' open' : ''}`} onClick={() => setOpen(false)}>
-        <Link href="/" className={`nav-tab${path === '/' ? ' active' : ''}`}>
-          Strike Map
-        </Link>
-        <Link href="/countries" className={`nav-tab${path === '/countries' ? ' active' : ''}`}>
-          By Country
-        </Link>
-        <Link href="/stats" className={`nav-tab${path === '/stats' ? ' active' : ''}`}>
-          Archive
-        </Link>
+      {/* Mobile stats bar — fixed below navbar, same styling */}
+      <div className="navbar-stats-bar">
+        <StrikeCount total={total} connected={connected} />
       </div>
-    </nav>
+    </>
   );
 }
