@@ -126,9 +126,22 @@ export default function Navbar() {
       </nav>
 
       {/* Mobile dropdown — sits below the stats bar */}
-      <div className={`navbar-dropdown${open ? ' open' : ''}`} onClick={() => setOpen(false)}>
+      <div className={`navbar-dropdown${open ? ' open' : ''}`}>
+        {/* Switches at the top of the drawer */}
+        <div className="drawer-switches">
+          <label className="satellite-switch" aria-label="Toggle satellite view">
+            <input type="checkbox" checked={satellite} onChange={toggleSatellite} />
+            <span className="satellite-track"><span className="satellite-thumb" /></span>
+            <span className="satellite-label">Satellite</span>
+          </label>
+          <label className="satellite-switch" aria-label="Toggle strike sounds">
+            <input type="checkbox" checked={sound} onChange={toggleSound} />
+            <span className="satellite-track"><span className="satellite-thumb" /></span>
+            <span className="satellite-label">Sound</span>
+          </label>
+        </div>
         {tabs.map(t => (
-          <Link key={t.href} href={t.href} className={`nav-tab${path === t.href ? ' active' : ''}`}>
+          <Link key={t.href} href={t.href} className={`nav-tab${path === t.href ? ' active' : ''}`} onClick={() => setOpen(false)}>
             {t.label}
           </Link>
         ))}

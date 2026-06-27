@@ -8,6 +8,7 @@ interface FlashRing {
   lat: number;
   lon: number;
   startTime: number;
+  zoomed: boolean; // true = sound ring (zoom>=11), false = quick flash (zoom<11)
 }
 
 interface MapState {
@@ -131,41 +132,44 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
 
       const ctx = overlay.getContext('2d')!;
 
-      // Thunder travels 343 m/s; audible up to ~25 km (73 s real time).
-      // Ring expands linearly (constant wave speed), compressed to 3 s visual.
-      // At low zoom the geographic 25 km is sub-pixel, so we use a minimum that
-      // matches what 25 km looks like at zoom 9 (~160 px) to always feel significant.
-      // 25 km / 343 m·s⁻¹ = 72.9 s — ring lives exactly as long as thunder is audible
-      const DURATION = 73_000;
-      const MIN_PX = 160;
-
       const drawRings = (now: number) => {
         ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-        const zoom = map.getZoom();
-        if (s.rings.length > 0 && zoom >= 11) {
-          const metersPerPx = 156_543 / Math.pow(2, zoom);
-          const maxPx = Math.max(MIN_PX, Math.min(600, Math.round(25_000 / metersPerPx)));
-
+        if (s.rings.length > 0) {
           ctx.save();
           ctx.scale(dpr, dpr);
+
+          const zoom = map.getZoom();
+          const metersPerPx = 156_543 / Math.pow(2, zoom);
+          const soundMaxPx = Math.max(160, Math.min(600, Math.round(25_000 / metersPerPx)));
 
           let i = s.rings.length;
           while (i--) {
             const ring = s.rings[i];
-            const p = Math.min((now - ring.startTime) / DURATION, 1);
-            if (p >= 1) { s.rings.splice(i, 1); continue; }
 
-            const radius  = maxPx * p;
-            const opacity = Math.pow(1 - p, 2) * 0.85;
-            const lw      = 0.5 + (1 - p) * 2.5;
-
-            const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, Math.max(1, radius), 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(255,255,255,${opacity.toFixed(3)})`;
-            ctx.lineWidth = lw;
-            ctx.stroke();
+            if (ring.zoomed) {
+              // Sound wave ring — only visible at zoom ≥ 11
+              if (zoom < 11) continue;
+              const p = Math.min((now - ring.startTime) / 73_000, 1);
+              if (p >= 1) { s.rings.splice(i, 1); continue; }
+              const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
+              ctx.beginPath();
+              ctx.arc(pt.x, pt.y, Math.max(1, soundMaxPx * p), 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(255,255,255,${(Math.pow(1 - p, 2) * 0.85).toFixed(3)})`;
+              ctx.lineWidth = 0.5 + (1 - p) * 2.5;
+              ctx.stroke();
+            } else {
+              // Quick flash ring — only visible at zoom < 11
+              if (zoom >= 11) continue;
+              const p = Math.min((now - ring.startTime) / 600, 1);
+              if (p >= 1) { s.rings.splice(i, 1); continue; }
+              const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
+              ctx.beginPath();
+              ctx.arc(pt.x, pt.y, Math.max(1, Math.sqrt(p) * 40), 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(255,220,60,${(Math.pow(1 - p, 1.5) * 0.95).toFixed(3)})`;
+              ctx.lineWidth = 2.5 * (1 - p) + 0.5;
+              ctx.stroke();
+            }
           }
 
           ctx.restore();
@@ -231,7 +235,8 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
         s.processed.add(strike.id);
 
         if (!strike.id.startsWith('hist-')) {
-          s.rings.push({ lat: strike.lat, lon: strike.lon, startTime: performance.now() });
+          const zoom = s.map.getZoom();
+          s.rings.push({ lat: strike.lat, lon: strike.lon, startTime: performance.now(), zoomed: zoom >= 11 });
 
           if (soundRef.current && s.map.getBounds().contains([strike.lat, strike.lon])) {
             if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();

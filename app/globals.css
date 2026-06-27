@@ -181,15 +181,15 @@ html, body {
   display: none;
 }
 
-/* ── Mobile stats bar — same look as navbar, fixed below it ── */
-.navbar-stats-bar {
-  display: none;
-}
+/* ── Mobile stats bar — hidden on desktop ── */
+.navbar-stats-bar { display: none; }
+.drawer-switches  { display: none; }
 
 @media (max-width: 640px) {
   .navbar { padding: 0 1rem; }
   .navbar-tabs { display: none; }
   .navbar-count { display: none; }
+  .navbar > .satellite-switch { display: none; }
   .navbar-menu-btn { display: block; }
 
   .navbar-stats-bar {
@@ -210,7 +210,7 @@ html, body {
 
   .navbar-dropdown {
     position: fixed;
-    top: 88px; /* 48px navbar + 40px stats bar */
+    top: 88px;
     left: 0;
     right: 0;
     z-index: 2001;
@@ -223,6 +223,15 @@ html, body {
     gap: 0.4rem;
   }
   .navbar-dropdown.open { display: flex; }
+
+  .drawer-switches {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    padding: 0.5rem 0 0.75rem;
+    border-bottom: 1px solid rgba(255,220,0,0.1);
+    margin-bottom: 0.25rem;
+  }
 
   .nav-tab {
     width: 100%;
