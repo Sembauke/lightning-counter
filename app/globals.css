@@ -220,11 +220,24 @@ html, body {
 }
 
 @media (max-width: 640px) {
-  .legend {
-    gap: 0.6rem;
-    padding: 0.4rem 0.9rem;
+  .bottom-panel {
+    bottom: 1rem;
+    width: calc(100vw - 2rem);
+    left: 1rem;
+    transform: none;
+    align-items: stretch;
   }
-  .legend-text { font-size: 0.68rem; }
+  .legend {
+    gap: 0.5rem;
+    padding: 0.4rem 0.85rem;
+    justify-content: center;
+  }
+  .legend-text { display: none; }
+  .legend-dot { width: 9px; height: 9px; }
+  .strike-badge {
+    justify-content: center;
+    padding: 0.45rem 1rem;
+  }
 }
 
 /* ── Attribution ── */
@@ -272,20 +285,55 @@ html, body {
   box-shadow: 0 0 6px rgba(68, 255, 136, 0.6);
 }
 
-.strike-badge-count {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.92);
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
 .strike-badge-label {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.45);
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+/* ── Odometer digit reel ── */
+.counter-roller {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.counter-digit-outer {
+  display: inline-block;
+  height: 1.3rem;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.counter-digit-inner {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  will-change: transform;
+}
+
+.counter-digit-num {
+  display: block;
+  height: 1.3rem;
+  line-height: 1.3rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  width: 0.7rem;
+}
+
+.counter-sep {
+  display: inline-block;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.35);
+  line-height: 1.3rem;
+  width: 0.4rem;
+  text-align: center;
+  vertical-align: middle;
 }
 
 /* ── Flag images ── */
