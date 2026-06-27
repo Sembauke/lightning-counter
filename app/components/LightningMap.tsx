@@ -25,7 +25,7 @@ interface MapState {
 
 // Color bands match the ColorLegend component
 function getMarkerStyle(ageMs: number) {
-  if (ageMs < 10_000)   return { radius: 4, fillColor: '#ffffff', color: '#ff2222', fillOpacity: 1,    opacity: 0.9, weight: 1.5 };
+  if (ageMs < 10_000)   return { radius: 4, fillColor: '#ffe040', color: '#ff2222', fillOpacity: 1,    opacity: 0.9, weight: 1.5 };
   if (ageMs < 60_000)   return { radius: 3, fillColor: '#ffff00', color: '#ffff00', fillOpacity: 0.95, opacity: 0, weight: 0 };
   if (ageMs < 300_000)  return { radius: 3, fillColor: '#ffcc00', color: '#ffcc00', fillOpacity: 0.8,  opacity: 0, weight: 0 };
   if (ageMs < 900_000)  return { radius: 2, fillColor: '#ff8800', color: '#ff8800', fillOpacity: 0.65, opacity: 0, weight: 0 };
