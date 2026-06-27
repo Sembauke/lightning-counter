@@ -90,13 +90,24 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
     import('leaflet').then(({ default: L }) => {
       if (s.map || !container) return;
 
+      const savedView = (() => {
+        try { const v = localStorage.getItem('mapView'); return v ? JSON.parse(v) : null; } catch { return null; }
+      })();
+
       const worldBounds = L.latLngBounds(L.latLng(-85, -180), L.latLng(85, 180));
       const map = L.map(container, {
-        center: [20, 0], zoom: 2, minZoom: 2, maxZoom: 12,
+        center: savedView ? [savedView.lat, savedView.lng] : [20, 0],
+        zoom: savedView ? savedView.zoom : 2,
+        minZoom: 2, maxZoom: 12,
         zoomControl: true, attributionControl: false,
         maxBounds: worldBounds, maxBoundsViscosity: 1.0,
       });
       map.zoomControl.setPosition('bottomright');
+
+      map.on('moveend zoomend', () => {
+        const c = map.getCenter();
+        localStorage.setItem('mapView', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+      });
 
       const initTile = satelliteRef.current ? TILE_SAT : TILE_DARK;
       s.tileLayer = L.tileLayer(initTile.url, initTile.options).addTo(map);
