@@ -27,10 +27,9 @@ function useNavCount() {
   return { total, connected };
 }
 
-function StrikeCount({ total, connected }: { total: number; connected: boolean }) {
+function StrikeCount({ total }: { total: number; connected: boolean }) {
   return (
     <>
-      <span className={`strike-badge-dot${connected ? ' live' : ''}`} />
       <span className="navbar-count-num">
         <CountUp preserveValue end={total} separator="," />
       </span>

@@ -78,16 +78,16 @@ html, body {
 }
 
 .navbar-count-num {
-  font-size: 1rem;
+  font-size: 1.25rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.92);
+  color: #ffe040;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
 
 .navbar-count-label {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 220, 80, 0.55);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
