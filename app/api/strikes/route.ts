@@ -1,5 +1,3 @@
-import mqtt from 'mqtt';
-import { WebSocket } from 'ws';
 import { getCountryCode } from '../../lib/geoCountry';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch } from '../../lib/db';
 
@@ -26,9 +24,15 @@ const HISTORY_LIFETIME_MS = 30 * 60 * 1000;
 
 const pendingGridStrikes: Array<{ lat: number; lon: number; time: number }> = [];
 
-// ── SSE client registry ────────────────────────────────────────────────
+// ── SSE client registry (shared with server.mjs via globalThis) ────────
 const enc = new TextEncoder();
-const sseControllers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+// server.mjs stores controllers here; register our Set so it can broadcast
+const sseControllers: Set<ReadableStreamDefaultController<Uint8Array>> = (() => {
+  if (!(globalThis as any)._sseControllers) {
+    (globalThis as any)._sseControllers = new Set();
+  }
+  return (globalThis as any)._sseControllers;
+})();
 
 function broadcastSSE(chunk: string) {
   const buf = enc.encode(chunk);
@@ -37,39 +41,7 @@ function broadcastSSE(chunk: string) {
   }
 }
 
-// ── Connection tracking ────────────────────────────────────────────────
-const activeSources = new Set<string>();
-
-function markConnected(source: string) {
-  const wasEmpty = activeSources.size === 0;
-  activeSources.add(source);
-  if (wasEmpty) broadcastSSE('event: status\ndata: live\n\n');
-  console.log(`[blitz] connected: ${source} (${activeSources.size} total)`);
-}
-
-function markDisconnected(source: string) {
-  activeSources.delete(source);
-  if (activeSources.size === 0) broadcastSSE('event: status\ndata: reconnecting\n\n');
-  console.log(`[blitz] disconnected: ${source} (${activeSources.size} remaining)`);
-}
-
-// ── WS deduplication by nanosecond timestamp ───────────────────────────
-const seenNanos: number[] = [];
-const SEEN_NANOS_MAX = 30_000;
-
-function isWsDuplicate(nanoTime: number): boolean {
-  let lo = 0, hi = seenNanos.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (seenNanos[mid] === nanoTime) return true;
-    if (seenNanos[mid] < nanoTime) lo = mid + 1; else hi = mid - 1;
-  }
-  seenNanos.splice(lo, 0, nanoTime);
-  if (seenNanos.length > SEEN_NANOS_MAX) seenNanos.shift();
-  return false;
-}
-
-// ── Core strike processor ──────────────────────────────────────────────
+// ── Core strike processor — registered on globalThis for server.mjs ────
 function processStrike(lat: number, lon: number) {
   const today = todayDate();
   if (today !== currentDay) {
@@ -98,61 +70,13 @@ function processStrike(lat: number, lon: number) {
   broadcastSSE(`data: ${JSON.stringify({ lat, lon, cc })}\n\n`);
 }
 
-// ── MQTT — reliable baseline source ───────────────────────────────────
-const mqttClient = mqtt.connect('mqtt://blitzortung.ha.sed.pl:1883', {
-  connectTimeout: 10_000,
-  reconnectPeriod: 5_000,
-  clientId: `lc_${Math.random().toString(16).slice(2)}`,
-});
+// Register with server.mjs so it can call us for incoming WS strikes
+(globalThis as any)._processStrike = processStrike;
 
-mqttClient.on('connect', () => {
-  markConnected('mqtt');
-  mqttClient.subscribe('blitzortung/1.1/#', { qos: 0 });
-});
-
-mqttClient.on('message', (_topic, payload) => {
-  try {
-    const d = JSON.parse(payload.toString()) as { lat: number; lon: number };
-    if (typeof d.lat === 'number' && typeof d.lon === 'number') {
-      processStrike(d.lat, d.lon);
-    }
-  } catch { /* ignore */ }
-});
-
-mqttClient.on('disconnect', () => markDisconnected('mqtt'));
-mqttClient.on('error', (err) => console.error('[mqtt]', err.message));
-
-// ── Blitzortung WebSocket servers — additional global coverage ─────────
-const BLITZ_WS = [
-  'wss://ws1.blitzortung.org:3000/',
-  'wss://ws5.blitzortung.org:3000/',
-  'wss://ws6.blitzortung.org:3000/',
-  'wss://ws7.blitzortung.org:3000/',
-];
-
-function connectBlitzWS(url: string) {
-  const name = url.match(/ws\d+/)?.[0] ?? url;
-  const connect = () => {
-    const ws = new WebSocket(url);
-    ws.on('open', () => {
-      markConnected(name);
-      ws.send(JSON.stringify({ time: 0 }));
-    });
-    ws.on('message', (raw: Buffer) => {
-      try {
-        const d = JSON.parse(raw.toString()) as { lat?: number; lon?: number; time?: number };
-        if (typeof d.lat === 'number' && typeof d.lon === 'number' && typeof d.time === 'number') {
-          if (!isWsDuplicate(d.time)) processStrike(d.lat, d.lon);
-        }
-      } catch { /* ignore */ }
-    });
-    ws.on('error', (err) => console.error(`[${name}]`, err.message));
-    ws.on('close', () => { markDisconnected(name); setTimeout(connect, 5_000); });
-  };
-  connect();
-}
-
-BLITZ_WS.forEach(connectBlitzWS);
+// Drain any strikes that arrived before this module loaded
+const queued: Array<{ lat: number; lon: number }> = (globalThis as any)._strikeQueue ?? [];
+(globalThis as any)._strikeQueue = [];
+for (const { lat, lon } of queued) processStrike(lat, lon);
 
 // ── Periodic maintenance ───────────────────────────────────────────────
 setInterval(() => {
@@ -175,6 +99,7 @@ setInterval(() => {
 
 // ── SSE endpoint ───────────────────────────────────────────────────────
 export async function GET() {
+  const activeSources: Set<string> = (globalThis as any)._activeSources ?? new Set();
   let ctrl: ReadableStreamDefaultController<Uint8Array>;
   let heartbeat: ReturnType<typeof setInterval>;
 
