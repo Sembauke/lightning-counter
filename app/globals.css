@@ -68,6 +68,32 @@ html, body {
   text-shadow: 0 0 8px rgba(255,220,0,0.5);
 }
 
+/* ── Satellite toggle button ── */
+.satellite-btn {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.75);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.satellite-btn:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.3);
+}
+.satellite-btn.active {
+  color: #ffe040;
+  background: rgba(255,220,0,0.15);
+  border-color: rgba(255,220,0,0.5);
+}
+
 /* ── Navbar count (desktop, right side) ── */
 .navbar-count {
   display: flex;

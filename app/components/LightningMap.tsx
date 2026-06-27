@@ -17,6 +17,8 @@ interface MapState {
   layer: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   renderer: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tileLayer: any;
   markers: Map<string, { marker: any; addedAt: number }>;
   processed: Set<string>;
   styleInterval: ReturnType<typeof setInterval> | null;
@@ -34,10 +36,19 @@ function getMarkerStyle(ageMs: number) {
   return { radius: 2, fillColor: '#ff4400', color: '#ff4400', fillOpacity: 0.45 * (1 - fadeT), opacity: 0, weight: 0 };
 }
 
-export default function LightningMap({ strikes }: { strikes: Strike[] }) {
+const TILE_DARK = {
+  url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  options: { subdomains: 'abcd', maxZoom: 19 },
+};
+const TILE_SAT = {
+  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  options: { maxZoom: 19 },
+};
+
+export default function LightningMap({ strikes, satellite }: { strikes: Strike[]; satellite: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<MapState>({
-    map: null, layer: null, renderer: null,
+    map: null, layer: null, renderer: null, tileLayer: null,
     markers: new Map(), processed: new Set(),
     styleInterval: null, rings: [], rafId: null, ready: false,
   });
@@ -58,9 +69,7 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
       });
       map.zoomControl.setPosition('bottomright');
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd', maxZoom: 19,
-      }).addTo(map);
+      s.tileLayer = L.tileLayer(TILE_DARK.url, TILE_DARK.options).addTo(map);
 
       s.renderer = L.canvas({ padding: 0.5 });
       s.layer = L.layerGroup().addTo(map);
@@ -159,6 +168,12 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
       s.ready = false;
     };
   }, []);
+
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s.ready || !s.tileLayer) return;
+    s.tileLayer.setUrl(satellite ? TILE_SAT.url : TILE_DARK.url);
+  }, [satellite]);
 
   useEffect(() => {
     const s = stateRef.current;

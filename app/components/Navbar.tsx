@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import CountUp from 'react-countup';
+import { useSatellite } from '../context/SatelliteContext';
 
 function useNavCount() {
   const [total, setTotal] = useState(0);
@@ -42,6 +43,7 @@ export default function Navbar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const { total, connected } = useNavCount();
+  const { satellite, toggle: toggleSatellite } = useSatellite();
 
   const tabs = [
     { href: '/',          label: 'Strike Map' },
@@ -65,6 +67,15 @@ export default function Navbar() {
             </Link>
           ))}
         </div>
+
+        {/* Satellite toggle */}
+        <button
+          className={`satellite-btn${satellite ? ' active' : ''}`}
+          onClick={toggleSatellite}
+          aria-label="Toggle satellite view"
+        >
+          🛰 Satellite
+        </button>
 
         {/* Desktop count — right side */}
         <div className="navbar-count">
