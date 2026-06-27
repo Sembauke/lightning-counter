@@ -6,10 +6,6 @@ const dn = typeof Intl !== 'undefined' ? new Intl.DisplayNames(['en'], { type: '
 function countryName(code: string): string {
   try { return dn?.of(code) ?? code; } catch { return code; }
 }
-function toFlag(code: string): string {
-  if (code.length !== 2) return '';
-  return [...code.toUpperCase()].map(c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)).join('');
-}
 function fmt(n: number) { return n.toLocaleString('en-US'); }
 
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
@@ -89,7 +85,14 @@ export default function ArchivePage() {
                 onClick={() => setSelected(selected === row.code ? null : row.code)}
               >
                 <td className="col-country">
-                  <span className="row-flag">{toFlag(row.code)}</span>
+                  <img
+                    src={`https://flagcdn.com/w20/${row.code.toLowerCase()}.png`}
+                    alt={countryName(row.code)}
+                    width={20}
+                    height={15}
+                    className="cl-flag-img"
+                    loading="lazy"
+                  />
                   <span className="row-name">{countryName(row.code)}</span>
                 </td>
                 <td className="col-num today-val">{row.today > 0 ? fmt(row.today) : '—'}</td>
@@ -104,7 +107,13 @@ export default function ArchivePage() {
       {selected && selectedRow && (
         <div className="archive-detail">
           <div className="detail-head">
-            <span className="detail-flag">{toFlag(selected)}</span>
+            <img
+              src={`https://flagcdn.com/w20/${selected.toLowerCase()}.png`}
+              alt={countryName(selected)}
+              width={20}
+              height={15}
+              className="cl-flag-img"
+            />
             <span className="detail-country-name">{countryName(selected)}</span>
             <div className="detail-meta">
               <span>Today: <strong>{fmt(selectedRow.today)}</strong></span>

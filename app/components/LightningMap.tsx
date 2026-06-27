@@ -76,6 +76,8 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
     import('leaflet').then(({ default: L }) => {
       if (s.map || !container) return;
 
+      const worldBounds = L.latLngBounds(L.latLng(-85, -180), L.latLng(85, 180));
+
       const map = L.map(container, {
         center: [20, 0],
         zoom: 2,
@@ -83,6 +85,8 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
         maxZoom: 12,
         zoomControl: true,
         attributionControl: false,
+        maxBounds: worldBounds,
+        maxBoundsViscosity: 1.0,
       });
 
       // Position zoom control bottom-right (away from our panels)
@@ -138,8 +142,11 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
         if (s.processed.has(strike.id)) break;
         s.processed.add(strike.id);
 
-        // Ripple flash for brand-new strike
-        animateFlash(L, s.layer, svgRendererRef.current, strike.lat, strike.lon);
+        // Only flash strikes that are genuinely new (not pre-loaded history)
+        const isLive = !strike.id.startsWith('hist-');
+        if (isLive) {
+          animateFlash(L, s.layer, svgRendererRef.current, strike.lat, strike.lon);
+        }
 
         const style = getMarkerStyle(0);
         const marker = L.circleMarker([strike.lat, strike.lon], {

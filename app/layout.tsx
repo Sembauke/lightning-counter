@@ -3,8 +3,8 @@ import './globals.css';
 import Navbar from './components/Navbar';
 
 export const metadata: Metadata = {
-  title: 'Lightning Counter',
-  description: 'Real-time global lightning strike counter'
+  title: 'Lightning Stats',
+  description: 'Real-time global lightning strike tracker'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

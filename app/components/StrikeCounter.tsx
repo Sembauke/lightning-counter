@@ -13,12 +13,12 @@ function fmt(n: number): string {
 
 export default function StrikeCounter({ totalCount, connected }: StrikeCounterProps) {
   const displayed = useAnimatedCounter(totalCount, 300);
-  const statusClass = connected ? 'live' : 'connecting';
 
   return (
-    <div className={`stats-panel ${statusClass}`}>
-      <span className="stats-count">{fmt(displayed)}</span>
-      <span className="stats-label">TOTAL STRIKES</span>
+    <div className="strike-badge">
+      <span className={`strike-badge-dot${connected ? ' live' : ''}`} />
+      <span className="strike-badge-count">{fmt(displayed)}</span>
+      <span className="strike-badge-label">strikes</span>
     </div>
   );
 }

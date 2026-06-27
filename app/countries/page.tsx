@@ -3,11 +3,6 @@
 import { useBlitzortung } from '../hooks/useBlitzortung';
 import { useMemo } from 'react';
 
-function toFlag(code: string): string {
-  if (code.length !== 2) return '';
-  return [...code.toUpperCase()].map(c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)).join('');
-}
-
 const displayNames = typeof Intl !== 'undefined' ? new Intl.DisplayNames(['en'], { type: 'region' }) : null;
 function countryName(code: string): string {
   try { return displayNames?.of(code) ?? code; } catch { return code; }
@@ -20,7 +15,7 @@ export default function CountriesPage() {
 
   const ranked = useMemo(() => {
     return Object.entries(countryCounts)
-      .map(([code, count]) => ({ code, count, name: countryName(code), flag: toFlag(code) }))
+      .map(([code, count]) => ({ code, count, name: countryName(code) }))
       .sort((a, b) => b.count - a.count);
   }, [countryCounts]);
 
@@ -30,7 +25,7 @@ export default function CountriesPage() {
     <div className="country-list-page">
       <div className="country-list-header">
         <span className="country-list-title">Strikes per Country</span>
-        <span className="country-list-meta">{fmt(totalCount)} total · {ranked.length} countries</span>
+        <span className="country-list-meta">{fmt(totalCount)} total strikes</span>
       </div>
 
       <div className="country-list-body">
@@ -48,12 +43,21 @@ export default function CountriesPage() {
               </tr>
             </thead>
             <tbody>
-              {ranked.map(({ code, count, name, flag }, i) => (
+              {ranked.map(({ code, count, name }, i) => (
                 <tr key={code} className="cl-row">
                   <td className="cl-rank">{i + 1}</td>
-                  <td className="cl-country">
-                    <span className="cl-flag">{flag}</span>
-                    <span className="cl-name">{name}</span>
+                  <td>
+                    <div className="cl-country">
+                      <img
+                        src={`https://flagcdn.com/w20/${code.toLowerCase()}.png`}
+                        alt={name}
+                        width={20}
+                        height={15}
+                        className="cl-flag-img"
+                        loading="lazy"
+                      />
+                      <span className="cl-name">{name}</span>
+                    </div>
                   </td>
                   <td className="cl-num">{fmt(count)}</td>
                   <td className="cl-bar-col">

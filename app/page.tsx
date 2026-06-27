@@ -2,8 +2,8 @@
 
 import dynamic from 'next/dynamic';
 import { useBlitzortung } from './hooks/useBlitzortung';
-import StrikeCounter from './components/StrikeCounter';
 import ColorLegend from './components/ColorLegend';
+import StrikeCounter from './components/StrikeCounter';
 
 const LightningMap = dynamic(() => import('./components/LightningMap'), {
   ssr: false,
@@ -19,13 +19,9 @@ export default function Home() {
         <LightningMap strikes={strikes} />
       </div>
 
-      {/* Bottom panel: legend + counter stacked */}
       <div className="bottom-panel">
+        <StrikeCounter totalCount={totalCount} connected={connected} />
         <ColorLegend />
-        <StrikeCounter
-          totalCount={totalCount}
-          connected={connected}
-        />
       </div>
 
       <div className="attribution">
