@@ -1,0 +1,44 @@
+{
+  "nav": {
+    "strikemap": "Strike Map",
+    "bycountry": "Strikes by Country",
+    "archive": "Strike Archive",
+    "satellite": "Satellite",
+    "sound": "Sound",
+    "strikes": "strikes",
+    "toggleSatellite": "Toggle satellite view",
+    "toggleSound": "Toggle strike sounds",
+    "toggleNav": "Toggle navigation",
+    "settings": "Settings"
+  },
+  "home": {
+    "loadingMap": "Loading map…"
+  },
+  "countries": {
+    "title": "Strikes per Country",
+    "totalStrikes": "{count} total strikes",
+    "waiting": "Waiting for data…",
+    "country": "Country",
+    "strikes": "Strikes",
+    "share": "Share"
+  },
+  "stats": {
+    "title": "Strike Archive",
+    "searchPlaceholder": "Search country…",
+    "countriesFound": "{count} countries",
+    "country": "Country",
+    "today": "Today",
+    "allTimeHigh": "All-Time High",
+    "date": "Date",
+    "noData": "No data yet — strikes accumulate over time.",
+    "todayLabel": "Today:",
+    "peakLabel": "Peak:",
+    "on": "on",
+    "from": "From",
+    "to": "To",
+    "minStrikes": "Min strikes",
+    "clear": "Clear",
+    "strikes": "Strikes",
+    "noRecords": "No records match the filter."
+  }
+}

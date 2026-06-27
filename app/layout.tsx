@@ -3,6 +3,7 @@ import './globals.css';
 import Navbar from './components/Navbar';
 import { SatelliteProvider } from './context/SatelliteContext';
 import { SoundProvider } from './context/SoundContext';
+import { LocaleProvider } from './context/LocaleContext';
 
 export const metadata: Metadata = {
   title: 'Lightning Stats',
@@ -13,12 +14,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body style={{ margin: 0, padding: 0 }}>
-        <SatelliteProvider>
-          <SoundProvider>
-            <Navbar />
-            {children}
-          </SoundProvider>
-        </SatelliteProvider>
+        <LocaleProvider>
+          <SatelliteProvider>
+            <SoundProvider>
+              <Navbar />
+              {children}
+            </SoundProvider>
+          </SatelliteProvider>
+        </LocaleProvider>
       </body>
     </html>
   );

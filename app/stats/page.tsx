@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
+import { useLocale } from '../context/LocaleContext';
 
-const dn = typeof Intl !== 'undefined' ? new Intl.DisplayNames(['en'], { type: 'region' }) : null;
-function countryName(code: string): string {
-  try { return dn?.of(code) ?? code; } catch { return code; }
-}
-function fmt(n: number) { return n.toLocaleString('en-US'); }
+function fmt(n: number) { return n.toLocaleString(); }
 
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
 interface HistoryRow { date: string; count: number; }
@@ -19,12 +17,23 @@ export default function ArchivePage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [minStrikes, setMinStrikes] = useState('');
+  const t = useTranslations('stats');
+  const { locale } = useLocale();
+
+  const displayNames = useMemo(() => {
+    if (typeof Intl === 'undefined') return null;
+    try { return new Intl.DisplayNames([locale], { type: 'region' }); } catch { return null; }
+  }, [locale]);
+
+  function countryName(code: string): string {
+    try { return displayNames?.of(code) ?? code; } catch { return code; }
+  }
 
   useEffect(() => {
     const load = () => fetch('/api/archive').then(r => r.json()).then(setData).catch(() => {});
     load();
-    const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
+    const timer = setInterval(load, 30_000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -38,7 +47,8 @@ export default function ArchivePage() {
     return data.filter(row =>
       countryName(row.code).toLowerCase().includes(q) || row.code.toLowerCase().includes(q)
     );
-  }, [data, search]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, search, displayNames]);
 
   const filteredHistory = useMemo(() => {
     return history.filter(h => {
@@ -54,29 +64,29 @@ export default function ArchivePage() {
   return (
     <div className="archive-page">
       <div className="archive-toolbar">
-        <span className="archive-title">Strike Archive</span>
+        <span className="archive-title">{t('title')}</span>
         <input
           className="archive-search"
-          placeholder="Search country…"
+          placeholder={t('searchPlaceholder')}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <span className="archive-count">{filtered.length} countries</span>
+        <span className="archive-count">{t('countriesFound', { count: filtered.length })}</span>
       </div>
 
       <div className={`archive-body${selected ? ' has-detail' : ''}`}>
         <table className="archive-table">
           <thead>
             <tr>
-              <th>Country</th>
-              <th className="col-num">Today</th>
-              <th className="col-num">All-Time High</th>
-              <th className="col-date">Date</th>
+              <th>{t('country')}</th>
+              <th className="col-num">{t('today')}</th>
+              <th className="col-num">{t('allTimeHigh')}</th>
+              <th className="col-date">{t('date')}</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={4} className="archive-empty">No data yet — strikes accumulate over time.</td></tr>
+              <tr><td colSpan={4} className="archive-empty">{t('noData')}</td></tr>
             )}
             {filtered.map(row => (
               <tr
@@ -116,25 +126,25 @@ export default function ArchivePage() {
             />
             <span className="detail-country-name">{countryName(selected)}</span>
             <div className="detail-meta">
-              <span>Today: <strong>{fmt(selectedRow.today)}</strong></span>
-              <span>Peak: <strong>{fmt(selectedRow.peakCount)}</strong> on {selectedRow.peakDate || '—'}</span>
+              <span>{t('todayLabel')} <strong>{fmt(selectedRow.today)}</strong></span>
+              <span>{t('peakLabel')} <strong>{fmt(selectedRow.peakCount)}</strong> {t('on')} {selectedRow.peakDate || '—'}</span>
             </div>
             <button className="detail-close" onClick={() => setSelected(null)}>✕</button>
           </div>
           <div className="detail-filters">
-            <label>From <input type="date" className="detail-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></label>
-            <label>To <input type="date" className="detail-input" value={dateTo} onChange={e => setDateTo(e.target.value)} /></label>
-            <label>Min strikes <input className="detail-input detail-input-sm" value={minStrikes} onChange={e => setMinStrikes(e.target.value)} placeholder="0" /></label>
+            <label>{t('from')} <input type="date" className="detail-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></label>
+            <label>{t('to')} <input type="date" className="detail-input" value={dateTo} onChange={e => setDateTo(e.target.value)} /></label>
+            <label>{t('minStrikes')} <input className="detail-input detail-input-sm" value={minStrikes} onChange={e => setMinStrikes(e.target.value)} placeholder="0" /></label>
             {(dateFrom || dateTo || minStrikes) && (
-              <button className="detail-clear" onClick={() => { setDateFrom(''); setDateTo(''); setMinStrikes(''); }}>Clear</button>
+              <button className="detail-clear" onClick={() => { setDateFrom(''); setDateTo(''); setMinStrikes(''); }}>{t('clear')}</button>
             )}
           </div>
           <div className="detail-body">
             <table className="detail-table">
-              <thead><tr><th>Date</th><th className="col-num">Strikes</th></tr></thead>
+              <thead><tr><th>{t('date')}</th><th className="col-num">{t('strikes')}</th></tr></thead>
               <tbody>
                 {filteredHistory.length === 0
-                  ? <tr><td colSpan={2} className="archive-empty">No records match the filter.</td></tr>
+                  ? <tr><td colSpan={2} className="archive-empty">{t('noRecords')}</td></tr>
                   : filteredHistory.map(h => (
                     <tr key={h.date}>
                       <td>{h.date}</td>

@@ -90,7 +90,8 @@ html, body {
   transition: background 0.2s, border-color 0.2s;
   flex-shrink: 0;
 }
-.satellite-switch input:checked + .satellite-track {
+.satellite-switch input:checked + .satellite-track,
+.settings-row input:checked + .satellite-track {
   background: rgba(255,220,0,0.25);
   border-color: #ffe040;
 }
@@ -104,7 +105,8 @@ html, body {
   background: rgba(255,255,255,0.5);
   transition: transform 0.2s, background 0.2s;
 }
-.satellite-switch input:checked + .satellite-track .satellite-thumb {
+.satellite-switch input:checked + .satellite-track .satellite-thumb,
+.settings-row input:checked + .satellite-track .satellite-thumb {
   transform: translateX(16px);
   background: #ffe040;
 }
@@ -226,11 +228,27 @@ html, body {
 
   .drawer-switches {
     display: flex;
-    justify-content: center;
-    gap: 2rem;
-    padding: 0.5rem 0 0.75rem;
+    flex-direction: column;
+    padding: 0.25rem 0 0.5rem;
     border-bottom: 1px solid rgba(255,220,0,0.1);
     margin-bottom: 0.25rem;
+  }
+  .drawer-switches .settings-toggles {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    gap: 2.5rem;
+    padding: 0.4rem 1rem 0.5rem;
+  }
+  .drawer-switches .settings-row {
+    flex: 0 0 auto;
+    border-bottom: none;
+    padding: 0;
+  }
+  .drawer-switches .settings-langs {
+    justify-content: center;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    padding: 0.5rem 1rem 0.25rem;
   }
 
   .nav-tab {
@@ -285,7 +303,7 @@ html, body {
 }
 .leaflet-control-zoom a:hover { background: rgba(255,220,0,0.15) !important; color: #ffe040 !important; }
 
-.site-icon { font-size: 1.15rem; line-height: 1; }
+.site-icon { font-size: 1.15rem; line-height: 1; color: #ffe040; }
 
 .site-title {
   font-size: 0.9rem;
@@ -718,3 +736,134 @@ html, body {
 }
 
 .detail-count { color: #ffe040; text-align: right; }
+
+/* ── Settings button + popover ── */
+.settings-btn-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.navbar-sep {
+  width: 1px;
+  height: 20px;
+  background: rgba(255,255,255,0.12);
+  flex-shrink: 0;
+}
+
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.8);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.settings-btn:hover,
+.settings-btn.active {
+  color: #ffe040;
+  border-color: rgba(255,220,0,0.45);
+  background: rgba(255,220,0,0.08);
+}
+
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+.settings-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3000;
+  min-width: 180px;
+  background: rgba(5, 5, 14, 0.97);
+  border: 1px solid rgba(255,220,0,0.2);
+  border-radius: 10px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  overflow: hidden;
+  transform-origin: top right;
+  animation: popover-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.settings-toggles {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  transition: background 0.12s;
+}
+.settings-row:hover { background: rgba(255,255,255,0.04); }
+.settings-row input { display: none; }
+
+.settings-row-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.6);
+  flex: 1;
+  transition: color 0.15s;
+}
+.settings-row:has(input:checked) .settings-row-label { color: #ffe040; }
+
+.settings-langs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.6rem 0.9rem;
+  flex-wrap: wrap;
+}
+
+.lang-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 5px;
+  color: rgba(255,255,255,0.55);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.28rem 0.5rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.lang-flag {
+  border-radius: 2px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.lang-btn:hover {
+  color: #fff;
+  border-color: rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.1);
+}
+.lang-btn.active {
+  color: #ffe040;
+  border-color: rgba(255,220,0,0.5);
+  background: rgba(255,220,0,0.12);
+}
+
+/* hide desktop settings btn and separator on mobile — drawer handles it */
+@media (max-width: 640px) {
+  .settings-btn-wrap { display: none; }
+  .navbar-sep { display: none; }
+}

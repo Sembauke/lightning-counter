@@ -1,0 +1,44 @@
+{
+  "nav": {
+    "strikemap": "Blitzkarte",
+    "bycountry": "Blitze nach Land",
+    "archive": "Blitzarchiv",
+    "satellite": "Satellit",
+    "sound": "Ton",
+    "strikes": "Blitze",
+    "toggleSatellite": "Satellitenansicht umschalten",
+    "toggleSound": "Blitzgeräusche umschalten",
+    "toggleNav": "Navigation umschalten",
+    "settings": "Einstellungen"
+  },
+  "home": {
+    "loadingMap": "Karte wird geladen…"
+  },
+  "countries": {
+    "title": "Blitze nach Land",
+    "totalStrikes": "{count} Blitze gesamt",
+    "waiting": "Warte auf Daten…",
+    "country": "Land",
+    "strikes": "Blitze",
+    "share": "Anteil"
+  },
+  "stats": {
+    "title": "Blitzarchiv",
+    "searchPlaceholder": "Land suchen…",
+    "countriesFound": "{count} Länder",
+    "country": "Land",
+    "today": "Heute",
+    "allTimeHigh": "Allzeitrekord",
+    "date": "Datum",
+    "noData": "Noch keine Daten — Blitze sammeln sich über die Zeit an.",
+    "todayLabel": "Heute:",
+    "peakLabel": "Rekord:",
+    "on": "am",
+    "from": "Von",
+    "to": "Bis",
+    "minStrikes": "Min. Blitze",
+    "clear": "Löschen",
+    "strikes": "Blitze",
+    "noRecords": "Keine Datensätze entsprechen dem Filter."
+  }
+}

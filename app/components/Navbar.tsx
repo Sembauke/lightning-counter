@@ -4,8 +4,12 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import CountUp from 'react-countup';
+import { useTranslations } from 'next-intl';
 import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
+import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
+
+const LOCALE_FLAGS: Record<Locale, string> = { en: 'gb', nl: 'nl', de: 'de', fr: 'fr', es: 'es' };
 
 function useNavCount() {
   const [display, setDisplay] = useState(0);
@@ -23,7 +27,7 @@ function useNavCount() {
           targetRef.current = d.total;
           if (!seededRef.current) {
             seededRef.current = true;
-            setDisplay(d.total); // jump to real value on first message
+            setDisplay(d.total);
           }
         }
       } catch { /* ignore */ }
@@ -40,7 +44,6 @@ function useNavCount() {
         const target = targetRef.current;
         if (prev >= target) return prev;
         const delta = target - prev;
-        // catch up faster when far behind, tick by 1 when close
         return prev + (delta > 50 ? Math.ceil(delta / 20) : 1);
       });
     }, 100);
@@ -50,106 +53,134 @@ function useNavCount() {
   return { display, connected };
 }
 
-function StrikeCount({ display }: { display: number; connected: boolean }) {
+function StrikeCount({ display, t }: { display: number; connected: boolean; t: ReturnType<typeof useTranslations> }) {
   return (
     <>
       <span className="navbar-count-num">
         <CountUp preserveValue end={display} separator="," duration={0.1} />
       </span>
-      <span className="navbar-count-label">strikes</span>
+      <span className="navbar-count-label">{t('strikes')}</span>
     </>
   );
 }
 
 export default function Navbar() {
   const path = usePathname();
-  const [open, setOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
   const { display, connected } = useNavCount();
   const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
+  const { locale, setLocale } = useLocale();
+  const t = useTranslations('nav');
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [settingsOpen]);
 
   const tabs = [
-    { href: '/',          label: 'Strike Map' },
-    { href: '/countries', label: 'By Country' },
-    { href: '/stats',     label: 'Archive' },
+    { href: '/',          label: t('strikemap') },
+    { href: '/countries', label: t('bycountry') },
+    { href: '/stats',     label: t('archive') },
   ];
+
+  const langButtons = LOCALES.map(l => (
+    <button key={l} className={`lang-btn${locale === l ? ' active' : ''}`} onClick={() => setLocale(l)}>
+      <img src={`https://flagcdn.com/w20/${LOCALE_FLAGS[l]}.png`} width={16} height={12} alt={l} className="lang-flag" />
+      {l.toUpperCase()}
+    </button>
+  ));
+
+  const switches = (
+    <>
+      <div className="settings-toggles">
+        <label className="settings-row" aria-label={t('toggleSatellite')}>
+          <span className="settings-row-label">{t('satellite')}</span>
+          <input type="checkbox" checked={satellite} onChange={toggleSatellite} />
+          <span className="satellite-track"><span className="satellite-thumb" /></span>
+        </label>
+        <label className="settings-row" aria-label={t('toggleSound')}>
+          <span className="settings-row-label">{t('sound')}</span>
+          <input type="checkbox" checked={sound} onChange={toggleSound} />
+          <span className="satellite-track"><span className="satellite-thumb" /></span>
+        </label>
+      </div>
+      <div className="settings-langs">
+        {langButtons}
+      </div>
+    </>
+  );
 
   return (
     <>
       <nav className="navbar">
-        <div className="navbar-brand">
+        <div className="navbar-brand" translate="no">
           <span className="site-icon">⚡</span>
           <span className="site-title">Lightning Stats</span>
         </div>
 
-        {/* Desktop tabs */}
         <div className="navbar-tabs">
-          {tabs.map(t => (
-            <Link key={t.href} href={t.href} className={`nav-tab${path === t.href ? ' active' : ''}`}>
-              {t.label}
+          {tabs.map(tab => (
+            <Link key={tab.href} href={tab.href} className={`nav-tab${path === tab.href ? ' active' : ''}`}>
+              {tab.label}
             </Link>
           ))}
         </div>
 
-        {/* Satellite toggle */}
-        <label className="satellite-switch" aria-label="Toggle satellite view">
-          <input type="checkbox" checked={satellite} onChange={toggleSatellite} />
-          <span className="satellite-track">
-            <span className="satellite-thumb" />
-          </span>
-          <span className="satellite-label">Satellite</span>
-        </label>
+        <div className="navbar-sep" aria-hidden="true" />
 
-        {/* Sound toggle */}
-        <label className="satellite-switch" aria-label="Toggle strike sounds">
-          <input type="checkbox" checked={sound} onChange={toggleSound} />
-          <span className="satellite-track">
-            <span className="satellite-thumb" />
-          </span>
-          <span className="satellite-label">Sound</span>
-        </label>
-
-        {/* Desktop count — right side */}
-        <div className="navbar-count">
-          <StrikeCount display={display} connected={connected} />
+        {/* Desktop ⚙ settings button + popover */}
+        <div className="settings-btn-wrap" ref={settingsRef}>
+          <button
+            className={`settings-btn${settingsOpen ? ' active' : ''}`}
+            onClick={() => setSettingsOpen(o => !o)}
+            aria-label={t('settings')}
+          >
+            ⚙ {t('settings')}
+          </button>
+          {settingsOpen && (
+            <div className="settings-popover">
+              {switches}
+            </div>
+          )}
         </div>
 
-        {/* Mobile hamburger */}
+        <div className="navbar-count">
+          <StrikeCount display={display} connected={connected} t={t} />
+        </div>
+
         <button
           className="navbar-menu-btn"
-          onClick={() => setOpen(o => !o)}
-          aria-label="Toggle navigation"
-          aria-expanded={open}
+          onClick={() => setDrawerOpen(o => !o)}
+          aria-label={t('toggleNav')}
+          aria-expanded={drawerOpen}
         >
-          {open ? '✕' : '☰'}
+          {drawerOpen ? '✕' : '☰'}
         </button>
       </nav>
 
-      {/* Mobile dropdown — sits below the stats bar */}
-      <div className={`navbar-dropdown${open ? ' open' : ''}`}>
-        {/* Switches at the top of the drawer */}
+      {/* Mobile dropdown */}
+      <div className={`navbar-dropdown${drawerOpen ? ' open' : ''}`}>
         <div className="drawer-switches">
-          <label className="satellite-switch" aria-label="Toggle satellite view">
-            <input type="checkbox" checked={satellite} onChange={toggleSatellite} />
-            <span className="satellite-track"><span className="satellite-thumb" /></span>
-            <span className="satellite-label">Satellite</span>
-          </label>
-          <label className="satellite-switch" aria-label="Toggle strike sounds">
-            <input type="checkbox" checked={sound} onChange={toggleSound} />
-            <span className="satellite-track"><span className="satellite-thumb" /></span>
-            <span className="satellite-label">Sound</span>
-          </label>
+          {switches}
         </div>
-        {tabs.map(t => (
-          <Link key={t.href} href={t.href} className={`nav-tab${path === t.href ? ' active' : ''}`} onClick={() => setOpen(false)}>
-            {t.label}
+        {tabs.map(tab => (
+          <Link key={tab.href} href={tab.href} className={`nav-tab${path === tab.href ? ' active' : ''}`} onClick={() => setDrawerOpen(false)}>
+            {tab.label}
           </Link>
         ))}
       </div>
 
-      {/* Mobile stats bar — fixed below navbar, same styling */}
       <div className="navbar-stats-bar">
-        <StrikeCount display={display} connected={connected} />
+        <StrikeCount display={display} connected={connected} t={t} />
       </div>
     </>
   );

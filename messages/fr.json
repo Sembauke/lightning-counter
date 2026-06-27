@@ -1,0 +1,44 @@
+{
+  "nav": {
+    "strikemap": "Carte des éclairs",
+    "bycountry": "Éclairs par pays",
+    "archive": "Archive des éclairs",
+    "satellite": "Satellite",
+    "sound": "Son",
+    "strikes": "éclairs",
+    "toggleSatellite": "Basculer la vue satellite",
+    "toggleSound": "Basculer les sons d'éclairs",
+    "toggleNav": "Basculer la navigation",
+    "settings": "Paramètres"
+  },
+  "home": {
+    "loadingMap": "Chargement de la carte…"
+  },
+  "countries": {
+    "title": "Éclairs par pays",
+    "totalStrikes": "{count} éclairs au total",
+    "waiting": "En attente de données…",
+    "country": "Pays",
+    "strikes": "Éclairs",
+    "share": "Part"
+  },
+  "stats": {
+    "title": "Archive des éclairs",
+    "searchPlaceholder": "Rechercher un pays…",
+    "countriesFound": "{count} pays",
+    "country": "Pays",
+    "today": "Aujourd'hui",
+    "allTimeHigh": "Record absolu",
+    "date": "Date",
+    "noData": "Aucune donnée pour l'instant — les données s'accumulent avec le temps.",
+    "todayLabel": "Aujourd'hui :",
+    "peakLabel": "Record :",
+    "on": "le",
+    "from": "Du",
+    "to": "Au",
+    "minStrikes": "Min. éclairs",
+    "clear": "Effacer",
+    "strikes": "Éclairs",
+    "noRecords": "Aucun enregistrement ne correspond au filtre."
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "nav": {
+    "strikemap": "Mapa de rayos",
+    "bycountry": "Rayos por país",
+    "archive": "Archivo de rayos",
+    "satellite": "Satélite",
+    "sound": "Sonido",
+    "strikes": "rayos",
+    "toggleSatellite": "Alternar vista satélite",
+    "toggleSound": "Alternar sonidos de rayos",
+    "toggleNav": "Alternar navegación",
+    "settings": "Ajustes"
+  },
+  "home": {
+    "loadingMap": "Cargando mapa…"
+  },
+  "countries": {
+    "title": "Rayos por país",
+    "totalStrikes": "{count} rayos en total",
+    "waiting": "Esperando datos…",
+    "country": "País",
+    "strikes": "Rayos",
+    "share": "Porcentaje"
+  },
+  "stats": {
+    "title": "Archivo de rayos",
+    "searchPlaceholder": "Buscar país…",
+    "countriesFound": "{count} países",
+    "country": "País",
+    "today": "Hoy",
+    "allTimeHigh": "Récord histórico",
+    "date": "Fecha",
+    "noData": "Aún no hay datos — los rayos se acumulan con el tiempo.",
+    "todayLabel": "Hoy:",
+    "peakLabel": "Récord:",
+    "on": "el",
+    "from": "Desde",
+    "to": "Hasta",
+    "minStrikes": "Min. rayos",
+    "clear": "Borrar",
+    "strikes": "Rayos",
+    "noRecords": "No hay registros que coincidan con el filtro."
+  }
+}

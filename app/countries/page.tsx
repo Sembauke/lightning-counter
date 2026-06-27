@@ -2,43 +2,52 @@
 
 import { useBlitzortung } from '../hooks/useBlitzortung';
 import { useMemo } from 'react';
+import { useTranslations } from 'next-intl';
+import { useLocale } from '../context/LocaleContext';
 
-const displayNames = typeof Intl !== 'undefined' ? new Intl.DisplayNames(['en'], { type: 'region' }) : null;
-function countryName(code: string): string {
-  try { return displayNames?.of(code) ?? code; } catch { return code; }
-}
-
-function fmt(n: number) { return n.toLocaleString('en-US'); }
+function fmt(n: number) { return n.toLocaleString(); }
 
 export default function CountriesPage() {
   const { countryCounts, totalCount } = useBlitzortung();
+  const t = useTranslations('countries');
+  const { locale } = useLocale();
+
+  const displayNames = useMemo(() => {
+    if (typeof Intl === 'undefined') return null;
+    try { return new Intl.DisplayNames([locale], { type: 'region' }); } catch { return null; }
+  }, [locale]);
+
+  function countryName(code: string): string {
+    try { return displayNames?.of(code) ?? code; } catch { return code; }
+  }
 
   const ranked = useMemo(() => {
     return Object.entries(countryCounts)
       .map(([code, count]) => ({ code, count, name: countryName(code) }))
       .sort((a, b) => b.count - a.count);
-  }, [countryCounts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countryCounts, displayNames]);
 
   const topCount = ranked[0]?.count ?? 1;
 
   return (
     <div className="country-list-page">
       <div className="country-list-header">
-        <span className="country-list-title">Strikes per Country</span>
-        <span className="country-list-meta">{fmt(totalCount)} total strikes</span>
+        <span className="country-list-title">{t('title')}</span>
+        <span className="country-list-meta">{t('totalStrikes', { count: fmt(totalCount) })}</span>
       </div>
 
       <div className="country-list-body">
         {ranked.length === 0 ? (
-          <div className="country-list-empty">Waiting for data…</div>
+          <div className="country-list-empty">{t('waiting')}</div>
         ) : (
           <table className="country-list-table">
             <thead>
               <tr>
-                <th>Country</th>
-                <th className="cl-num">Strikes</th>
+                <th>{t('country')}</th>
+                <th className="cl-num">{t('strikes')}</th>
                 <th className="cl-bar-col"></th>
-                <th className="cl-pct">Share</th>
+                <th className="cl-pct">{t('share')}</th>
               </tr>
             </thead>
             <tbody>
