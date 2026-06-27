@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch } from '../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,6 +18,9 @@ let todayCounts: Record<string, number> = { ...loadDailyStrikes(currentDay) };
 (globalThis as any)._todayCounts = todayCounts;
 (globalThis as any)._todayDate = currentDay;
 
+// Buffer for grid strike archival — flushed to SQLite every 5s instead of per-strike
+const pendingGridStrikes: Array<{ lat: number; lon: number; time: number }> = [];
+
 // Ring buffer of recent strikes for map history on reconnect (last 30 min, max 5000)
 interface RecentStrike { lat: number; lon: number; cc: string | null; time: number }
 const recentStrikes: RecentStrike[] = [];
@@ -30,13 +33,20 @@ setInterval(() => {
   while (recentStrikes.length > 0 && recentStrikes[0].time < cutoff) recentStrikes.shift();
 }, 60_000);
 
-// Flush to SQLite every 30 seconds
+// Flush counters to SQLite every 30 seconds
 setInterval(() => {
   try {
     saveCounters(serverTotal, serverCountryCounts);
     saveDailyAndPeaks(currentDay, todayCounts);
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
+
+// Flush grid strikes in batches every 5 seconds
+setInterval(() => {
+  if (pendingGridStrikes.length === 0) return;
+  const batch = pendingGridStrikes.splice(0);
+  try { archiveGridStrikeBatch(batch); } catch (err) { console.error('[db] grid batch failed:', err); }
+}, 5_000);
 
 export async function GET() {
   let client: ReturnType<typeof mqtt.connect> | null = null;
@@ -92,7 +102,7 @@ export async function GET() {
               todayCounts[cc] = (todayCounts[cc] ?? 0) + 1;
             }
             recentStrikes.push({ lat: d.lat, lon: d.lon, cc, time: Date.now() });
-            try { archiveGridStrike(d.lat, d.lon, Date.now()); } catch { /* non-fatal */ }
+            pendingGridStrikes.push({ lat: d.lat, lon: d.lon, time: Date.now() });
             if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
             send(`data: ${JSON.stringify({ lat: d.lat, lon: d.lon, cc })}\n\n`);
           }

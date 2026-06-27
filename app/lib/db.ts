@@ -11,6 +11,9 @@ function getDb(): Database.Database {
   if (_db) return _db;
   fs.mkdirSync(DB_DIR, { recursive: true });
   _db = new Database(DB_FILE);
+  _db.pragma('journal_mode = WAL');
+  _db.pragma('synchronous = NORMAL');
+  _db.pragma('cache_size = -8000'); // 8MB page cache
   _db.exec(`
     CREATE TABLE IF NOT EXISTS counters (
       key   TEXT PRIMARY KEY,
@@ -130,17 +133,24 @@ export function latLonToCellId(lat: number, lon: number): string {
   return `${col},${row}`;
 }
 
-export function archiveGridStrike(lat: number, lon: number, time: number): void {
+export function archiveGridStrikeBatch(strikes: Array<{ lat: number; lon: number; time: number }>): void {
+  if (strikes.length === 0) return;
   const db = getDb();
-  const cellId = latLonToCellId(lat, lon);
-  db.prepare(`INSERT INTO grid_strikes (cell_id, strike_time, lat, lon) VALUES (?, ?, ?, ?)`).run(cellId, time, lat, lon);
-  db.prepare(`
+  const insertStrike = db.prepare(`INSERT INTO grid_strikes (cell_id, strike_time, lat, lon) VALUES (?, ?, ?, ?)`);
+  const upsertCell = db.prepare(`
     INSERT INTO grid_cells (cell_id, total_strikes, last_strike_time)
     VALUES (?, 1, ?)
     ON CONFLICT(cell_id) DO UPDATE SET
       total_strikes = total_strikes + 1,
-      last_strike_time = excluded.last_strike_time
-  `).run(cellId, time);
+      last_strike_time = MAX(last_strike_time, excluded.last_strike_time)
+  `);
+  db.transaction(() => {
+    for (const { lat, lon, time } of strikes) {
+      const cellId = latLonToCellId(lat, lon);
+      insertStrike.run(cellId, time, lat, lon);
+      upsertCell.run(cellId, time);
+    }
+  })();
 }
 
 export function getGridCellPage(
