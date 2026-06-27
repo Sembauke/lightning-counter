@@ -1,5 +1,7 @@
 'use client';
 
+import { buildCounterItems } from '../lib/formatCounter';
+
 interface Props {
   totalCount: number;
   connected: boolean;
@@ -22,20 +24,7 @@ function RollingDigit({ digit }: { digit: string }) {
 }
 
 export default function StrikeCounter({ totalCount, connected }: Props) {
-  const raw = totalCount.toString();
-  const digits = raw.split('');
-  const len = digits.length;
-
-  // Build digit + comma items with stable keys (keyed from the right so
-  // existing digit components are reused as the number grows left)
-  const items: Array<{ type: 'digit' | 'comma'; digit?: string; key: string }> = [];
-  digits.forEach((d, i) => {
-    const posFromRight = len - 1 - i;
-    if (i > 0 && posFromRight % 3 === 0) {
-      items.push({ type: 'comma', key: `comma-${posFromRight}` });
-    }
-    items.push({ type: 'digit', digit: d, key: `pos-${posFromRight}` });
-  });
+  const items = buildCounterItems(totalCount);
 
   return (
     <div className="strike-badge">
