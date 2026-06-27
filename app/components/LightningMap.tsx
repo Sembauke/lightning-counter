@@ -618,6 +618,7 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
     const handleClick = (e: MouseEvent) => {
       const s = stateRef.current;
       if (!s.map || !heatmapEnabledRef.current) return;
+      if (window.matchMedia('(pointer: coarse)').matches) return;
       if (Date.now() - lastDragEndRef.current < 300) return;
       if (isSelectingRef.current) return;
       const rect = container.getBoundingClientRect();
@@ -657,6 +658,7 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
       if (!e.shiftKey) return;
       const s = stateRef.current;
       if (!s.map || !heatmapEnabledRef.current) return;
+      if (window.matchMedia('(pointer: coarse)').matches) return;
       e.preventDefault();
       const cRect = container.getBoundingClientRect();
       const x = e.clientX - cRect.left;

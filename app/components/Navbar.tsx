@@ -59,15 +59,16 @@ function useNavCount() {
 function StrikeCount({ display, viewers, t }: { display: number; connected: boolean; viewers: number; t: ReturnType<typeof useTranslations> }) {
   return (
     <>
-      <span className="navbar-count-num">
-        <CountUp preserveValue end={display} separator="," duration={0.1} />
+      <span className="navbar-count-main">
+        <span className="navbar-count-num">
+          <CountUp preserveValue end={display} separator="," duration={0.1} />
+        </span>
+        <span className="navbar-count-label">{t('strikes')}</span>
       </span>
-      <span className="navbar-count-label">{t('strikes')}</span>
       {viewers > 0 && (
-        <>
-          <span className="navbar-count-sep">·</span>
+        <span className="navbar-count-viewers">
           <span className="navbar-viewers">{viewers} {t('watching')}</span>
-        </>
+        </span>
       )}
     </>
   );

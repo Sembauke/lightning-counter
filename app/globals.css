@@ -148,10 +148,22 @@ html, body {
   text-transform: uppercase;
 }
 
-.navbar-count-sep {
+.navbar-count-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.navbar-count-viewers {
+  display: flex;
+  align-items: center;
+}
+
+/* Separator dot between discharge count and viewer count on desktop */
+.navbar-count .navbar-count-viewers::before {
+  content: '·';
   color: rgba(255,255,255,0.25);
-  font-size: 1rem;
-  margin: 0 0.1rem;
+  margin: 0 0.4rem;
 }
 
 .navbar-viewers {
@@ -212,40 +224,45 @@ html, body {
 
   .navbar-stats-bar {
     display: flex;
+    flex-direction: column;
     position: fixed;
     top: 48px;
     left: 0;
     right: 0;
-    height: 40px;
     z-index: 1999;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
+    padding: 5px 0;
+    gap: 1px;
     background: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(12px);
     border-bottom: 1px solid rgba(255, 220, 0, 0.15);
   }
 
+  .navbar-stats-bar .navbar-count-main {
+    gap: 0.4rem;
+  }
+
+  .navbar-stats-bar .navbar-count-viewers::before {
+    display: none;
+  }
+
   .navbar-stats-bar .navbar-count-num {
-    font-size: 0.95rem;
+    font-size: 1rem;
   }
 
   .navbar-stats-bar .navbar-count-label {
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     letter-spacing: 0.06em;
   }
 
-  .navbar-stats-bar .navbar-count-sep {
-    font-size: 0.85rem;
-  }
-
   .navbar-stats-bar .navbar-viewers {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
   }
 
   .navbar-dropdown {
     position: fixed;
-    top: 88px;
+    top: 96px;
     left: 0;
     right: 0;
     z-index: 2001;
@@ -291,9 +308,9 @@ html, body {
     font-size: 0.9rem;
   }
 
-  .map-container { top: 88px; }
-  .country-list-page { padding-top: 88px; }
-  .archive-page { padding-top: 88px; }
+  .map-container { top: 96px; }
+  .country-list-page { padding-top: 96px; }
+  .archive-page { padding-top: 96px; }
 }
 
 /* ── App shell ── */
