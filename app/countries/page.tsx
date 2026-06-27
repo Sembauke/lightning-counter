@@ -35,7 +35,6 @@ export default function CountriesPage() {
           <table className="country-list-table">
             <thead>
               <tr>
-                <th className="cl-rank">#</th>
                 <th>Country</th>
                 <th className="cl-num">Strikes</th>
                 <th className="cl-bar-col"></th>
@@ -43,9 +42,8 @@ export default function CountriesPage() {
               </tr>
             </thead>
             <tbody>
-              {ranked.map(({ code, count, name }, i) => (
+              {ranked.map(({ code, count, name }) => (
                 <tr key={code} className="cl-row">
-                  <td className="cl-rank">{i + 1}</td>
                   <td>
                     <div className="cl-country">
                       <img
