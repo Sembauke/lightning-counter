@@ -133,10 +133,10 @@ export default function Navbar() {
   return (
     <>
       <nav className="navbar">
-        <div className="navbar-brand" translate="no">
+        <Link href="/" className="navbar-brand" translate="no">
           <span className="site-icon">⚡</span>
           <span className="site-title">Lightning Stats</span>
-        </div>
+        </Link>
 
         {/* Desktop "More" pages dropdown */}
         <div className="settings-btn-wrap" ref={more.ref}>

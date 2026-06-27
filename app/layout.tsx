@@ -14,9 +14,9 @@ export const metadata: Metadata = {
     template: '%s | Lightning Stats',
   },
   description:
-    'Watch lightning strikes happen live anywhere on Earth. Real-time data from Blitzortung.org with sound alerts, satellite imagery, and strike statistics by country.',
+    'Watch lightning discharges happen live anywhere on Earth. Real-time data from Blitzortung.org with sound alerts, satellite imagery, and discharge statistics by country.',
   keywords: [
-    'lightning tracker', 'real-time lightning map', 'live lightning strikes',
+    'lightning tracker', 'real-time lightning map', 'live lightning discharges',
     'blitzortung', 'storm tracker', 'weather map', 'lightning statistics',
     'thunder map', 'lightning counter', 'global lightning',
   ],
@@ -28,14 +28,14 @@ export const metadata: Metadata = {
     siteName: 'Lightning Stats',
     title: 'Lightning Stats — Real-Time Global Lightning Tracker',
     description:
-      'Watch lightning strikes happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
+      'Watch lightning discharges happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
     locale: 'en_US',
   },
   twitter: {
     card: 'summary',
     title: 'Lightning Stats — Real-Time Global Lightning Tracker',
     description:
-      'Watch lightning strikes happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
+      'Watch lightning discharges happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
   },
   robots: { index: true, follow: true },
   alternates: { canonical: BASE },

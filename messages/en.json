@@ -1,13 +1,13 @@
 {
   "nav": {
-    "strikemap": "Strike Map",
-    "bycountry": "Strikes by Country",
-    "archive": "Strike Archive",
+    "strikemap": "Discharge Map",
+    "bycountry": "Discharges by Country",
+    "archive": "Discharge Archive",
     "satellite": "Satellite",
     "sound": "Sound",
-    "strikes": "strikes",
+    "strikes": "discharges",
     "toggleSatellite": "Toggle satellite view",
-    "toggleSound": "Toggle strike sounds",
+    "toggleSound": "Toggle discharge sounds",
     "toggleNav": "Toggle navigation",
     "watching": "watching",
     "more": "More",
@@ -17,30 +17,30 @@
     "loadingMap": "Loading map…"
   },
   "countries": {
-    "title": "Strikes per Country",
-    "totalStrikes": "{count} total strikes",
+    "title": "Discharges per Country",
+    "totalStrikes": "{count} total discharges",
     "waiting": "Waiting for data…",
     "country": "Country",
-    "strikes": "Strikes",
+    "strikes": "Discharges",
     "share": "Share"
   },
   "stats": {
-    "title": "Strike Archive",
+    "title": "Discharge Archive",
     "searchPlaceholder": "Search country…",
     "countriesFound": "{count} countries",
     "country": "Country",
     "today": "Today",
     "allTimeHigh": "All-Time High",
     "date": "Date",
-    "noData": "No data yet — strikes accumulate over time.",
+    "noData": "No data yet — discharges accumulate over time.",
     "todayLabel": "Today:",
     "peakLabel": "Peak:",
     "on": "on",
     "from": "From",
     "to": "To",
-    "minStrikes": "Min strikes",
+    "minStrikes": "Min discharges",
     "clear": "Clear",
-    "strikes": "Strikes",
+    "strikes": "Discharges",
     "noRecords": "No records match the filter."
   }
 }

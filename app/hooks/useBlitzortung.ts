@@ -21,30 +21,15 @@ export function useBlitzortung() {
   const [countryCounts, setCountryCounts] = useState<CountryCounts>({});
   const [connected, setConnected] = useState(false);
 
-  const wsRef = useRef<WebSocket | null>(null);
   const counterRef = useRef(0);
-
-  // WebSocket for authoritative total count
-  useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws`);
-    wsRef.current = ws;
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data) as { total: number };
-        if (typeof data.total === 'number') setTotalCount(data.total);
-      } catch { /* ignore */ }
-    };
-    return () => ws.close();
-  }, []);
 
   useEffect(() => {
     const es = new EventSource('/api/strikes');
 
-    // Seed country counts from server (total comes from WebSocket)
     es.addEventListener('init', (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data) as { total: number; countries: CountryCounts };
+        setTotalCount(data.total);
         setCountryCounts(data.countries);
       } catch { /* ignore */ }
     });
