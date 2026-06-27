@@ -34,30 +34,24 @@ function getMarkerStyle(ageMs: number) {
   return { radius: 2, fillColor: '#ff4400', color: '#ff4400', fillOpacity: 0.45 * (1 - fadeT), opacity: 0, weight: 0 };
 }
 
-function animateFlash(L: any, layer: any, svgRenderer: any, lat: number, lon: number) {
+function animateFlash(L: any, layer: any, canvasRenderer: any, lat: number, lon: number) {
   const ring = L.circleMarker([lat, lon], {
     radius: 3,
     color: '#ffffff',
     weight: 1.5,
     fillOpacity: 0,
     opacity: 0.9,
-    renderer: svgRenderer,
+    renderer: canvasRenderer,
   }).addTo(layer);
 
-  const duration = 4000; // ~4 s, fades like rolling thunder
+  const duration = 2500;
   const start = performance.now();
 
   const tick = (now: number) => {
     const p = Math.min((now - start) / duration, 1);
     if (p >= 1) { layer.removeLayer(ring); return; }
-
-    // Fast burst then slow drift — sound wave expanding outward
-    const expand = 1 - Math.pow(1 - p, 0.35);
-    ring.setRadius(3 + expand * 44);
-
-    // Inverse-square-ish fade — loud up close, inaudible at distance
-    ring.setStyle({ opacity: Math.pow(1 - p, 2) * 0.9 });
-
+    ring.setRadius(3 + (1 - Math.pow(1 - p, 0.35)) * 40);
+    ring.setStyle({ opacity: Math.pow(1 - p, 2) * 0.85 });
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -70,8 +64,6 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
     markers: new Map(), processed: new Set(),
     styleInterval: null, ready: false,
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const svgRendererRef = useRef<any>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -103,7 +95,6 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
       }).addTo(map);
 
       s.renderer = L.canvas({ padding: 0.5 });
-      svgRendererRef.current = L.svg({ padding: 0.5 });
       s.layer = L.layerGroup().addTo(map);
       s.map = map;
       s.ready = true;
@@ -150,7 +141,7 @@ export default function LightningMap({ strikes }: { strikes: Strike[] }) {
         // Only flash strikes that are genuinely new (not pre-loaded history)
         const isLive = !strike.id.startsWith('hist-');
         if (isLive) {
-          animateFlash(L, s.layer, svgRendererRef.current, strike.lat, strike.lon);
+          animateFlash(L, s.layer, s.renderer, strike.lat, strike.lon);
         }
 
         const style = getMarkerStyle(0);
