@@ -45,14 +45,14 @@ function animateFlash(L: any, layer: any, svgRenderer: any, lat: number, lon: nu
   }).addTo(layer);
 
   let frame = 0;
-  const totalFrames = 18;
+  const totalFrames = 8;
 
   const tick = () => {
     frame++;
     const p = frame / totalFrames;
     if (p >= 1) { layer.removeLayer(ring); return; }
-    ring.setRadius(3 + p * 18);
-    ring.setStyle({ opacity: (1 - p) * 0.85 });
+    ring.setRadius(3 + p * 28);
+    ring.setStyle({ opacity: (1 - p) * 0.9 });
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
