@@ -11,7 +11,9 @@
     "toggleNav": "Basculer la navigation",
     "watching": "en ligne",
     "more": "Plus",
-    "settings": "Paramètres"
+    "settings": "Paramètres",
+    "heatmap": "Heatmap",
+    "toggleHeatmap": "Toggle heatmap"
   },
   "home": {
     "loadingMap": "Chargement de la carte…"

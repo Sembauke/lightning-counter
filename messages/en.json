@@ -11,7 +11,9 @@
     "toggleNav": "Toggle navigation",
     "watching": "watching",
     "more": "More",
-    "settings": "Settings"
+    "settings": "Settings",
+    "heatmap": "Heatmap",
+    "toggleHeatmap": "Toggle heatmap"
   },
   "home": {
     "loadingMap": "Loading map…"

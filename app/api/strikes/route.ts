@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrike } from '../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -92,6 +92,7 @@ export async function GET() {
               todayCounts[cc] = (todayCounts[cc] ?? 0) + 1;
             }
             recentStrikes.push({ lat: d.lat, lon: d.lon, cc, time: Date.now() });
+            try { archiveGridStrike(d.lat, d.lon, Date.now()); } catch { /* non-fatal */ }
             if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
             send(`data: ${JSON.stringify({ lat: d.lat, lon: d.lon, cc })}\n\n`);
           }

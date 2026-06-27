@@ -8,6 +8,7 @@ import { useTranslations } from 'next-intl';
 import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
+import { useHeatmap } from '../context/HeatmapContext';
 
 const LOCALE_FLAGS: Record<Locale, string> = { en: 'gb', nl: 'nl', de: 'de', fr: 'fr', es: 'es' };
 
@@ -91,9 +92,11 @@ export default function Navbar() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const more = usePopover();
   const settings = usePopover();
+  const tools = usePopover();
   const { display, connected, viewers } = useNavCount();
   const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
+  const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
 
@@ -130,6 +133,16 @@ export default function Navbar() {
     </>
   );
 
+  const toolsSwitches = (
+    <div className="settings-toggles">
+      <label className="settings-row" aria-label={t('toggleHeatmap')}>
+        <span className="settings-row-label">{t('heatmap')}</span>
+        <input type="checkbox" checked={heatmapEnabled} onChange={toggleHeatmap} />
+        <span className="satellite-track"><span className="satellite-thumb" /></span>
+      </label>
+    </div>
+  );
+
   return (
     <>
       <nav className="navbar">
@@ -163,6 +176,21 @@ export default function Navbar() {
         </div>
 
         <div className="navbar-sep" aria-hidden="true" />
+
+        {/* Desktop Tools popover */}
+        <div className="settings-btn-wrap" ref={tools.ref}>
+          <button
+            className={`settings-btn${tools.open ? ' active' : ''}`}
+            onClick={() => tools.setOpen(o => !o)}
+          >
+            Tools ▾
+          </button>
+          {tools.open && (
+            <div className="settings-popover">
+              {toolsSwitches}
+            </div>
+          )}
+        </div>
 
         {/* Desktop ⚙ settings popover */}
         <div className="settings-btn-wrap" ref={settings.ref}>
@@ -198,6 +226,9 @@ export default function Navbar() {
       <div className={`navbar-dropdown${drawerOpen ? ' open' : ''}`}>
         <div className="drawer-switches">
           {switches}
+        </div>
+        <div className="drawer-switches">
+          {toolsSwitches}
         </div>
         {tabs.map(tab => (
           <Link key={tab.href} href={tab.href} className={`nav-tab${path === tab.href ? ' active' : ''}`} onClick={() => setDrawerOpen(false)}>

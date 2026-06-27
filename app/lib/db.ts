@@ -31,6 +31,21 @@ function getDb(): Database.Database {
       count INTEGER NOT NULL,
       date TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS grid_cells (
+      cell_id TEXT PRIMARY KEY,
+      total_strikes INTEGER NOT NULL DEFAULT 0,
+      last_strike_time INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS grid_strikes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cell_id TEXT NOT NULL,
+      strike_time INTEGER NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_gs_cell_time ON grid_strikes(cell_id, strike_time DESC);
+    CREATE INDEX IF NOT EXISTS idx_gs_latlon ON grid_strikes(lat, lon);
+    DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-7 days') * 1000;
   `);
   return _db;
 }
@@ -95,4 +110,83 @@ export function saveDailyAndPeaks(date: string, daily: Record<string, number>): 
       }
     }
   })();
+}
+
+const FIXED_BIN_ZOOM = 9;
+const FIXED_DISPLAY_PX = 24;
+
+function serverProject(lat: number, lon: number, zoom: number): { x: number; y: number } {
+  const scale = 256 * Math.pow(2, zoom);
+  const x = ((lon + 180) / 360) * scale;
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+  const y = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale;
+  return { x, y };
+}
+
+export function latLonToCellId(lat: number, lon: number): string {
+  const p = serverProject(lat, lon, FIXED_BIN_ZOOM);
+  const col = Math.floor(p.x / FIXED_DISPLAY_PX);
+  const row = Math.floor(p.y / FIXED_DISPLAY_PX);
+  return `${col},${row}`;
+}
+
+export function archiveGridStrike(lat: number, lon: number, time: number): void {
+  const db = getDb();
+  const cellId = latLonToCellId(lat, lon);
+  db.prepare(`INSERT INTO grid_strikes (cell_id, strike_time, lat, lon) VALUES (?, ?, ?, ?)`).run(cellId, time, lat, lon);
+  db.prepare(`
+    INSERT INTO grid_cells (cell_id, total_strikes, last_strike_time)
+    VALUES (?, 1, ?)
+    ON CONFLICT(cell_id) DO UPDATE SET
+      total_strikes = total_strikes + 1,
+      last_strike_time = excluded.last_strike_time
+  `).run(cellId, time);
+}
+
+export function getGridCellPage(
+  cellId: string,
+  page: number,
+  limit: number
+): {
+  cell: { cell_id: string; total_strikes: number; last_strike_time: number } | null;
+  strikes: Array<{ id: number; strike_time: number; lat: number; lon: number }>;
+  total: number;
+} {
+  const db = getDb();
+  const cell = db.prepare('SELECT cell_id, total_strikes, last_strike_time FROM grid_cells WHERE cell_id = ?').get(cellId) as
+    | { cell_id: string; total_strikes: number; last_strike_time: number }
+    | undefined;
+  if (!cell) return { cell: null, strikes: [], total: 0 };
+  const offset = (page - 1) * limit;
+  const strikes = db.prepare(
+    'SELECT id, strike_time, lat, lon FROM grid_strikes WHERE cell_id = ? ORDER BY strike_time DESC LIMIT ? OFFSET ?'
+  ).all(cellId, limit, offset) as Array<{ id: number; strike_time: number; lat: number; lon: number }>;
+  return { cell, strikes, total: cell.total_strikes };
+}
+
+export function getViewportStrikes(
+  minLat: number, maxLat: number, minLon: number, maxLon: number,
+  since: number, limit = 20_000
+): Array<{ lat: number; lon: number; strike_time: number }> {
+  const db = getDb();
+  return db.prepare(
+    `SELECT lat, lon, strike_time FROM grid_strikes
+     WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND strike_time >= ?
+     ORDER BY strike_time DESC LIMIT ?`
+  ).all(minLat, maxLat, minLon, maxLon, since, limit) as Array<{ lat: number; lon: number; strike_time: number }>;
+}
+
+export function getGridAreaPage(
+  minLat: number, maxLat: number, minLon: number, maxLon: number,
+  page: number, limit: number
+): { strikes: Array<{ id: number; strike_time: number; lat: number; lon: number }>; total: number } {
+  const db = getDb();
+  const { n } = db.prepare(
+    'SELECT COUNT(*) as n FROM grid_strikes WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?'
+  ).get(minLat, maxLat, minLon, maxLon) as { n: number };
+  const offset = (page - 1) * limit;
+  const strikes = db.prepare(
+    'SELECT id, strike_time, lat, lon FROM grid_strikes WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? ORDER BY strike_time DESC LIMIT ? OFFSET ?'
+  ).all(minLat, maxLat, minLon, maxLon, limit, offset) as Array<{ id: number; strike_time: number; lat: number; lon: number }>;
+  return { strikes, total: n };
 }
