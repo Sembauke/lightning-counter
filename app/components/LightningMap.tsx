@@ -19,6 +19,8 @@ interface MapState {
   renderer: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tileLayer: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  labelsLayer: any;
   markers: Map<string, { marker: any; addedAt: number }>;
   processed: Set<string>;
   styleInterval: ReturnType<typeof setInterval> | null;
@@ -44,6 +46,8 @@ const TILE_SAT = {
   url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   options: { maxZoom: 19 },
 };
+// ESRI reference: country borders + place names, no roads
+const TILE_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
 
 export default function LightningMap({ strikes, satellite }: { strikes: Strike[]; satellite: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -51,7 +55,7 @@ export default function LightningMap({ strikes, satellite }: { strikes: Strike[]
   satelliteRef.current = satellite;
 
   const stateRef = useRef<MapState>({
-    map: null, layer: null, renderer: null, tileLayer: null,
+    map: null, layer: null, renderer: null, tileLayer: null, labelsLayer: null,
     markers: new Map(), processed: new Set(),
     styleInterval: null, rings: [], rafId: null, ready: false,
   });
@@ -78,6 +82,13 @@ export default function LightningMap({ strikes, satellite }: { strikes: Strike[]
       if (satelliteRef.current) {
         (map.getPanes().tilePane as HTMLElement).style.filter = 'brightness(0.55)';
       }
+
+      // Labels pane sits above the (possibly darkened) tile pane but below strike markers
+      map.createPane('labelsPane');
+      (map.getPane('labelsPane') as HTMLElement).style.zIndex = '250';
+      (map.getPane('labelsPane') as HTMLElement).style.pointerEvents = 'none';
+      s.labelsLayer = L.tileLayer(TILE_LABELS_URL, { pane: 'labelsPane', maxZoom: 19, opacity: 0.4 });
+      if (satelliteRef.current) s.labelsLayer.addTo(map);
 
       s.renderer = L.canvas({ padding: 0.5 });
       s.layer = L.layerGroup().addTo(map);
@@ -182,6 +193,11 @@ export default function LightningMap({ strikes, satellite }: { strikes: Strike[]
     if (!s.ready || !s.tileLayer) return;
     s.tileLayer.setUrl(satellite ? TILE_SAT.url : TILE_DARK.url);
     (s.map.getPanes().tilePane as HTMLElement).style.filter = satellite ? 'brightness(0.55)' : '';
+    if (satellite) {
+      s.labelsLayer.addTo(s.map);
+    } else {
+      s.labelsLayer.remove();
+    }
   }, [satellite]);
 
   useEffect(() => {
