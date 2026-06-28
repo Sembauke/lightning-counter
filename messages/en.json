@@ -41,8 +41,8 @@
     "from": "From",
     "to": "To",
     "minStrikes": "Min discharges",
-    "clear": "Clear",
-    "strikes": "Discharges",
-    "noRecords": "No records match the filter."
+"strikes": "Discharges",
+    "noRecords": "No records match the filter.",
+    "close": "Close"
   }
 }

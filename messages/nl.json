@@ -41,8 +41,8 @@
     "from": "Van",
     "to": "Tot",
     "minStrikes": "Min. ontladingen",
-    "clear": "Wissen",
-    "strikes": "Ontladingen",
-    "noRecords": "Geen records komen overeen met het filter."
+"strikes": "Ontladingen",
+    "noRecords": "Geen records komen overeen met het filter.",
+    "close": "Sluiten"
   }
 }

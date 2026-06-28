@@ -117,27 +117,27 @@ export default function ArchivePage() {
       {selected && selectedRow && (
         <div className="archive-detail">
           <div className="detail-head">
-            <img
-              src={`https://flagcdn.com/w20/${selected.toLowerCase()}.png`}
-              alt={countryName(selected)}
-              width={20}
-              height={15}
-              className="cl-flag-img"
-            />
-            <span className="detail-country-name">{countryName(selected)}</span>
-            <div className="detail-meta">
-              <span>{t('todayLabel')} <strong>{fmt(selectedRow.today)}</strong></span>
-              <span>{t('peakLabel')} <strong>{fmt(selectedRow.peakCount)}</strong> {t('on')} {selectedRow.peakDate || '—'}</span>
+            <div className="detail-head-main">
+              <img
+                src={`https://flagcdn.com/w20/${selected.toLowerCase()}.png`}
+                alt={countryName(selected)}
+                width={20}
+                height={15}
+                className="cl-flag-img"
+              />
+              <div className="detail-head-info">
+                <span className="detail-country-name">{countryName(selected)}</span>
+                <div className="detail-meta">
+                  <span>{t('todayLabel')} <strong>{fmt(selectedRow.today)}</strong></span>
+                  <span>{t('peakLabel')} <strong>{fmt(selectedRow.peakCount)}</strong> {t('on')} {selectedRow.peakDate || '—'}</span>
+                </div>
+              </div>
             </div>
-            <button className="detail-close" onClick={() => setSelected(null)}>✕</button>
           </div>
           <div className="detail-filters">
             <label>{t('from')} <input type="date" className="detail-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></label>
             <label>{t('to')} <input type="date" className="detail-input" value={dateTo} onChange={e => setDateTo(e.target.value)} /></label>
             <label>{t('minStrikes')} <input className="detail-input detail-input-sm" value={minStrikes} onChange={e => setMinStrikes(e.target.value)} placeholder="0" /></label>
-            {(dateFrom || dateTo || minStrikes) && (
-              <button className="detail-clear" onClick={() => { setDateFrom(''); setDateTo(''); setMinStrikes(''); }}>{t('clear')}</button>
-            )}
           </div>
           <div className="detail-body">
             <table className="detail-table">
@@ -154,6 +154,9 @@ export default function ArchivePage() {
                 }
               </tbody>
             </table>
+          </div>
+          <div className="detail-footer">
+            <button className="detail-close" onClick={() => setSelected(null)}>{t('close')}</button>
           </div>
         </div>
       )}

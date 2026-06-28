@@ -115,11 +115,9 @@ export async function GET() {
       ctrl.enqueue(enc.encode(
         `event: init\ndata: ${JSON.stringify({ total: serverTotal, countries: serverCountryCounts })}\n\n`
       ));
-      if (recentStrikes.length > 0) {
-        ctrl.enqueue(enc.encode(
-          `event: history\ndata: ${JSON.stringify(recentStrikes)}\n\n`
-        ));
-      }
+      ctrl.enqueue(enc.encode(
+        `event: history\ndata: ${JSON.stringify(recentStrikes)}\n\n`
+      ));
       if (activeSources.size > 0) {
         ctrl.enqueue(enc.encode('event: status\ndata: live\n\n'));
       }

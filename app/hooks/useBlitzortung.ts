@@ -20,6 +20,7 @@ export function useBlitzortung() {
   const [totalCount, setTotalCount] = useState(0);
   const [countryCounts, setCountryCounts] = useState<CountryCounts>({});
   const [connected, setConnected] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const counterRef = useRef(0);
 
@@ -46,6 +47,7 @@ export function useBlitzortung() {
           ...(s.cc ? { cc: s.cc } : {}),
         }));
         setStrikes(historical);
+        setHistoryLoaded(true);
       } catch { /* ignore */ }
     });
 
@@ -90,5 +92,5 @@ export function useBlitzortung() {
     };
   }, []);
 
-  return { strikes, totalCount, countryCounts, connected, isDemo: false };
+  return { strikes, totalCount, countryCounts, connected, historyLoaded, isDemo: false };
 }

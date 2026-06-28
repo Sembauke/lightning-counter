@@ -41,8 +41,8 @@
     "from": "Desde",
     "to": "Hasta",
     "minStrikes": "Min. rayos",
-    "clear": "Borrar",
-    "strikes": "Rayos",
-    "noRecords": "No hay registros que coincidan con el filtro."
+"strikes": "Rayos",
+    "noRecords": "No hay registros que coincidan con el filtro.",
+    "close": "Cerrar"
   }
 }

@@ -146,7 +146,7 @@ function playTick(ctx: AudioContext) {
   src.start();
 }
 
-export default function LightningMap({ strikes, satellite, sound }: { strikes: Strike[]; satellite: boolean; sound: boolean }) {
+export default function LightningMap({ strikes, satellite, sound, historyLoaded }: { strikes: Strike[]; satellite: boolean; sound: boolean; historyLoaded: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const satelliteRef = useRef(satellite);
   satelliteRef.current = satellite;
@@ -828,7 +828,8 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
           }
         }
 
-        const style = getMarkerStyle(0);
+        const age = strike.id.startsWith('hist-') ? Date.now() - strike.time : 0;
+        const style = getMarkerStyle(age);
         const marker = L.circleMarker([strike.lat, strike.lon], {
           ...style, renderer: s.renderer,
         }).addTo(s.layer);
@@ -854,6 +855,15 @@ export default function LightningMap({ strikes, satellite, sound }: { strikes: S
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#0a0a0f' }} />
+      {!historyLoaded && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#0a0a0f', zIndex: 9999,
+        }}>
+          <span style={{ color: '#888', fontSize: '0.95rem', letterSpacing: '0.05em' }}>Loading strikes…</span>
+        </div>
+      )}
       {zoom !== null && (
         <div className="zoom-debug">z{zoom}</div>
       )}

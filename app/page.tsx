@@ -11,14 +11,14 @@ const LightningMap = dynamic(() => import('./components/LightningMap'), {
 });
 
 export default function Home() {
-  const { strikes } = useBlitzortung();
+  const { strikes, historyLoaded } = useBlitzortung();
   const { satellite } = useSatellite();
   const { sound } = useSound();
 
   return (
     <main className="app">
       <div className="map-container">
-        <LightningMap strikes={strikes} satellite={satellite} sound={sound} />
+        <LightningMap strikes={strikes} satellite={satellite} sound={sound} historyLoaded={historyLoaded} />
       </div>
       <div className="attribution">
         © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>{' '}

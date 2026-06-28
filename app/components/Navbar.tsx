@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
-import CountUp from 'react-countup';
 import { useTranslations } from 'next-intl';
 import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
@@ -20,25 +19,53 @@ function useNavCount() {
   const seededRef = useRef(false);
 
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws`);
-    ws.onmessage = (e) => {
-      try {
-        const d = JSON.parse(e.data);
-        if (typeof d.total === 'number') {
-          targetRef.current = d.total;
-          if (!seededRef.current) {
-            seededRef.current = true;
-            setDisplay(d.total);
+    let ws: WebSocket;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let delay = 1000;
+    let destroyed = false;
+
+    const connect = () => {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (typeof d.total === 'number' && !isNaN(d.total)) {
+            targetRef.current = d.total;
+            if (!seededRef.current) {
+              seededRef.current = true;
+              setDisplay(d.total);
+            }
           }
+          if (typeof d.viewers === 'number') setViewers(d.viewers);
+        } catch { /* ignore */ }
+      };
+      ws.onopen = () => { setConnected(true); delay = 1000; };
+      ws.onclose = () => {
+        setConnected(false);
+        if (!destroyed) {
+          reconnectTimer = setTimeout(connect, delay);
+          delay = Math.min(delay * 2, 30_000);
         }
-        if (typeof d.viewers === 'number') setViewers(d.viewers);
-      } catch { /* ignore */ }
+      };
+      ws.onerror = () => ws.close();
     };
-    ws.onopen  = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
-    return () => ws.close();
+
+    connect();
+    return () => {
+      destroyed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, []);
+
+  // Snap to current total immediately when the tab regains focus
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') setDisplay(targetRef.current);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
   useEffect(() => {
@@ -61,7 +88,7 @@ function StrikeCount({ display, viewers, t }: { display: number; connected: bool
     <>
       <span className="navbar-count-main">
         <span className="navbar-count-num">
-          <CountUp preserveValue end={display} separator="," duration={0.1} />
+          {display.toLocaleString()}
         </span>
         <span className="navbar-count-label">{t('strikes')}</span>
       </span>

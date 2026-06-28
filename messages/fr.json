@@ -41,8 +41,8 @@
     "from": "Du",
     "to": "Au",
     "minStrikes": "Min. éclairs",
-    "clear": "Effacer",
-    "strikes": "Éclairs",
-    "noRecords": "Aucun enregistrement ne correspond au filtre."
+"strikes": "Éclairs",
+    "noRecords": "Aucun enregistrement ne correspond au filtre.",
+    "close": "Fermer"
   }
 }

@@ -41,8 +41,8 @@
     "from": "Von",
     "to": "Bis",
     "minStrikes": "Min. Blitze",
-    "clear": "Löschen",
-    "strikes": "Blitze",
-    "noRecords": "Keine Datensätze entsprechen dem Filter."
+"strikes": "Blitze",
+    "noRecords": "Keine Datensätze entsprechen dem Filter.",
+    "close": "Schließen"
   }
 }
