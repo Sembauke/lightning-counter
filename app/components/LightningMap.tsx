@@ -58,8 +58,7 @@ function getMarkerStyle(ageMs: number) {
   if (ageMs < 60_000)  return { radius: 3, fillColor: '#ffff00', color: '#ffff00', fillOpacity: 0.95, opacity: 0,   weight: 0 };
   if (ageMs < 300_000) return { radius: 3, fillColor: '#ffcc00', color: '#ffcc00', fillOpacity: 0.8,  opacity: 0,   weight: 0 };
   if (ageMs < 900_000) return { radius: 2, fillColor: '#ff8800', color: '#ff8800', fillOpacity: 0.65, opacity: 0,   weight: 0 };
-  const fadeT = Math.min((ageMs - 900_000) / 900_000, 1);
-  return { radius: 2, fillColor: '#ff4400', color: '#ff4400', fillOpacity: 0.45 * (1 - fadeT), opacity: 0, weight: 0 };
+  return { radius: 2, fillColor: '#ff4400', color: '#ff4400', fillOpacity: 0.3,  opacity: 0,   weight: 0 };
 }
 
 // Stepped grid levels: displayPx = visual cell size; binZoom = Mercator zoom used for binning.
