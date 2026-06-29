@@ -172,13 +172,11 @@ export default function Navbar() {
         <input type="checkbox" checked={heatmapEnabled} onChange={toggleHeatmap} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
-      <button
-        className={`settings-row settings-row-btn${stormOpen ? ' active' : ''}`}
-        onClick={() => { setStormOpen(o => !o); tools.setOpen(false); setDrawerOpen(false); }}
-      >
+      <label className="settings-row">
         <span className="settings-row-label">{t('stormActivity')}</span>
-        <span className="settings-row-arrow">›</span>
-      </button>
+        <input type="checkbox" checked={stormOpen} onChange={() => setStormOpen(o => !o)} />
+        <span className="satellite-track"><span className="satellite-thumb" /></span>
+      </label>
     </div>
   );
 

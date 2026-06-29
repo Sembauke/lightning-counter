@@ -50,7 +50,7 @@ html, body {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   text-decoration: none;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255,220,0,0.8);
   padding: 0.4rem 1rem;
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.15);
@@ -58,9 +58,9 @@ html, body {
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .nav-tab:hover {
-  color: #fff;
+  color: #ffe040;
   background: rgba(255,255,255,0.14);
-  border-color: rgba(255,255,255,0.3);
+  border-color: rgba(255,220,0,0.3);
 }
 .nav-tab.active {
   color: #ffe040;
@@ -116,7 +116,7 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.6);
+  color: rgba(255,220,0,0.6);
   transition: color 0.2s;
 }
 .satellite-switch:has(input:checked) .satellite-label {
@@ -162,14 +162,14 @@ html, body {
 /* Separator dot between discharge count and viewer count on desktop */
 .navbar-count .navbar-count-viewers::before {
   content: '·';
-  color: rgba(255,255,255,0.25);
+  color: rgba(255,220,0,0.25);
   margin: 0 0.4rem;
 }
 
 .navbar-viewers {
   font-size: 0.78rem;
   font-weight: 600;
-  color: rgba(255,255,255,0.45);
+  color: rgba(255,220,0,0.45);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -197,14 +197,14 @@ html, body {
   border: 1px solid rgba(255,255,255,0.25);
   border-radius: 6px;
   padding: 0.3rem 0.6rem;
-  color: rgba(255,255,255,0.8);
+  color: rgba(255,220,0,0.8);
   cursor: pointer;
   font-size: 1.1rem;
   line-height: 1;
   margin-left: auto;
   flex-shrink: 0;
 }
-.navbar-menu-btn:hover { border-color: rgba(255,255,255,0.45); color: #fff; }
+.navbar-menu-btn:hover { border-color: rgba(255,220,0,0.45); color: #fff; }
 
 /* ── Mobile dropdown ── */
 .navbar-dropdown {
@@ -334,7 +334,7 @@ html, body {
   justify-content: center;
   width: 100%;
   height: 100%;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,220,0,0.5);
   font-size: 1rem;
   letter-spacing: 0.1em;
 }
@@ -348,7 +348,7 @@ html, body {
 }
 .leaflet-control-zoom a {
   background: rgba(0,0,0,0.75) !important;
-  color: rgba(255,255,255,0.8) !important;
+  color: rgba(255,220,0,0.8) !important;
   border-bottom: 1px solid rgba(255,255,255,0.1) !important;
 }
 .leaflet-control-zoom a:hover { background: rgba(255,220,0,0.15) !important; color: #ffe040 !important; }
@@ -369,13 +369,13 @@ html, body {
   bottom: 0.4rem;
   right: 0.75rem;
   font-size: 0.6rem;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255,220,0,0.3);
   font-family: system-ui, sans-serif;
   z-index: 1000;
   pointer-events: none;
 }
-.attribution a { color: rgba(255,255,255,0.4); text-decoration: none; pointer-events: all; }
-.attribution a:hover { color: rgba(255,255,255,0.7); }
+.attribution a { color: rgba(255,220,0,0.4); text-decoration: none; pointer-events: all; }
+.attribution a:hover { color: rgba(255,220,0,0.7); }
 
 /* ── Flag images ── */
 .cl-flag-img {
@@ -395,7 +395,7 @@ html, body {
   min-height: 100vh;
   padding-top: 48px;
   background: #0a0a0f;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255,220,0,0.9);
   font-family: 'Courier New', Courier, monospace;
   display: flex;
   flex-direction: column;
@@ -421,7 +421,7 @@ html, body {
 .country-list-meta {
   font-size: 0.875rem;
   letter-spacing: 0.06em;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,220,0,0.55);
 }
 
 .country-list-body {
@@ -435,7 +435,7 @@ html, body {
   text-align: center;
   font-size: 1rem;
   letter-spacing: 0.14em;
-  color: rgba(255,255,255,0.45);
+  color: rgba(255,220,0,0.45);
 }
 
 .country-list-table {
@@ -452,7 +452,7 @@ html, body {
   font-size: 0.75rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,220,0,0.55);
   font-weight: 600;
   text-align: left;
 }
@@ -472,7 +472,7 @@ html, body {
 
 .cl-name {
   font-size: 0.95rem;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255,220,0,0.9);
 }
 
 .cl-num {
@@ -505,7 +505,7 @@ html, body {
   width: 4rem;
   text-align: right;
   font-size: 0.8rem;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,220,0,0.5);
   font-variant-numeric: tabular-nums;
 }
 
@@ -524,7 +524,7 @@ html, body {
   min-height: 100vh;
   padding-top: 48px;
   background: #0a0a0f;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255,220,0,0.9);
   font-family: 'Courier New', Courier, monospace;
   display: flex;
   flex-direction: column;
@@ -554,7 +554,7 @@ html, body {
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 6px;
   padding: 0.45rem 0.85rem;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255,220,0,0.9);
   font-family: inherit;
   font-size: 0.875rem;
   letter-spacing: 0.05em;
@@ -563,12 +563,12 @@ html, body {
   transition: border-color 0.15s;
 }
 .archive-search:focus { border-color: rgba(255,220,0,0.4); }
-.archive-search::placeholder { color: rgba(255,255,255,0.35); }
+.archive-search::placeholder { color: rgba(255,220,0,0.35); }
 
 .archive-count {
   font-size: 0.82rem;
   letter-spacing: 0.08em;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,220,0,0.5);
   margin-left: auto;
 }
 
@@ -596,7 +596,7 @@ html, body {
   font-size: 0.75rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,220,0,0.55);
   font-weight: 600;
   text-align: left;
 }
@@ -611,7 +611,7 @@ html, body {
   padding: 3rem 0.75rem;
   font-size: 0.95rem;
   letter-spacing: 0.08em;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,220,0,0.4);
   text-align: center;
 }
 
@@ -632,7 +632,7 @@ html, body {
 
 .row-name {
   font-size: 0.95rem;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255,220,0,0.9);
 }
 
 .today-val {
@@ -653,7 +653,7 @@ html, body {
 
 .col-date {
   font-size: 0.85rem;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,220,0,0.5);
   font-variant-numeric: tabular-nums;
 }
 
@@ -719,7 +719,7 @@ html, body {
   display: flex;
   gap: 1.5rem;
   font-size: 0.82rem;
-  color: rgba(255,255,255,0.75);
+  color: rgba(255,220,0,0.75);
 }
 .detail-meta strong { color: rgba(255,220,80,0.85); font-weight: 600; }
 
@@ -731,7 +731,7 @@ html, body {
   padding: 0.65rem 2rem;
   border-bottom: 1px solid rgba(255,255,255,0.05);
   font-size: 0.8rem;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,220,0,0.5);
   flex-shrink: 0;
   flex-wrap: wrap;
   max-width: 900px;
@@ -745,7 +745,7 @@ html, body {
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 4px;
   padding: 0.3rem 0.55rem;
-  color: rgba(255,255,255,0.85);
+  color: rgba(255,220,0,0.85);
   font-family: inherit;
   font-size: 0.8rem;
   outline: none;
@@ -779,7 +779,7 @@ html, body {
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,220,0,0.4);
   font-weight: 600;
   text-align: left;
   border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -790,7 +790,7 @@ html, body {
 .detail-table td {
   padding: 0.4rem 0.5rem;
   font-size: 0.875rem;
-  color: rgba(255,255,255,0.7);
+  color: rgba(255,220,0,0.7);
   font-variant-numeric: tabular-nums;
 }
 
@@ -893,7 +893,7 @@ html, body {
 
 .storm-subtitle {
   font-size: 0.72rem;
-  color: rgba(255,255,255,0.35);
+  color: rgba(255,220,0,0.35);
   letter-spacing: 0.06em;
 }
 
@@ -905,7 +905,7 @@ html, body {
 .storm-empty {
   padding: 2rem 0.9rem;
   text-align: center;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,220,0,0.4);
   font-size: 0.82rem;
   letter-spacing: 0.06em;
 }
@@ -925,7 +925,7 @@ html, body {
   font-size: 0.68rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.35);
+  color: rgba(255,220,0,0.35);
   font-weight: 600;
   text-align: left;
 }
@@ -944,7 +944,7 @@ html, body {
 
 .storm-rank {
   font-size: 0.72rem;
-  color: rgba(255,255,255,0.25);
+  color: rgba(255,220,0,0.25);
   text-align: center;
   font-variant-numeric: tabular-nums;
   padding: 0.5rem 0.25rem;
@@ -956,7 +956,7 @@ html, body {
   gap: 0.5rem;
   padding: 0.5rem 0.5rem;
   font-size: 0.85rem;
-  color: rgba(255,255,255,0.88);
+  color: rgba(255,220,0,0.88);
   overflow: hidden;
 }
 
@@ -1008,7 +1008,7 @@ html, body {
 
 .settings-row-arrow {
   font-size: 1rem;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255,220,0,0.3);
   transition: color 0.15s, transform 0.15s;
 }
 .settings-row-btn:hover .settings-row-arrow { color: #ffe040; }
@@ -1048,7 +1048,7 @@ html, body {
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 8px;
-  color: rgba(255,255,255,0.8);
+  color: rgba(255,220,0,0.8);
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.82rem;
   font-weight: 700;
@@ -1108,7 +1108,7 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.6);
+  color: rgba(255,220,0,0.6);
   flex: 1;
   transition: color 0.15s;
 }
@@ -1128,7 +1128,7 @@ html, body {
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 5px;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,220,0,0.55);
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.7rem;
   font-weight: 700;
@@ -1143,8 +1143,8 @@ html, body {
   flex-shrink: 0;
 }
 .lang-btn:hover {
-  color: #fff;
-  border-color: rgba(255,255,255,0.3);
+  color: #ffe040;
+  border-color: rgba(255,220,0,0.3);
   background: rgba(255,255,255,0.1);
 }
 .lang-btn.active {
@@ -1165,7 +1165,7 @@ html, body {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   text-decoration: none;
-  color: rgba(255,255,255,0.7);
+  color: rgba(255,220,0,0.7);
   border-bottom: 1px solid rgba(255,255,255,0.06);
   transition: color 0.15s, background 0.15s;
 }
@@ -1215,7 +1215,7 @@ html, body {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 5px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255,220,0,0.5);
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.7rem;
   font-weight: 700;
@@ -1228,8 +1228,8 @@ html, body {
 }
 
 .hm-filter-btn:hover {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.3);
+  color: #ffe040;
+  border-color: rgba(255,220,0,0.3);
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -1243,7 +1243,7 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 7px;
   padding: 0.55rem 0.75rem 0.55rem 0.65rem;
-  color: #fff;
+  color: #ffe040;
   pointer-events: auto;
   min-width: 120px;
   backdrop-filter: blur(6px);
@@ -1255,7 +1255,7 @@ html, body {
   right: 0.45rem;
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255,220,0,0.4);
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
@@ -1265,7 +1265,7 @@ html, body {
 .cell-popup-id {
   font-family: 'Courier New', monospace;
   font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255,220,0,0.45);
   margin-bottom: 0.3rem;
   letter-spacing: 0.04em;
 }
@@ -1277,7 +1277,7 @@ html, body {
 .cell-popup-count span {
   font-size: 0.7rem;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255,220,0,0.5);
   margin-left: 0.2rem;
 }
 
@@ -1319,7 +1319,7 @@ html, body {
 .cell-drawer-close {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255,220,0,0.4);
   font-size: 1.1rem;
   cursor: pointer;
   padding: 0;
@@ -1341,7 +1341,7 @@ html, body {
 .cell-drawer-id {
   font-family: 'Courier New', monospace;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255,220,0,0.5);
   letter-spacing: 0.06em;
   margin-bottom: 0.4rem;
 }
@@ -1356,14 +1356,14 @@ html, body {
 .cell-drawer-count span {
   font-size: 0.7rem;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255,220,0,0.5);
   margin-left: 0.2rem;
 }
 
 
 .cell-drawer-empty {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255,220,0,0.35);
   letter-spacing: 0.06em;
   padding: 0.5rem 0;
 }
@@ -1441,7 +1441,7 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255,220,0,0.35);
   white-space: nowrap;
 }
 
@@ -1474,7 +1474,7 @@ html, body {
 .cell-pg-btn {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #fff;
+  color: #ffe040;
   border-radius: 4px;
   width: 2rem;
   height: 2rem;
@@ -1493,7 +1493,7 @@ html, body {
 }
 .cell-pg-info {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255,220,0,0.5);
   min-width: 4rem;
   text-align: center;
 }
@@ -1506,7 +1506,7 @@ html, body {
   background: rgba(5, 5, 14, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 5px;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255,220,0,0.6);
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.7rem;
   font-weight: 700;
