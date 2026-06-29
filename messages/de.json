@@ -13,7 +13,8 @@
     "more": "Mehr",
     "settings": "Einstellungen",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap"
+    "toggleHeatmap": "Toggle heatmap",
+    "stormActivity": "Gewitteraktivität"
   },
   "home": {
     "loadingMap": "Karte wird geladen…"
@@ -43,6 +44,15 @@
     "minStrikes": "Min. Blitze",
 "strikes": "Blitze",
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
+    "close": "Schließen"
+  },
+  "storms": {
+    "title": "Gewitteraktivität",
+    "window": "Letzte 5 Minuten",
+    "rateHeader": "Rate",
+    "country": "Land",
+    "noData": "Keine aktiven Gewitter erkannt.",
+    "loading": "Gewitterdaten werden geladen…",
     "close": "Schließen"
   }
 }

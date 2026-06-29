@@ -3,11 +3,14 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
+
+const StormActivity = dynamic(() => import('./StormActivity'), { ssr: false });
 
 const LOCALE_FLAGS: Record<Locale, string> = { en: 'gb', nl: 'nl', de: 'de', fr: 'fr', es: 'es' };
 
@@ -118,6 +121,7 @@ function usePopover() {
 export default function Navbar() {
   const path = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [stormOpen, setStormOpen] = useState(false);
   const more = usePopover();
   const settings = usePopover();
   const tools = usePopover();
@@ -168,6 +172,13 @@ export default function Navbar() {
         <input type="checkbox" checked={heatmapEnabled} onChange={toggleHeatmap} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
+      <button
+        className={`settings-row settings-row-btn${stormOpen ? ' active' : ''}`}
+        onClick={() => { setStormOpen(o => !o); tools.setOpen(false); setDrawerOpen(false); }}
+      >
+        <span className="settings-row-label">{t('stormActivity')}</span>
+        <span className="settings-row-arrow">›</span>
+      </button>
     </div>
   );
 
@@ -268,6 +279,8 @@ export default function Navbar() {
       <div className="navbar-stats-bar">
         <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />
       </div>
+
+      {stormOpen && <StormActivity />}
     </>
   );
 }

@@ -13,7 +13,8 @@
     "more": "More",
     "settings": "Settings",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap"
+    "toggleHeatmap": "Toggle heatmap",
+    "stormActivity": "Storm Activity"
   },
   "home": {
     "loadingMap": "Loading map…"
@@ -43,6 +44,15 @@
     "minStrikes": "Min discharges",
 "strikes": "Discharges",
     "noRecords": "No records match the filter.",
+    "close": "Close"
+  },
+  "storms": {
+    "title": "Storm Activity",
+    "window": "Last 5 minutes",
+    "rateHeader": "Rate",
+    "country": "Country",
+    "noData": "No active storms detected.",
+    "loading": "Loading storm data…",
     "close": "Close"
   }
 }

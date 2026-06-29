@@ -13,7 +13,8 @@
     "more": "Plus",
     "settings": "Paramètres",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap"
+    "toggleHeatmap": "Toggle heatmap",
+    "stormActivity": "Activité orageuse"
   },
   "home": {
     "loadingMap": "Chargement de la carte…"
@@ -43,6 +44,15 @@
     "minStrikes": "Min. éclairs",
 "strikes": "Éclairs",
     "noRecords": "Aucun enregistrement ne correspond au filtre.",
+    "close": "Fermer"
+  },
+  "storms": {
+    "title": "Activité orageuse",
+    "window": "5 dernières minutes",
+    "rateHeader": "Fréquence",
+    "country": "Pays",
+    "noData": "Aucun orage actif détecté.",
+    "loading": "Chargement des données…",
     "close": "Fermer"
   }
 }

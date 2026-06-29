@@ -13,7 +13,8 @@
     "more": "Más",
     "settings": "Ajustes",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap"
+    "toggleHeatmap": "Toggle heatmap",
+    "stormActivity": "Actividad Tormentas"
   },
   "home": {
     "loadingMap": "Cargando mapa…"
@@ -43,6 +44,15 @@
     "minStrikes": "Min. rayos",
 "strikes": "Rayos",
     "noRecords": "No hay registros que coincidan con el filtro.",
+    "close": "Cerrar"
+  },
+  "storms": {
+    "title": "Actividad de Tormentas",
+    "window": "Últimos 5 minutos",
+    "rateHeader": "Frecuencia",
+    "country": "País",
+    "noData": "No se detectaron tormentas activas.",
+    "loading": "Cargando datos de tormentas…",
     "close": "Cerrar"
   }
 }
