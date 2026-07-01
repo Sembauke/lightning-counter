@@ -1,5 +1,5 @@
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates } from '../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -88,6 +88,16 @@ setInterval(() => {
   try {
     saveCounters(serverTotal, serverCountryCounts);
     saveDailyAndPeaks(currentDay, todayCounts);
+
+    // Compute current 5-min rates and persist any new peaks
+    const cutoff5m = Date.now() - 5 * 60 * 1000;
+    const fiveMinCounts: Record<string, number> = {};
+    for (const s of recentStrikes) {
+      if (s.time > cutoff5m && s.cc) fiveMinCounts[s.cc] = (fiveMinCounts[s.cc] ?? 0) + 1;
+    }
+    const rates: Record<string, number> = {};
+    for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
+    upsertCountryPeakRates(rates);
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 

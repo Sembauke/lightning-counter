@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLocale } from '../context/LocaleContext';
 import { useBlitzortung } from '../hooks/useBlitzortung';
@@ -14,10 +14,26 @@ interface StormEntry {
   rate: number;
 }
 
+function fmtRate(r: number) {
+  return r >= 10 ? String(Math.round(r)) : r.toFixed(1);
+}
+
 export default function StormActivity() {
   const { strikes, historyLoaded } = useBlitzortung();
   const t = useTranslations('storms');
   const { locale } = useLocale();
+  const [peakRates, setPeakRates] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    fetch('/api/archive')
+      .then(r => r.json())
+      .then((rows: Array<{ code: string; peakRate: number }>) => {
+        const map: Record<string, number> = {};
+        for (const row of rows) if (row.peakRate > 0) map[row.code] = row.peakRate;
+        setPeakRates(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const displayNames = useMemo(() => {
     if (typeof Intl === 'undefined') return null;
@@ -43,8 +59,6 @@ export default function StormActivity() {
       .map(([cc, count]) => ({ cc, count, rate: count / 5 }));
   }, [strikes]);
 
-  const maxRate = storms[0]?.rate ?? 1;
-
   return (
     <div className="storm-panel">
       <div className="storm-head">
@@ -66,38 +80,36 @@ export default function StormActivity() {
                 <th className="storm-col-rank">#</th>
                 <th>{t('country')}</th>
                 <th className="storm-col-rate">{t('rateHeader')}</th>
-                <th className="storm-col-bar" />
+                <th className="storm-col-ath">{t('athHeader')}</th>
               </tr>
             </thead>
             <tbody>
-              {storms.map(({ cc, count: _count, rate }, i) => (
-                <tr key={cc} className={`storm-row storm-row-${i + 1}`}>
-                  <td className="storm-col-rank storm-rank">{i + 1}</td>
-                  <td className="storm-col-country">
-                    <img
-                      src={`https://flagcdn.com/w20/${cc.toLowerCase()}.png`}
-                      alt={countryName(cc)}
-                      width={20}
-                      height={15}
-                      className="cl-flag-img"
-                      loading="lazy"
-                    />
-                    <span>{countryName(cc)}</span>
-                  </td>
-                  <td className="storm-col-rate storm-rate">
-                    {rate >= 10 ? Math.round(rate) : rate.toFixed(1)}
-                    <span className="storm-rate-unit">/m</span>
-                  </td>
-                  <td className="storm-col-bar">
-                    <div className="storm-bar-track">
-                      <div
-                        className="storm-bar-fill"
-                        style={{ width: `${(rate / maxRate) * 100}%` }}
+              {storms.map(({ cc, rate }, i) => {
+                const peak = peakRates[cc];
+                return (
+                  <tr key={cc} className={`storm-row storm-row-${i + 1}`}>
+                    <td className="storm-col-rank storm-rank">{i + 1}</td>
+                    <td className="storm-col-country">
+                      <img
+                        src={`https://flagcdn.com/w20/${cc.toLowerCase()}.png`}
+                        alt={countryName(cc)}
+                        width={20}
+                        height={15}
+                        className="cl-flag-img"
+                        loading="lazy"
                       />
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      <span>{countryName(cc)}</span>
+                    </td>
+                    <td className="storm-col-rate storm-rate">
+                      {fmtRate(rate)}
+                      <span className="storm-rate-unit">/m</span>
+                    </td>
+                    <td className="storm-col-ath storm-ath">
+                      {peak != null ? <>{fmtRate(peak)}<span className="storm-rate-unit">/m</span></> : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

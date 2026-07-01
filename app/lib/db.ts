@@ -34,6 +34,10 @@ function getDb(): Database.Database {
       count INTEGER NOT NULL,
       date TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS country_peak_rates (
+      code TEXT PRIMARY KEY,
+      rate REAL NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS grid_cells (
       cell_id TEXT PRIMARY KEY,
       total_strikes INTEGER NOT NULL DEFAULT 0,
@@ -48,7 +52,7 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_gs_cell_time ON grid_strikes(cell_id, strike_time DESC);
     CREATE INDEX IF NOT EXISTS idx_gs_latlon ON grid_strikes(lat, lon);
-    DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-7 days') * 1000;
+    DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-3 days') * 1000;
   `);
   return _db;
 }
@@ -76,6 +80,22 @@ export function loadDailyStrikes(date: string): Record<string, number> {
 export function getCountryPeaks(): Array<{ code: string; count: number; date: string }> {
   const db = getDb();
   return db.prepare('SELECT code, count, date FROM country_peaks ORDER BY count DESC').all() as Array<{ code: string; count: number; date: string }>;
+}
+
+export function getCountryPeakRates(): Array<{ code: string; rate: number }> {
+  const db = getDb();
+  return db.prepare('SELECT code, rate FROM country_peak_rates').all() as Array<{ code: string; rate: number }>;
+}
+
+export function upsertCountryPeakRates(rates: Record<string, number>): void {
+  if (Object.keys(rates).length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    'INSERT INTO country_peak_rates (code, rate) VALUES (?, ?) ON CONFLICT(code) DO UPDATE SET rate = excluded.rate WHERE excluded.rate > rate'
+  );
+  db.transaction(() => {
+    for (const [code, rate] of Object.entries(rates)) stmt.run(code, rate);
+  })();
 }
 
 export function getCountryHistory(code: string): Array<{ date: string; count: number }> {

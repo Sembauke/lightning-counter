@@ -1,24 +1,25 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLocale } from '../context/LocaleContext';
 
 function fmt(n: number) { return n.toLocaleString(); }
 
+type SortCol = 'name' | 'today' | 'peak';
+type SortDir = 'asc' | 'desc';
+
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
-interface HistoryRow { date: string; count: number; }
 
 export default function ArchivePage() {
   const [data, setData] = useState<ArchiveRow[]>([]);
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [minStrikes, setMinStrikes] = useState('');
+  const [sortCol, setSortCol] = useState<SortCol>('today');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const t = useTranslations('stats');
   const { locale } = useLocale();
+  const router = useRouter();
 
   const displayNames = useMemo(() => {
     if (typeof Intl === 'undefined') return null;
@@ -36,30 +37,41 @@ export default function ArchivePage() {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!selected) { setHistory([]); return; }
-    fetch(`/api/country/${selected}`).then(r => r.json()).then(setHistory).catch(() => {});
-  }, [selected]);
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSortCol(col);
+      setSortDir(col === 'name' ? 'asc' : 'desc');
+    }
+  };
+
+  const sortIndicator = (col: SortCol) =>
+    sortCol === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    if (!q) return data;
-    return data.filter(row =>
-      countryName(row.code).toLowerCase().includes(q) || row.code.toLowerCase().includes(q)
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, search, displayNames]);
+    const rows = q
+      ? data.filter(row =>
+          countryName(row.code).toLowerCase().includes(q) || row.code.toLowerCase().includes(q)
+        )
+      : [...data];
 
-  const filteredHistory = useMemo(() => {
-    return history.filter(h => {
-      if (dateFrom && h.date < dateFrom) return false;
-      if (dateTo && h.date > dateTo) return false;
-      if (minStrikes && h.count < parseInt(minStrikes, 10)) return false;
-      return true;
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === 'name') {
+        cmp = countryName(a.code).localeCompare(countryName(b.code), locale);
+      } else if (sortCol === 'today') {
+        cmp = a.today - b.today;
+      } else {
+        cmp = a.peakCount - b.peakCount;
+      }
+      return sortDir === 'desc' ? -cmp : cmp;
     });
-  }, [history, dateFrom, dateTo, minStrikes]);
 
-  const selectedRow = selected ? data.find(d => d.code === selected) : null;
+    return rows;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, search, sortCol, sortDir, displayNames]);
 
   return (
     <div className="archive-page">
@@ -74,13 +86,19 @@ export default function ArchivePage() {
         <span className="archive-count">{t('countriesFound', { count: filtered.length })}</span>
       </div>
 
-      <div className={`archive-body${selected ? ' has-detail' : ''}`}>
+      <div className="archive-body">
         <table className="archive-table">
           <thead>
             <tr>
-              <th>{t('country')}</th>
-              <th className="col-num">{t('today')}</th>
-              <th className="col-num">{t('allTimeHigh')}</th>
+              <th className="th-sort" onClick={() => handleSort('name')}>
+                {t('country')}{sortIndicator('name')}
+              </th>
+              <th className="col-num th-sort" onClick={() => handleSort('today')}>
+                {t('today')}{sortIndicator('today')}
+              </th>
+              <th className="col-num th-sort" onClick={() => handleSort('peak')}>
+                {t('allTimeHigh')}{sortIndicator('peak')}
+              </th>
               <th className="col-date">{t('date')}</th>
             </tr>
           </thead>
@@ -91,8 +109,9 @@ export default function ArchivePage() {
             {filtered.map(row => (
               <tr
                 key={row.code}
-                className={`archive-row${selected === row.code ? ' selected' : ''}`}
-                onClick={() => setSelected(selected === row.code ? null : row.code)}
+                className="archive-row"
+                onClick={() => router.push(`/stats/${row.code}`)}
+                style={{ cursor: 'pointer' }}
               >
                 <td className="col-country">
                   <img
@@ -113,53 +132,6 @@ export default function ArchivePage() {
           </tbody>
         </table>
       </div>
-
-      {selected && selectedRow && (
-        <div className="archive-detail">
-          <div className="detail-head">
-            <div className="detail-head-main">
-              <img
-                src={`https://flagcdn.com/w20/${selected.toLowerCase()}.png`}
-                alt={countryName(selected)}
-                width={20}
-                height={15}
-                className="cl-flag-img"
-              />
-              <div className="detail-head-info">
-                <span className="detail-country-name">{countryName(selected)}</span>
-                <div className="detail-meta">
-                  <span>{t('todayLabel')} <strong>{fmt(selectedRow.today)}</strong></span>
-                  <span>{t('peakLabel')} <strong>{fmt(selectedRow.peakCount)}</strong> {t('on')} {selectedRow.peakDate || '—'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="detail-filters">
-            <label>{t('from')} <input type="date" className="detail-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></label>
-            <label>{t('to')} <input type="date" className="detail-input" value={dateTo} onChange={e => setDateTo(e.target.value)} /></label>
-            <label>{t('minStrikes')} <input className="detail-input detail-input-sm" value={minStrikes} onChange={e => setMinStrikes(e.target.value)} placeholder="0" /></label>
-          </div>
-          <div className="detail-body">
-            <table className="detail-table">
-              <thead><tr><th>{t('date')}</th><th className="col-num">{t('strikes')}</th></tr></thead>
-              <tbody>
-                {filteredHistory.length === 0
-                  ? <tr><td colSpan={2} className="archive-empty">{t('noRecords')}</td></tr>
-                  : filteredHistory.map(h => (
-                    <tr key={h.date}>
-                      <td>{h.date}</td>
-                      <td className="col-num detail-count">{fmt(h.count)}</td>
-                    </tr>
-                  ))
-                }
-              </tbody>
-            </table>
-          </div>
-          <div className="detail-footer">
-            <button className="detail-close" onClick={() => setSelected(null)}>{t('close')}</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

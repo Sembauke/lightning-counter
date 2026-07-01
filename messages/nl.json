@@ -14,7 +14,9 @@
     "settings": "Instellingen",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
-    "stormActivity": "Onweeractiviteit"
+    "stormActivity": "Onweeractiviteit",
+    "replay24h": "24u Ontladingen",
+    "toggle24hReplay": "24u bliksemweergave in-/uitschakelen"
   },
   "home": {
     "loadingMap": "Kaart laden…"
@@ -44,13 +46,15 @@
     "minStrikes": "Min. ontladingen",
 "strikes": "Ontladingen",
     "noRecords": "Geen records komen overeen met het filter.",
-    "close": "Sluiten"
+    "close": "Sluiten",
+    "back": "Terug"
   },
   "storms": {
     "title": "Onweeractiviteit",
     "window": "Laatste 5 minuten",
     "rateHeader": "Frequentie",
     "country": "Land",
+    "athHeader": "Piek",
     "noData": "Geen actieve onweersbuien gedetecteerd.",
     "loading": "Onweerdata laden…",
     "close": "Sluiten"

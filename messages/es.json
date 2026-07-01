@@ -14,7 +14,9 @@
     "settings": "Ajustes",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
-    "stormActivity": "Actividad Tormentas"
+    "stormActivity": "Actividad Tormentas",
+    "replay24h": "Rayos 24h",
+    "toggle24hReplay": "Activar/desactivar vista 24h"
   },
   "home": {
     "loadingMap": "Cargando mapa…"
@@ -44,13 +46,15 @@
     "minStrikes": "Min. rayos",
 "strikes": "Rayos",
     "noRecords": "No hay registros que coincidan con el filtro.",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "back": "Volver"
   },
   "storms": {
     "title": "Actividad de Tormentas",
     "window": "Últimos 5 minutos",
     "rateHeader": "Frecuencia",
     "country": "País",
+    "athHeader": "Récord",
     "noData": "No se detectaron tormentas activas.",
     "loading": "Cargando datos de tormentas…",
     "close": "Cerrar"

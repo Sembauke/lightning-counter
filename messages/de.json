@@ -14,7 +14,9 @@
     "settings": "Einstellungen",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
-    "stormActivity": "Gewitteraktivität"
+    "stormActivity": "Gewitteraktivität",
+    "replay24h": "24h-Blitze",
+    "toggle24hReplay": "24h-Blitzansicht umschalten"
   },
   "home": {
     "loadingMap": "Karte wird geladen…"
@@ -44,13 +46,15 @@
     "minStrikes": "Min. Blitze",
 "strikes": "Blitze",
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
-    "close": "Schließen"
+    "close": "Schließen",
+    "back": "Zurück"
   },
   "storms": {
     "title": "Gewitteraktivität",
     "window": "Letzte 5 Minuten",
     "rateHeader": "Rate",
     "country": "Land",
+    "athHeader": "Rekord",
     "noData": "Keine aktiven Gewitter erkannt.",
     "loading": "Gewitterdaten werden geladen…",
     "close": "Schließen"

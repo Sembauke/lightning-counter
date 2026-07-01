@@ -14,7 +14,9 @@
     "settings": "Settings",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
-    "stormActivity": "Storm Activity"
+    "stormActivity": "Storm Activity",
+    "replay24h": "24h Strikes",
+    "toggle24hReplay": "Toggle 24h strike view"
   },
   "home": {
     "loadingMap": "Loading map…"
@@ -44,13 +46,15 @@
     "minStrikes": "Min discharges",
 "strikes": "Discharges",
     "noRecords": "No records match the filter.",
-    "close": "Close"
+    "close": "Close",
+    "back": "Back"
   },
   "storms": {
     "title": "Storm Activity",
     "window": "Last 5 minutes",
     "rateHeader": "Rate",
     "country": "Country",
+    "athHeader": "Peak",
     "noData": "No active storms detected.",
     "loading": "Loading storm data…",
     "close": "Close"

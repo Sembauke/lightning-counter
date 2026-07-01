@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import type { Strike } from '../hooks/useBlitzortung';
 import { useHeatmap, type HeatmapWindow } from '../context/HeatmapContext';
+import { useReplay } from '../context/ReplayContext';
 
 interface FlashRing {
   lat: number;
@@ -61,27 +62,36 @@ function getMarkerStyle(ageMs: number) {
   return { radius: 2, fillColor: '#ff4400', color: '#ff4400', fillOpacity: 0.3,  opacity: 0,   weight: 0 };
 }
 
-// Stepped grid levels: displayPx = visual cell size; binZoom = Mercator zoom used for binning.
-// Within a group (e.g. z10-z12) binZoom is fixed so geographic detail doesn't increase with zoom.
+// Three stepped grid tiers, each with a fixed binZoom for geographic stability.
+// Visual cell size grows as you zoom in within a tier (natural heatmap behaviour).
+// z≤6: binZoom=6, 192px → ~192px at z6, ~12px at z2 (same geographic cells, just smaller on screen)
+// z7–z9: binZoom=7, 96px → ~96px at z7, ~384px at z9
+// z10–z12: binZoom=10, 64px → ~64px at z10, ~256px at z12
 function getHeatmapLevel(zoom: number): { displayPx: number; binZoom: number } {
   const z = Math.floor(zoom);
-  if (z >= 9) return { displayPx: 24, binZoom: 9 };
-  return { displayPx: Math.min(24 * (1 << (9 - z)), 192), binZoom: Math.max(z, 2) };
+  if (z >= 10) return { displayPx: 64,  binZoom: 10 };
+  if (z >= 9)  return { displayPx: 48,  binZoom: 9  };
+  if (z >= 7)  return { displayPx: 96,  binZoom: 7  };
+  if (z >= 6)  return { displayPx: 96,  binZoom: 6  };
+  return             { displayPx: 192, binZoom: 6   };
 }
 
 // Logarithmic color scale: blue (sparse) → cyan → green → yellow → orange → red (dense)
+const CELL_KEY_MULT = 1 << 15;
+const FLASH_DURATION_MS = 700;
+
 function getHeatColor(count: number, maxCount: number): string {
   if (!count || !maxCount) return 'rgba(0,0,0,0)';
   const t = Math.min(Math.log1p(count) / Math.log1p(Math.max(maxCount, 1)), 1);
   // Color stops: [position, r, g, b, alpha]
   type Stop = [number, number, number, number, number];
   const stops: Stop[] = [
-    [0,    0,  40, 220, 0.15],
-    [0.20, 0, 180, 255, 0.28],
-    [0.45, 60, 230, 100, 0.38],
-    [0.65, 255, 220,   0, 0.48],
-    [0.82, 255,  80,   0, 0.56],
-    [1.0,  255,  20,  20, 0.65],
+    [0,    0,  40, 220, 0.35],
+    [0.20, 0, 180, 255, 0.52],
+    [0.45, 60, 230, 100, 0.62],
+    [0.65, 255, 220,   0, 0.72],
+    [0.82, 255,  80,   0, 0.82],
+    [1.0,  255,  20,  20, 0.90],
   ];
   let i = 0;
   while (i < stops.length - 2 && stops[i + 1][0] <= t) i++;
@@ -109,7 +119,6 @@ const WINDOW_MS: Record<HeatmapWindow, number> = {
   '1h':    1 * 60 * 60 * 1000,
   '3h':    3 * 60 * 60 * 1000,
   '1d':   24 * 60 * 60 * 1000,
-  '1w':  7 * 24 * 60 * 60 * 1000,
 };
 
 const WINDOW_LABELS: Record<HeatmapWindow, string> = {
@@ -117,7 +126,6 @@ const WINDOW_LABELS: Record<HeatmapWindow, string> = {
   '1h':  '1 hr',
   '3h':  '3 hrs',
   '1d':  '1 day',
-  '1w':  '1 week',
 };
 
 const FIXED_BIN_ZOOM = 9;
@@ -155,6 +163,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
   const lastTickRef = useRef(0);
 
   const { enabled: heatmapEnabled, timeWindow, setTimeWindow } = useHeatmap();
+  const { extend24h } = useReplay();
+  const extend24hRef = useRef(extend24h);
+  extend24hRef.current = extend24h;
   const heatmapEnabledRef = useRef(heatmapEnabled);
   heatmapEnabledRef.current = heatmapEnabled;
   const timeWindowRef = useRef(timeWindow);
@@ -172,15 +183,44 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
   const selectStartRef = useRef<{ x: number; y: number } | null>(null);
   const selectRectRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
+  const [binLocked, setBinLocked] = useState(() =>
+    typeof window !== 'undefined' && localStorage.getItem('gridBinLocked') === 'true'
+  );
+  const binLockedRef = useRef(
+    typeof window !== 'undefined' && localStorage.getItem('gridBinLocked') === 'true'
+  );
+  const _savedLevel = typeof window !== 'undefined'
+    ? (() => { try { return JSON.parse(localStorage.getItem('gridLockedLevel') || 'null'); } catch { return null; } })()
+    : null;
+  const lockedLevelRef = useRef<{ displayPx: number; binZoom: number } | null>(_savedLevel);
+  const [gridOpacity, setGridOpacity] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+    return parseFloat(localStorage.getItem('gridOpacity') || '1');
+  });
+  const gridOpacityRef = useRef(gridOpacity);
+  gridOpacityRef.current = gridOpacity;
+  const cellFlashMapRef = useRef<Map<number, number>>(new Map());
+  const flashRafRef = useRef<number | null>(null);
+
+  const startFlashLoop = () => {
+    if (flashRafRef.current !== null) return;
+    let lastDraw = 0;
+    const tick = (now: number) => {
+      if (now - lastDraw >= 50) {
+        lastDraw = now;
+        stateRef.current.drawHeatmap?.();
+      }
+      if (cellFlashMapRef.current.size > 0) {
+        flashRafRef.current = requestAnimationFrame(tick);
+      } else {
+        flashRafRef.current = null;
+      }
+    };
+    flashRafRef.current = requestAnimationFrame(tick);
+  };
 
   const [selectedCell, setSelectedCell] = useState<CellData | null>(null);
   const selectedCellRef = useRef<{ col: number; row: number; binZoom: number; displayPx: number; bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number } } | null>(null);
-  const [showDots, setShowDots] = useState(false);
-  const showDotsRef = useRef(false);
-  const dotsRafRef = useRef<number | null>(null);
-  const dotsAnimStartRef = useRef(0);
-  const manualScrubRef = useRef<number | null>(null); // 0–1 when user is dragging
-  const scrubberRef = useRef<HTMLInputElement>(null);
   const [apiData, setApiData] = useState<{
     strikes: Array<{ id: number; strike_time: number; lat: number; lon: number }>;
     total: number; page: number; pages: number;
@@ -190,10 +230,19 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
 
   const fetchViewport = () => {
     const s = stateRef.current;
-    if (!s.map || !heatmapEnabledRef.current) return;
+    if (!s.map || (!heatmapEnabledRef.current && !extend24hRef.current)) return;
     const b = s.map.getBounds();
-    const since = Date.now() - WINDOW_MS[timeWindowRef.current];
-    const q = `minLat=${b.getSouth()}&maxLat=${b.getNorth()}&minLon=${b.getWest()}&maxLon=${b.getEast()}&since=${since}`;
+    const latPad = (b.getNorth() - b.getSouth()) * 0.5;
+    const lonPad = (b.getEast() - b.getWest()) * 0.5;
+    const minLat = Math.max(-90,  b.getSouth() - latPad);
+    const maxLat = Math.min(90,   b.getNorth() + latPad);
+    const minLon = Math.max(-180, b.getWest()  - lonPad);
+    const maxLon = Math.min(180,  b.getEast()  + lonPad);
+    const windowMs = extend24hRef.current
+      ? 24 * 60 * 60 * 1000
+      : WINDOW_MS[timeWindowRef.current];
+    const since = Date.now() - windowMs;
+    const q = `minLat=${minLat}&maxLat=${maxLat}&minLon=${minLon}&maxLon=${maxLon}&since=${since}`;
     fetch(`/api/grid/viewport?${q}`)
       .then(r => r.json())
       .then(data => {
@@ -255,6 +304,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         localStorage.setItem('mapView', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z }));
         setZoom(z);
         s.drawHeatmap?.();
+        if (heatmapEnabledRef.current || extend24hRef.current) scheduleFetchViewport();
       });
 
       map.on('dragend', () => { lastDragEndRef.current = Date.now(); });
@@ -313,11 +363,76 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         if (!hCtx || !hCnv || !s.map) return;
 
         hCtx.clearRect(0, 0, hCnv.width, hCnv.height);
-        if (!heatmapEnabledRef.current) return;
+        if (!heatmapEnabledRef.current && !extend24hRef.current) return;
+
+        hCtx.save();
+        hCtx.scale(dpr, dpr);
+
+        // 24h static dot view — yellow (newest) → dark purple (oldest)
+        // Colors are normalized to the actual data range so the full gradient
+        // is always visible regardless of how much history is available.
+        if (extend24hRef.current) {
+          const DATA_MS_24H = 24 * 60 * 60 * 1000;
+          const nowMs = Date.now();
+          const cutoff24h = nowMs - DATA_MS_24H;
+          const dotR = Math.max(2, 3 / dpr);
+
+          // Find oldest + newest timestamps in visible data for relative normalization
+          let minT = nowMs, maxT = 0;
+          for (const buf of [dbBufferRef.current, heatmapBufferRef.current]) {
+            for (const pt of buf) {
+              if (pt.time < cutoff24h) continue;
+              if (pt.time < minT) minT = pt.time;
+              if (pt.time > maxT) maxT = pt.time;
+            }
+          }
+          const range = maxT - minT || 1;
+
+          // Multi-stop gradient: dark purple → violet → orange → yellow
+          type Stop = [number, number, number, number, number]; // pos, r, g, b, a
+          const stops: Stop[] = [
+            [0,    40,   0,  100, 0.25],
+            [0.33, 120,  0,  180, 0.45],
+            [0.66, 230,  80,   0, 0.65],
+            [1,    255, 220,   0, 0.85],
+          ];
+          const lerpStop = (t: number): [number, number, number, number] => {
+            let i = 0;
+            while (i < stops.length - 2 && stops[i + 1][0] <= t) i++;
+            const s0 = stops[i], s1 = stops[i + 1];
+            const f = s1[0] > s0[0] ? (t - s0[0]) / (s1[0] - s0[0]) : 0;
+            return [
+              Math.round(s0[1] + f * (s1[1] - s0[1])),
+              Math.round(s0[2] + f * (s1[2] - s0[2])),
+              Math.round(s0[3] + f * (s1[3] - s0[3])),
+              +(s0[4] + f * (s1[4] - s0[4])).toFixed(2),
+            ];
+          };
+
+          for (const buf of [dbBufferRef.current, heatmapBufferRef.current]) {
+            for (const pt of buf) {
+              if (pt.time < cutoff24h) continue;
+              const t = (pt.time - minT) / range; // 0=oldest in set, 1=newest
+              const [r, g, b, a] = lerpStop(t);
+              hCtx.fillStyle = `rgba(${r},${g},${b},${a})`;
+              const dp = s.map.latLngToContainerPoint([pt.lat, pt.lon]);
+              hCtx.beginPath();
+              hCtx.arc(dp.x, dp.y, dotR, 0, Math.PI * 2);
+              hCtx.fill();
+            }
+          }
+        }
+
+        if (!heatmapEnabledRef.current) {
+          hCtx.restore();
+          return;
+        }
 
         const zoom = s.map.getZoom();
-        const { displayPx, binZoom } = getHeatmapLevel(zoom);
-        const KEY_MULT = 1 << 15; // safe for all binZoom levels
+        const { displayPx, binZoom } = (binLockedRef.current && lockedLevelRef.current)
+          ? lockedLevelRef.current
+          : getHeatmapLevel(zoom);
+        const KEY_MULT = CELL_KEY_MULT;
 
         const cutoff = Date.now() - WINDOW_MS[timeWindowRef.current];
 
@@ -349,57 +464,79 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         for (const pt of dbBufferRef.current) binPoint(pt);
 
         hCtx.save();
-        hCtx.scale(dpr, dpr);
+        hCtx.globalAlpha = gridOpacityRef.current;
 
-        if (!showDotsRef.current) {
-          // 1) Fill bins that have strikes — projected to current screen size
-          for (const [key, count] of grid) {
-            const row = Math.floor(key / KEY_MULT);
-            const col = key % KEY_MULT;
-            if (col < colMin || col > colMax || row < rowMin || row > rowMax) continue;
+        // 1) Fill bins that have strikes — projected to current screen size
+        for (const [key, count] of grid) {
+          const row = Math.floor(key / KEY_MULT);
+          const col = key % KEY_MULT;
+          if (col < colMin || col > colMax || row < rowMin || row > rowMax) continue;
 
-            const sw = s.map.latLngToContainerPoint(
-              s.map.unproject({ x:  col      * displayPx, y: (row + 1) * displayPx }, binZoom)
-            );
-            const ne = s.map.latLngToContainerPoint(
-              s.map.unproject({ x: (col + 1) * displayPx, y:  row      * displayPx }, binZoom)
-            );
-            const x = Math.min(sw.x, ne.x);
-            const y = Math.min(sw.y, ne.y);
-            const w = Math.abs(ne.x - sw.x);
-            const h = Math.abs(sw.y - ne.y);
-            if (w < 0.5 || h < 0.5) continue;
-            hCtx.fillStyle = getHeatColor(count, maxCount);
-            hCtx.fillRect(x, y, w, h);
-          }
-
-          // 2) Labels: strike count centered on cells that have strikes
-          hCtx.textBaseline = 'middle';
-          hCtx.textAlign = 'center';
-          for (const [key, count] of grid) {
-            const row = Math.floor(key / KEY_MULT);
-            const col = key % KEY_MULT;
-            if (col < colMin || col > colMax || row < rowMin || row > rowMax) continue;
-            const sw = s.map.latLngToContainerPoint(
-              s.map.unproject({ x:  col      * displayPx, y: (row + 1) * displayPx }, binZoom)
-            );
-            const ne = s.map.latLngToContainerPoint(
-              s.map.unproject({ x: (col + 1) * displayPx, y:  row      * displayPx }, binZoom)
-            );
-            const cx = Math.min(sw.x, ne.x);
-            const cy = Math.min(sw.y, ne.y);
-            const cw = Math.abs(ne.x - sw.x);
-            const ch = Math.abs(sw.y - ne.y);
-            if (cw < 24 || ch < 24) continue;
-            const fontSize = Math.round(Math.max(9, Math.min(cw * 0.22, 13)));
-            hCtx.font = `${fontSize}px monospace`;
-            hCtx.fillStyle = 'rgba(255,255,255,0.95)';
-            hCtx.fillText(String(count), cx + cw * 0.5, cy + ch * 0.5);
-          }
+          const sw = s.map.latLngToContainerPoint(
+            s.map.unproject({ x:  col      * displayPx, y: (row + 1) * displayPx }, binZoom)
+          );
+          const ne = s.map.latLngToContainerPoint(
+            s.map.unproject({ x: (col + 1) * displayPx, y:  row      * displayPx }, binZoom)
+          );
+          const x = Math.min(sw.x, ne.x);
+          const y = Math.min(sw.y, ne.y);
+          const w = Math.abs(ne.x - sw.x);
+          const h = Math.abs(sw.y - ne.y);
+          if (w < 0.5 || h < 0.5) continue;
+          hCtx.fillStyle = getHeatColor(count, maxCount);
+          hCtx.fillRect(x, y, w, h);
         }
 
+        // 1b) Flash overlay — cells that received a new strike recently
+        const flashNow = Date.now();
+        for (const [fKey, startTime] of cellFlashMapRef.current) {
+          const elapsed = flashNow - startTime;
+          if (elapsed >= FLASH_DURATION_MS) { cellFlashMapRef.current.delete(fKey); continue; }
+          const t = elapsed / FLASH_DURATION_MS;
+          const fRow = Math.floor(fKey / KEY_MULT);
+          const fCol = fKey % KEY_MULT;
+          const fsw = s.map.latLngToContainerPoint(
+            s.map.unproject({ x: fCol * displayPx, y: (fRow + 1) * displayPx }, binZoom)
+          );
+          const fne = s.map.latLngToContainerPoint(
+            s.map.unproject({ x: (fCol + 1) * displayPx, y: fRow * displayPx }, binZoom)
+          );
+          const fx = Math.min(fsw.x, fne.x);
+          const fy = Math.min(fsw.y, fne.y);
+          const fw = Math.abs(fne.x - fsw.x);
+          const fh = Math.abs(fsw.y - fne.y);
+          hCtx.fillStyle = `rgba(255,230,80,${((1 - t) * 0.75).toFixed(3)})`;
+          hCtx.fillRect(fx, fy, fw, fh);
+        }
+
+        // 2) Labels: strike count centered on cells that have strikes
+        hCtx.textBaseline = 'middle';
+        hCtx.textAlign = 'center';
+        for (const [key, count] of grid) {
+          const row = Math.floor(key / KEY_MULT);
+          const col = key % KEY_MULT;
+          if (col < colMin || col > colMax || row < rowMin || row > rowMax) continue;
+          const sw = s.map.latLngToContainerPoint(
+            s.map.unproject({ x:  col      * displayPx, y: (row + 1) * displayPx }, binZoom)
+          );
+          const ne = s.map.latLngToContainerPoint(
+            s.map.unproject({ x: (col + 1) * displayPx, y:  row      * displayPx }, binZoom)
+          );
+          const cx = Math.min(sw.x, ne.x);
+          const cy = Math.min(sw.y, ne.y);
+          const cw = Math.abs(ne.x - sw.x);
+          const ch = Math.abs(sw.y - ne.y);
+          if (cw < 24 || ch < 24) continue;
+          const fontSize = Math.round(Math.max(9, Math.min(cw * 0.22, 13)));
+          hCtx.font = `${fontSize}px monospace`;
+          hCtx.fillStyle = 'rgba(255,255,255,0.95)';
+          hCtx.fillText(String(count), cx + cw * 0.5, cy + ch * 0.5);
+        }
+
+        hCtx.restore();
+
         // 3) Grid lines — projected from bin boundaries (matches the cell size on screen)
-        hCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        hCtx.strokeStyle = binLockedRef.current ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.2)';
         hCtx.lineWidth = 0.75;
         hCtx.beginPath();
         for (let c = colMin; c <= colMax + 1; c++) {
@@ -425,56 +562,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           const sy = Math.min(sw.y, ne.y);
           const sw2 = Math.abs(ne.x - sw.x);
           const sh = Math.abs(sw.y - ne.y);
-          if (showDotsRef.current) {
-            hCtx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-            hCtx.fillRect(sx, sy, sw2, sh);
-          }
           hCtx.strokeStyle = 'rgba(255, 220, 0, 0.95)';
           hCtx.lineWidth = 2 / dpr;
           hCtx.strokeRect(sx + 1 / dpr, sy + 1 / dpr, sw2 - 2 / dpr, sh - 2 / dpr);
-
-          // 5) Animated strike dots — replay 1h of strikes in compressed time (20s loop)
-          if (showDotsRef.current) {
-            const ANIM_MS   = 20_000;           // 20s real-time per loop
-            const DATA_MS   = 60 * 60 * 1000;  // 1 hour of data
-            const TRAIL_MS  = DATA_MS;           // dots stay visible for the full hour
-            const dotR      = Math.max(3, 5 / dpr);
-
-            const wallNow   = Date.now();
-            const manual    = manualScrubRef.current;
-            const progress  = manual !== null
-              ? manual
-              : ((wallNow - dotsAnimStartRef.current) % ANIM_MS) / ANIM_MS;
-            const dataStart = wallNow - DATA_MS;
-            const playhead  = dataStart + progress * DATA_MS;
-
-            // Update scrubber position directly (no React re-render)
-            if (scrubberRef.current && manual === null) {
-              scrubberRef.current.value = String(Math.round(progress * 1000));
-            }
-
-            const { minLat, maxLat, minLon, maxLon } = sel.bounds;
-
-            for (const buf of [heatmapBufferRef.current, dbBufferRef.current]) {
-              for (const pt of buf) {
-                if (pt.time < dataStart) continue;
-                if (pt.lat < minLat || pt.lat > maxLat || pt.lon < minLon || pt.lon > maxLon) continue;
-                const simAge = playhead - pt.time;
-                if (simAge < 0 || simAge > TRAIL_MS) continue;
-                const t = 1 - simAge / TRAIL_MS; // 1 = newest, 0 = oldest
-                // Color: newest = bright green, oldest = blue-purple
-                const r = Math.round(t < 0.5 ? 80 : 80 + (t - 0.5) * 2 * 60);
-                const g = Math.round(80 + t * 175);
-                const b = Math.round(t < 0.5 ? 220 - t * 2 * 120 : 100);
-                const a = (0.35 + t * 0.65).toFixed(2);
-                hCtx.fillStyle = `rgba(${r},${g},${b},${a})`;
-                const dp = s.map.latLngToContainerPoint([pt.lat, pt.lon]);
-                hCtx.beginPath();
-                hCtx.arc(dp.x, dp.y, dotR * (0.4 + 0.6 * t), 0, Math.PI * 2);
-                hCtx.fill();
-              }
-            }
-          }
         }
 
         // 6) Live selection rectangle during shift+drag
@@ -527,6 +617,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           const zoom = map.getZoom();
           const metersPerPx = 156_543 / Math.pow(2, zoom);
           const soundMaxPx = Math.max(160, Math.min(600, Math.round(25_000 / metersPerPx)));
+          const hmActive = heatmapEnabledRef.current;
 
           let i = s.rings.length;
           while (i--) {
@@ -535,6 +626,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
               if (zoom < 11) continue;
               const p = Math.min((now - ring.startTime) / 73_000, 1);
               if (p >= 1) { s.rings.splice(i, 1); continue; }
+              if (hmActive) continue;
               const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
               ctx.beginPath();
               ctx.arc(pt.x, pt.y, Math.max(1, soundMaxPx * p), 0, Math.PI * 2);
@@ -545,6 +637,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
               if (zoom >= 11) continue;
               const p = Math.min((now - ring.startTime) / 600, 1);
               if (p >= 1) { s.rings.splice(i, 1); continue; }
+              if (hmActive) continue;
               const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
               ctx.beginPath();
               ctx.arc(pt.x, pt.y, Math.max(1, Math.sqrt(p) * 40), 0, Math.PI * 2);
@@ -595,6 +688,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       if (s.styleInterval) clearInterval(s.styleInterval);
       if (s.heatmapTimer) clearInterval(s.heatmapTimer);
       if (s.rafId !== null) cancelAnimationFrame(s.rafId);
+      if (flashRafRef.current !== null) cancelAnimationFrame(flashRafRef.current);
       s.map?.remove();
       s.map = null;
       s.ready = false;
@@ -623,7 +717,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       const rect = container.getBoundingClientRect();
       const latlng = s.map.containerPointToLatLng([e.clientX - rect.left, e.clientY - rect.top]);
 
-      const { binZoom, displayPx } = getHeatmapLevel(s.map.getZoom());
+      const { binZoom, displayPx } = (binLockedRef.current && lockedLevelRef.current)
+        ? lockedLevelRef.current
+        : getHeatmapLevel(s.map.getZoom());
       const p = s.map.project(latlng, binZoom);
       const col = Math.floor(p.x / displayPx);
       const row = Math.floor(p.y / displayPx);
@@ -717,8 +813,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         pt.lon >= bounds.minLon && pt.lon <= bounds.maxLon
       );
 
-      const { binZoom, displayPx } = getHeatmapLevel(s.map.getZoom());
-      setShowDots(false);
+      const { binZoom, displayPx } = (binLockedRef.current && lockedLevelRef.current)
+        ? lockedLevelRef.current
+        : getHeatmapLevel(s.map.getZoom());
       setSelectedCell({
         id: 'area', col: 0, row: 0, count: inMemory.length,
         strikes: [...inMemory].sort((a, b) => b.time - a.time),
@@ -749,49 +846,34 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     if (s.ready && s.drawHeatmap) s.drawHeatmap();
   }, [selectedCell]);
 
-  useEffect(() => {
-    showDotsRef.current = showDots;
-
-    // Stop any existing animation loop
-    if (dotsRafRef.current !== null) {
-      cancelAnimationFrame(dotsRafRef.current);
-      dotsRafRef.current = null;
-    }
-
-    if (showDots) {
-      dotsAnimStartRef.current = Date.now();
-      let lastFrame = 0;
-      const tick = (now: number) => {
-        // ~20 fps — enough for smooth dot animation without hammering the canvas
-        if (now - lastFrame >= 50) {
-          lastFrame = now;
-          stateRef.current.drawHeatmap?.();
-        }
-        dotsRafRef.current = requestAnimationFrame(tick);
-      };
-      dotsRafRef.current = requestAnimationFrame(tick);
-    } else {
-      stateRef.current.drawHeatmap?.();
-    }
-
-    return () => {
-      if (dotsRafRef.current !== null) {
-        cancelAnimationFrame(dotsRafRef.current);
-        dotsRafRef.current = null;
-      }
-    };
-  }, [showDots]);
-
   // Redraw heatmap when toggled or time window changes; refetch viewport from DB
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready) return;
     if (heatmapEnabled) {
+      s.markers.forEach(({ marker }) => s.layer.removeLayer(marker));
       fetchViewportRef.current?.();
     } else {
+      s.markers.forEach(({ marker, addedAt }) => {
+        if (Date.now() - addedAt <= 30 * 60 * 1000) marker.addTo(s.layer);
+      });
       s.drawHeatmap?.();
     }
   }, [heatmapEnabled]);
+
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s.ready) return;
+    if (extend24h) {
+      dbBufferRef.current = [];
+      fetchViewportRef.current?.();
+    } else {
+      dbBufferRef.current = [];
+      if (heatmapEnabled) fetchViewportRef.current?.();
+      else s.drawHeatmap?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extend24h]);
 
   useEffect(() => {
     const s = stateRef.current;
@@ -817,6 +899,17 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           const zoom = s.map.getZoom();
           s.rings.push({ lat: strike.lat, lon: strike.lon, startTime: performance.now(), zoomed: zoom >= 11 });
 
+          if (heatmapEnabledRef.current) {
+            const { displayPx, binZoom } = (binLockedRef.current && lockedLevelRef.current)
+              ? lockedLevelRef.current
+              : getHeatmapLevel(zoom);
+            const p = s.map.project([strike.lat, strike.lon], binZoom);
+            const col = Math.floor(p.x / displayPx);
+            const row = Math.floor(p.y / displayPx);
+            cellFlashMapRef.current.set(row * CELL_KEY_MULT + col, Date.now());
+            startFlashLoop();
+          }
+
           if (soundRef.current && s.map.getBounds().contains([strike.lat, strike.lon])) {
             if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
             const now = performance.now();
@@ -831,19 +924,20 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         const style = getMarkerStyle(age);
         const marker = L.circleMarker([strike.lat, strike.lon], {
           ...style, renderer: s.renderer,
-        }).addTo(s.layer);
+        });
+        if (!heatmapEnabledRef.current) marker.addTo(s.layer);
 
         s.markers.set(strike.id, { marker, addedAt: strike.time });
       }
 
-      // Prune heatmap buffer: keep last 7 days, cap at 100k entries
+      // Prune heatmap buffer: keep last 72h, cap at 50k entries
       const buf = heatmapBufferRef.current;
-      const cutoff7d = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const cutoff72h = Date.now() - 3 * 24 * 60 * 60 * 1000;
       let start = 0;
-      while (start < buf.length && buf[start].time < cutoff7d) start++;
+      while (start < buf.length && buf[start].time < cutoff72h) start++;
       if (start > 0) heatmapBufferRef.current = buf.slice(start);
-      if (heatmapBufferRef.current.length > 100_000) {
-        heatmapBufferRef.current = heatmapBufferRef.current.slice(-100_000);
+      if (heatmapBufferRef.current.length > 50_000) {
+        heatmapBufferRef.current = heatmapBufferRef.current.slice(-50_000);
       }
 
       // Redraw heatmap to show newly arrived strikes
@@ -870,7 +964,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         <div className="cell-drawer open">
           <div className="cell-drawer-header">
             <span>{selectedCell.id === 'area' ? 'Area selection' : `Cell ${selectedCell.id}`}</span>
-            <button className="cell-drawer-close" onClick={() => { setSelectedCell(null); setApiData(null); setShowDots(false); }}>×</button>
+            <button className="cell-drawer-close" onClick={() => { setSelectedCell(null); setApiData(null); }}>×</button>
           </div>
 
           <div className="cell-drawer-section">
@@ -924,7 +1018,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         <div className="heatmap-filter">
           <span className="heatmap-filter-label">Heatmap interval</span>
           <div className="heatmap-filter-buttons">
-            {(['30m', '1h', '3h', '1d', '1w'] as HeatmapWindow[]).map(w => (
+            {(['30m', '1h', '3h', '1d'] as HeatmapWindow[]).map(w => (
               <button
                 key={w}
                 className={`hm-filter-btn${timeWindow === w ? ' active' : ''}`}
@@ -933,45 +1027,50 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
                 {WINDOW_LABELS[w]}
               </button>
             ))}
+            <button
+              className={`hm-filter-btn${binLocked ? ' active' : ''}`}
+              onClick={() => {
+                setBinLocked(locked => {
+                  const next = !locked;
+                  binLockedRef.current = next;
+                  if (next) {
+                    const z = stateRef.current.map?.getZoom() ?? 6;
+                    const level = getHeatmapLevel(z);
+                    lockedLevelRef.current = level;
+                    localStorage.setItem('gridLockedLevel', JSON.stringify(level));
+                    localStorage.setItem('gridBinLocked', 'true');
+                  } else {
+                    lockedLevelRef.current = null;
+                    localStorage.removeItem('gridLockedLevel');
+                    localStorage.setItem('gridBinLocked', 'false');
+                    stateRef.current.drawHeatmap?.();
+                  }
+                  return next;
+                });
+              }}
+              title={binLocked ? 'Unlock grid zoom level' : 'Lock grid zoom level'}
+            >
+              {binLocked ? 'Unlock grid' : 'Lock grid'}
+            </button>
           </div>
-        </div>
-      )}
-      {heatmapEnabled && selectedCell && (
-        <div className="dots-control-bar">
-          <button
-            className={`dots-play-btn${showDots ? ' active' : ''}`}
-            onClick={() => setShowDots(d => !d)}
-            title={showDots ? 'Pause replay' : 'Play strike replay (1h)'}
-          >
-            {showDots ? '⏸' : '▶'}
-          </button>
-          <input
-            ref={scrubberRef}
-            type="range"
-            className="dots-scrubber"
-            min={0}
-            max={1000}
-            defaultValue={0}
-            onMouseDown={() => { manualScrubRef.current = 0; }}
-            onTouchStart={() => { manualScrubRef.current = 0; }}
-            onChange={e => {
-              const v = parseInt(e.target.value, 10) / 1000;
-              manualScrubRef.current = v;
-              if (!showDots) setShowDots(true);
-              stateRef.current.drawHeatmap?.();
-            }}
-            onMouseUp={e => {
-              const v = parseInt((e.target as HTMLInputElement).value, 10) / 1000;
-              dotsAnimStartRef.current = Date.now() - v * 20_000;
-              manualScrubRef.current = null;
-            }}
-            onTouchEnd={e => {
-              const v = parseInt((e.target as HTMLInputElement).value, 10) / 1000;
-              dotsAnimStartRef.current = Date.now() - v * 20_000;
-              manualScrubRef.current = null;
-            }}
-          />
-          <span className="dots-label">1h replay</span>
+          <label className="hm-opacity-label">
+            Opacity
+            <input
+              type="range"
+              className="hm-opacity-slider"
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={gridOpacity}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                setGridOpacity(v);
+                localStorage.setItem('gridOpacity', String(v));
+                stateRef.current.drawHeatmap?.();
+              }}
+            />
+            <span>{Math.round(gridOpacity * 100)}%</span>
+          </label>
         </div>
       )}
     </div>

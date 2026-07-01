@@ -9,6 +9,7 @@ import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
+import { useReplay } from '../context/ReplayContext';
 
 const StormActivity = dynamic(() => import('./StormActivity'), { ssr: false });
 
@@ -122,6 +123,9 @@ export default function Navbar() {
   const path = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [stormOpen, setStormOpen] = useState(false);
+  useEffect(() => {
+    if (localStorage.getItem('stormOpen') === 'true') setStormOpen(true);
+  }, []);
   const more = usePopover();
   const settings = usePopover();
   const tools = usePopover();
@@ -129,6 +133,7 @@ export default function Navbar() {
   const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
+  const { extend24h, toggle: toggleReplay } = useReplay();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
 
@@ -158,6 +163,11 @@ export default function Navbar() {
           <input type="checkbox" checked={sound} onChange={toggleSound} />
           <span className="satellite-track"><span className="satellite-thumb" /></span>
         </label>
+        <label className="settings-row" aria-label={t('toggle24hReplay')}>
+          <span className="settings-row-label">{t('replay24h')}</span>
+          <input type="checkbox" checked={extend24h} onChange={toggleReplay} />
+          <span className="satellite-track"><span className="satellite-thumb" /></span>
+        </label>
       </div>
       <div className="settings-langs">
         {langButtons}
@@ -174,7 +184,7 @@ export default function Navbar() {
       </label>
       <label className="settings-row">
         <span className="settings-row-label">{t('stormActivity')}</span>
-        <input type="checkbox" checked={stormOpen} onChange={() => setStormOpen(o => !o)} />
+        <input type="checkbox" checked={stormOpen} onChange={() => setStormOpen(o => { const next = !o; localStorage.setItem('stormOpen', String(next)); return next; })} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
     </div>

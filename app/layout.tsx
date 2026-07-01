@@ -5,6 +5,7 @@ import { SatelliteProvider } from './context/SatelliteContext';
 import { SoundProvider } from './context/SoundContext';
 import { LocaleProvider } from './context/LocaleContext';
 import { HeatmapProvider } from './context/HeatmapContext';
+import { ReplayProvider } from './context/ReplayContext';
 
 const BASE = 'https://lightning-counter.fly.dev';
 
@@ -69,8 +70,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <SatelliteProvider>
             <SoundProvider>
               <HeatmapProvider>
-                <Navbar />
-                {children}
+                <ReplayProvider>
+                  <Navbar />
+                  {children}
+                </ReplayProvider>
               </HeatmapProvider>
             </SoundProvider>
           </SatelliteProvider>
