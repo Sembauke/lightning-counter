@@ -46,6 +46,7 @@ interface MapState {
   styleInterval: ReturnType<typeof setInterval> | null;
   heatmapTimer: ReturnType<typeof setInterval> | null;
   rings: FlashRing[];
+  liveDots: Array<{ lat: number; lon: number; addedAt: number }>;
   rafId: number | null;
   ready: boolean;
   heatCanvas: HTMLCanvasElement | null;
@@ -230,7 +231,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
 
   const fetchViewport = () => {
     const s = stateRef.current;
-    if (!s.map || (!heatmapEnabledRef.current && !extend24hRef.current)) return;
+    if (!s.map) return;
     const b = s.map.getBounds();
     const latPad = (b.getNorth() - b.getSouth()) * 0.5;
     const lonPad = (b.getEast() - b.getWest()) * 0.5;
@@ -238,9 +239,11 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     const maxLat = Math.min(90,   b.getNorth() + latPad);
     const minLon = Math.max(-180, b.getWest()  - lonPad);
     const maxLon = Math.min(180,  b.getEast()  + lonPad);
-    const windowMs = extend24hRef.current
-      ? 24 * 60 * 60 * 1000
-      : WINDOW_MS[timeWindowRef.current];
+    const windowMs = heatmapEnabledRef.current
+      ? WINDOW_MS[timeWindowRef.current]
+      : extend24hRef.current
+        ? 24 * 60 * 60 * 1000
+        : 60 * 60 * 1000;
     const since = Date.now() - windowMs;
     const q = `minLat=${minLat}&maxLat=${maxLat}&minLon=${minLon}&maxLon=${maxLon}&since=${since}`;
     fetch(`/api/grid/viewport?${q}`)
@@ -272,7 +275,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     map: null, layer: null, renderer: null, tileLayer: null, labelsLayer: null,
     markers: new Map(), processed: new Set(),
     styleInterval: null, heatmapTimer: null,
-    rings: [], rafId: null, ready: false,
+    rings: [], liveDots: [], rafId: null, ready: false,
     heatCanvas: null, heatCtx: null, dpr: 1, drawHeatmap: null,
   });
 
@@ -304,7 +307,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         localStorage.setItem('mapView', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z }));
         setZoom(z);
         s.drawHeatmap?.();
-        if (heatmapEnabledRef.current || extend24hRef.current) scheduleFetchViewport();
+        scheduleFetchViewport();
       });
 
       map.on('dragend', () => { lastDragEndRef.current = Date.now(); });
@@ -331,9 +334,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       const dpr = window.devicePixelRatio || 1;
       s.dpr = dpr;
 
-      // ── Heatmap canvas (z-index 400, drawn below strike rings) ──
+      // ── Heatmap canvas — sits between the Leaflet map pane (z=400) and the ring overlay (z=450) ──
       const heatCanvas = document.createElement('canvas');
-      heatCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:400;';
+      heatCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:401;';
       container.appendChild(heatCanvas);
       s.heatCanvas = heatCanvas;
       s.heatCtx = heatCanvas.getContext('2d')!;
@@ -363,38 +366,27 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         if (!hCtx || !hCnv || !s.map) return;
 
         hCtx.clearRect(0, 0, hCnv.width, hCnv.height);
-        if (!heatmapEnabledRef.current && !extend24hRef.current) return;
 
         hCtx.save();
         hCtx.scale(dpr, dpr);
 
-        // 24h static dot view — yellow (newest) → dark purple (oldest)
-        // Colors are normalized to the actual data range so the full gradient
-        // is always visible regardless of how much history is available.
-        if (extend24hRef.current) {
-          const DATA_MS_24H = 24 * 60 * 60 * 1000;
+        // Dot view — always on when heatmap is inactive. Window: 24h or 1h.
+        if (!heatmapEnabledRef.current) {
+          const windowMs = extend24hRef.current ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
           const nowMs = Date.now();
-          const cutoff24h = nowMs - DATA_MS_24H;
+          const cutoff24h = nowMs - windowMs;
           const dotR = Math.max(2, 3 / dpr);
+          // Normalize against the fixed window so colors are viewport-independent:
+          // t=0 → oldest possible (cutoff), t=1 → now
 
-          // Find oldest + newest timestamps in visible data for relative normalization
-          let minT = nowMs, maxT = 0;
-          for (const buf of [dbBufferRef.current, heatmapBufferRef.current]) {
-            for (const pt of buf) {
-              if (pt.time < cutoff24h) continue;
-              if (pt.time < minT) minT = pt.time;
-              if (pt.time > maxT) maxT = pt.time;
-            }
-          }
-          const range = maxT - minT || 1;
-
-          // Multi-stop gradient: dark purple → violet → orange → yellow
+          // Multi-stop gradient: dark purple → violet → red → orange → yellow
           type Stop = [number, number, number, number, number]; // pos, r, g, b, a
           const stops: Stop[] = [
-            [0,    40,   0,  100, 0.25],
-            [0.33, 120,  0,  180, 0.45],
-            [0.66, 230,  80,   0, 0.65],
-            [1,    255, 220,   0, 0.85],
+            [0,    30,   0,   80, 0.20],
+            [0.30, 120,  0,  160, 0.42],
+            [0.55, 210,  10,  10, 0.65],
+            [0.78, 255, 120,   0, 0.80],
+            [1,    255, 230,   0, 0.92],
           ];
           const lerpStop = (t: number): [number, number, number, number] => {
             let i = 0;
@@ -409,21 +401,22 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
             ];
           };
 
-          for (const buf of [dbBufferRef.current, heatmapBufferRef.current]) {
-            for (const pt of buf) {
-              if (pt.time < cutoff24h) continue;
-              const t = (pt.time - minT) / range; // 0=oldest in set, 1=newest
-              const [r, g, b, a] = lerpStop(t);
-              hCtx.fillStyle = `rgba(${r},${g},${b},${a})`;
-              const dp = s.map.latLngToContainerPoint([pt.lat, pt.lon]);
-              hCtx.beginPath();
-              hCtx.arc(dp.x, dp.y, dotR, 0, Math.PI * 2);
-              hCtx.fill();
-            }
-          }
-        }
+          const drawDot = (pt: HeatPoint) => {
+            if (pt.time < cutoff24h) return;
+            const t = (pt.time - cutoff24h) / windowMs; // 0=at cutoff, 1=now
+            const [r, g, b, a] = lerpStop(t);
+            hCtx.fillStyle = `rgba(${r},${g},${b},${a})`;
+            const dp = s.map.latLngToContainerPoint([pt.lat, pt.lon]);
+            hCtx.beginPath();
+            hCtx.arc(dp.x, dp.y, dotR, 0, Math.PI * 2);
+            hCtx.fill();
+          };
+          // Draw oldest first so newest (brightest) paint on top.
+          // dbBuffer arrives DESC from the DB — iterate backwards for ASC order.
+          for (let i = dbBufferRef.current.length - 1; i >= 0; i--) drawDot(dbBufferRef.current[i]);
+          // heatmapBuffer is pushed in arrival order (oldest first) — forward is correct.
+          for (const pt of heatmapBufferRef.current) drawDot(pt);
 
-        if (!heatmapEnabledRef.current) {
           hCtx.restore();
           return;
         }
@@ -650,6 +643,33 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           ctx.restore();
         }
 
+        // Live strike dots drawn on top (z=450) whenever the dot view is active
+        if (!heatmapEnabledRef.current && s.liveDots.length > 0) {
+          ctx.save();
+          ctx.scale(dpr, dpr);
+          const nowMs = Date.now();
+          const maxAge = 30 * 60 * 1000;
+          let j = s.liveDots.length;
+          while (j--) {
+            const dot = s.liveDots[j];
+            const age = nowMs - dot.addedAt;
+            if (age > maxAge) { s.liveDots.splice(j, 1); continue; }
+            const alpha = Math.pow(1 - age / maxAge, 0.4); // slow fade
+            const radius = age < 10_000 ? 4 : 3;
+            const pt = map.latLngToContainerPoint([dot.lat, dot.lon]);
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255,224,64,${alpha.toFixed(3)})`;
+            ctx.fill();
+            if (age < 10_000) {
+              ctx.strokeStyle = `rgba(255,34,34,${Math.min(1, alpha * 1.4).toFixed(3)})`;
+              ctx.lineWidth = 2.5;
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+        }
+
         s.rafId = requestAnimationFrame(drawRings);
       };
       s.rafId = requestAnimationFrame(drawRings);
@@ -677,10 +697,8 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       map.on('zoomend', refreshMarkers);
       s.ready = true;
 
-      // Seed heatmap from DB on load if already enabled
-      if (heatmapEnabledRef.current) {
-        fetchViewportRef.current?.();
-      }
+      // Always seed DB data on load
+      fetchViewportRef.current?.();
     });
 
     return () => {
@@ -846,32 +864,21 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     if (s.ready && s.drawHeatmap) s.drawHeatmap();
   }, [selectedCell]);
 
-  // Redraw heatmap when toggled or time window changes; refetch viewport from DB
+  // Refetch + redraw when heatmap or 24h window changes
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready) return;
-    if (heatmapEnabled) {
-      s.markers.forEach(({ marker }) => s.layer.removeLayer(marker));
-      fetchViewportRef.current?.();
-    } else {
-      s.markers.forEach(({ marker, addedAt }) => {
-        if (Date.now() - addedAt <= 30 * 60 * 1000) marker.addTo(s.layer);
-      });
-      s.drawHeatmap?.();
-    }
+    dbBufferRef.current = [];
+    s.drawHeatmap?.();
+    fetchViewportRef.current?.();
   }, [heatmapEnabled]);
 
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready) return;
-    if (extend24h) {
-      dbBufferRef.current = [];
-      fetchViewportRef.current?.();
-    } else {
-      dbBufferRef.current = [];
-      if (heatmapEnabled) fetchViewportRef.current?.();
-      else s.drawHeatmap?.();
-    }
+    dbBufferRef.current = [];
+    s.drawHeatmap?.();
+    fetchViewportRef.current?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extend24h]);
 
@@ -898,6 +905,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         if (!strike.id.startsWith('hist-')) {
           const zoom = s.map.getZoom();
           s.rings.push({ lat: strike.lat, lon: strike.lon, startTime: performance.now(), zoomed: zoom >= 11 });
+          s.liveDots.push({ lat: strike.lat, lon: strike.lon, addedAt: Date.now() });
 
           if (heatmapEnabledRef.current) {
             const { displayPx, binZoom } = (binLockedRef.current && lockedLevelRef.current)
@@ -925,7 +933,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         const marker = L.circleMarker([strike.lat, strike.lon], {
           ...style, renderer: s.renderer,
         });
-        if (!heatmapEnabledRef.current) marker.addTo(s.layer);
+        // Canvas draws all dots — Leaflet layer not used for dot rendering
 
         s.markers.set(strike.id, { marker, addedAt: strike.time });
       }
