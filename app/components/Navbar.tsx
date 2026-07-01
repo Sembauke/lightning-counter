@@ -10,6 +10,7 @@ import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
 import { useReplay } from '../context/ReplayContext';
+import { useWind } from '../context/WindContext';
 
 const StormActivity = dynamic(() => import('./StormActivity'), { ssr: false });
 
@@ -134,6 +135,7 @@ export default function Navbar() {
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
   const { extend24h, toggle: toggleReplay } = useReplay();
+  const { enabled: windEnabled, toggle: toggleWind } = useWind();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
 
@@ -185,6 +187,11 @@ export default function Navbar() {
       <label className="settings-row">
         <span className="settings-row-label">{t('stormActivity')}</span>
         <input type="checkbox" checked={stormOpen} onChange={() => setStormOpen(o => { const next = !o; localStorage.setItem('stormOpen', String(next)); return next; })} />
+        <span className="satellite-track"><span className="satellite-thumb" /></span>
+      </label>
+      <label className="settings-row" aria-label={t('toggleWind')}>
+        <span className="settings-row-label">{t('wind')}</span>
+        <input type="checkbox" checked={windEnabled} onChange={toggleWind} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
     </div>

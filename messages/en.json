@@ -16,7 +16,9 @@
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Storm Activity",
     "replay24h": "24h Strikes",
-    "toggle24hReplay": "Toggle 24h strike view"
+    "toggle24hReplay": "Toggle 24h strike view",
+    "wind": "Wind Layer",
+    "toggleWind": "Toggle wind layer"
   },
   "home": {
     "loadingMap": "Loading map…"

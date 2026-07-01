@@ -16,7 +16,9 @@
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Activité orageuse",
     "replay24h": "Éclairs 24h",
-    "toggle24hReplay": "Activer/désactiver la vue 24h"
+    "toggle24hReplay": "Activer/désactiver la vue 24h",
+    "wind": "Couche de vent",
+    "toggleWind": "Activer/désactiver la couche de vent"
   },
   "home": {
     "loadingMap": "Chargement de la carte…"

@@ -16,7 +16,9 @@
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Actividad Tormentas",
     "replay24h": "Rayos 24h",
-    "toggle24hReplay": "Activar/desactivar vista 24h"
+    "toggle24hReplay": "Activar/desactivar vista 24h",
+    "wind": "Capa de viento",
+    "toggleWind": "Activar/desactivar capa de viento"
   },
   "home": {
     "loadingMap": "Cargando mapa…"

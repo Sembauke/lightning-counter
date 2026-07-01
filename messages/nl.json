@@ -16,7 +16,9 @@
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Onweeractiviteit",
     "replay24h": "24u Ontladingen",
-    "toggle24hReplay": "24u bliksemweergave in-/uitschakelen"
+    "toggle24hReplay": "24u bliksemweergave in-/uitschakelen",
+    "wind": "Windlaag",
+    "toggleWind": "Windlaag in-/uitschakelen"
   },
   "home": {
     "loadingMap": "Kaart laden…"

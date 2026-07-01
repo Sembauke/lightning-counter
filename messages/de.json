@@ -16,7 +16,9 @@
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Gewitteraktivität",
     "replay24h": "24h-Blitze",
-    "toggle24hReplay": "24h-Blitzansicht umschalten"
+    "toggle24hReplay": "24h-Blitzansicht umschalten",
+    "wind": "Windschicht",
+    "toggleWind": "Windschicht umschalten"
   },
   "home": {
     "loadingMap": "Karte wird geladen…"
