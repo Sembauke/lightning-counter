@@ -90,6 +90,9 @@ interface MapState {
   windCanvas: HTMLCanvasElement | null;
   windCtx: CanvasRenderingContext2D | null;
   windParticles: WindParticle[];
+  windScreenGrid: { dxdy: Float32Array; cols: number; rows: number; cell: number } | null;
+  windWasActive: boolean;
+  buildScreenGrid: (() => void) | null;
   dpr: number;
   drawHeatmap: (() => void) | null;
 }
@@ -320,7 +323,8 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     markers: new Map(), processed: new Set(),
     styleInterval: null, heatmapTimer: null,
     rings: [], liveDots: [], rafId: null, ready: false,
-    heatCanvas: null, heatCtx: null, windCanvas: null, windCtx: null, windParticles: [],
+    heatCanvas: null, heatCtx: null, windCanvas: null, windCtx: null,
+    windParticles: [], windScreenGrid: null, windWasActive: false, buildScreenGrid: null,
     dpr: 1, drawHeatmap: null,
   });
 
@@ -378,6 +382,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
                 return { u: -speed * Math.sin(rad), v: -speed * Math.cos(rad) };
               });
               windGridRef.current = { points, cols: COLS, rows: ROWS, south, north, west, east };
+              buildScreenGrid();
             })
             .catch(() => {});
         }, 600);
@@ -391,6 +396,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         s.drawHeatmap?.();
         scheduleFetchViewport();
         scheduleWindFetch();
+        if (windGridRef.current) buildScreenGrid(); // reproject on pan/zoom
       });
 
       map.on('dragend', () => { lastDragEndRef.current = Date.now(); });
@@ -436,9 +442,31 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:450;';
       container.appendChild(overlay);
 
-      const WIND_N = 250;
-      const WIND_TRAIL = 10;
+      const WIND_N = 150;
+      const WIND_TRAIL = 5;
       const WIND_SCALE = 0.4;
+      const WIND_CELL = 50; // CSS px — screen grid cell size
+
+      // Precompute a screen-space wind grid so the RAF loop never calls containerPointToLatLng
+      const buildScreenGrid = () => {
+        const geo = windGridRef.current;
+        if (!geo) { s.windScreenGrid = null; return; }
+        const css_w = container.offsetWidth;
+        const css_h = container.offsetHeight;
+        const cols = Math.ceil(css_w / WIND_CELL) + 2;
+        const rows = Math.ceil(css_h / WIND_CELL) + 2;
+        const dxdy = new Float32Array(cols * rows * 2);
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const latlng = map.containerPointToLatLng([c * WIND_CELL, r * WIND_CELL]);
+            const { u, v } = interpWind(latlng.lat, latlng.lng, geo);
+            dxdy[(r * cols + c) * 2    ] = u * WIND_SCALE;
+            dxdy[(r * cols + c) * 2 + 1] = -v * WIND_SCALE;
+          }
+        }
+        s.windScreenGrid = { dxdy, cols, rows, cell: WIND_CELL };
+      };
+      s.buildScreenGrid = buildScreenGrid;
 
       const sizeCanvases = () => {
         const w = container.offsetWidth * dpr;
@@ -765,16 +793,16 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           ctx.restore();
         }
 
-        // Wind particle layer
+        // Wind particle layer — screen-space grid lookup, one stroke per particle
         if (s.windCanvas && s.windCtx) {
           const wCtx = s.windCtx;
           const wCnv = s.windCanvas;
-          if (windEnabledRef.current && windGridRef.current) {
-            const grid = windGridRef.current;
+          const sg = s.windScreenGrid;
+          if (windEnabledRef.current && sg) {
             const css_w = wCnv.width / dpr;
             const css_h = wCnv.height / dpr;
+            s.windWasActive = true;
 
-            // Lazy-init particles
             if (s.windParticles.length === 0) {
               for (let i = 0; i < WIND_N; i++) {
                 s.windParticles.push({
@@ -790,18 +818,22 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
             wCtx.clearRect(0, 0, wCnv.width, wCnv.height);
             wCtx.save();
             wCtx.scale(dpr, dpr);
-            wCtx.lineCap = 'round';
+            wCtx.strokeStyle = 'rgba(180,220,255,0.4)';
             wCtx.lineWidth = 1;
+            wCtx.lineCap = 'round';
 
             for (const p of s.windParticles) {
-              const latlng = map.containerPointToLatLng([p.x, p.y]);
-              const { u, v } = interpWind(latlng.lat, latlng.lng, grid);
+              // Look up precomputed screen-space wind (no Leaflet calls per frame)
+              const ci = Math.max(0, Math.min(sg.cols - 1, Math.floor(p.x / sg.cell)));
+              const ri = Math.max(0, Math.min(sg.rows - 1, Math.floor(p.y / sg.cell)));
+              const base = (ri * sg.cols + ci) * 2;
+              const dx = sg.dxdy[base], dy = sg.dxdy[base + 1];
 
               p.trail.push([p.x, p.y]);
               if (p.trail.length > WIND_TRAIL) p.trail.shift();
 
-              p.x += u * WIND_SCALE;
-              p.y -= v * WIND_SCALE;
+              p.x += dx;
+              p.y += dy;
               p.age++;
 
               if (p.x < -5 || p.x > css_w + 5 || p.y < -5 || p.y > css_h + 5 || p.age > p.maxAge) {
@@ -814,19 +846,18 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
               }
 
               if (p.trail.length < 2) continue;
-              for (let i = 1; i < p.trail.length; i++) {
-                const alpha = (i / p.trail.length) * 0.5;
-                wCtx.strokeStyle = `rgba(180,220,255,${alpha.toFixed(2)})`;
-                wCtx.beginPath();
-                wCtx.moveTo(p.trail[i - 1][0], p.trail[i - 1][1]);
-                wCtx.lineTo(p.trail[i][0], p.trail[i][1]);
-                wCtx.stroke();
-              }
+              // One stroke per particle (not per segment) — avoids 150k GPU state changes/sec
+              wCtx.beginPath();
+              wCtx.moveTo(p.trail[0][0], p.trail[0][1]);
+              for (let i = 1; i < p.trail.length; i++) wCtx.lineTo(p.trail[i][0], p.trail[i][1]);
+              wCtx.stroke();
             }
 
             wCtx.restore();
-          } else {
+          } else if (s.windWasActive) {
+            // Only clear when transitioning from active → inactive
             wCtx.clearRect(0, 0, wCnv.width, wCnv.height);
+            s.windWasActive = false;
           }
         }
 
@@ -1052,14 +1083,13 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
   }, [timeWindow]);
 
   useEffect(() => {
+    const s = stateRef.current;
     if (!windEnabled) {
       windGridRef.current = null;
-      const s = stateRef.current;
+      s.windScreenGrid = null;
       s.windParticles = [];
       return;
     }
-    // Trigger a wind fetch for the current viewport
-    const s = stateRef.current;
     if (!s.map) return;
     const b = s.map.getBounds();
     const south = Math.max(-85, b.getSouth());
@@ -1089,6 +1119,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           return { u: -speed * Math.sin(rad), v: -speed * Math.cos(rad) };
         });
         windGridRef.current = { points, cols: COLS, rows: ROWS, south, north, west, east };
+        s.buildScreenGrid?.();
       })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
