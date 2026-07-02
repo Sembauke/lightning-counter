@@ -8,8 +8,8 @@ import { useReplay } from '../context/ReplayContext';
 import { useWind } from '../context/WindContext';
 
 interface FlashRing {
-  lat: number;
-  lon: number;
+  nx: number;
+  ny: number;
   startTime: number;
   zoomed: boolean;
 }
@@ -18,6 +18,20 @@ interface HeatPoint {
   lat: number;
   lon: number;
   time: number;
+  nx: number; // normalized web-mercator x/y in [0,1], precomputed once so redraws
+  ny: number; // are two multiply-adds per point instead of a Leaflet projection call
+}
+
+const MAX_MERC_LAT = 85.05112878;
+
+function mercNX(lon: number): number {
+  return (lon + 180) / 360;
+}
+
+function mercNY(lat: number): number {
+  const clamped = Math.max(-MAX_MERC_LAT, Math.min(MAX_MERC_LAT, lat));
+  const s = Math.sin(clamped * Math.PI / 180);
+  return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
 }
 
 interface WindParticle {
@@ -70,19 +84,13 @@ interface MapState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   map: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  layer: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  renderer: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tileLayer: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   labelsLayer: any;
-  markers: Map<string, { marker: any; addedAt: number }>;
   processed: Set<string>;
-  styleInterval: ReturnType<typeof setInterval> | null;
   heatmapTimer: ReturnType<typeof setInterval> | null;
   rings: FlashRing[];
-  liveDots: Array<{ lat: number; lon: number; addedAt: number }>;
+  liveDots: Array<{ nx: number; ny: number; addedAt: number }>;
   rafId: number | null;
   ready: boolean;
   heatCanvas: HTMLCanvasElement | null;
@@ -95,14 +103,6 @@ interface MapState {
   buildScreenGrid: (() => void) | null;
   dpr: number;
   drawHeatmap: (() => void) | null;
-}
-
-function getMarkerStyle(ageMs: number) {
-  if (ageMs < 10_000)  return { radius: 4, fillColor: '#ffe040', color: '#ff2222', fillOpacity: 1,    opacity: 0.9, weight: 1.5 };
-  if (ageMs < 60_000)  return { radius: 3, fillColor: '#ffff00', color: '#ffff00', fillOpacity: 0.95, opacity: 0,   weight: 0 };
-  if (ageMs < 300_000) return { radius: 3, fillColor: '#ffcc00', color: '#ffcc00', fillOpacity: 0.8,  opacity: 0,   weight: 0 };
-  if (ageMs < 900_000) return { radius: 2, fillColor: '#ff8800', color: '#ff8800', fillOpacity: 0.65, opacity: 0,   weight: 0 };
-  return { radius: 2, fillColor: '#ff4400', color: '#ff4400', fillOpacity: 0.3,  opacity: 0,   weight: 0 };
 }
 
 // Three stepped grid tiers, each with a fixed binZoom for geographic stability.
@@ -171,10 +171,6 @@ const WINDOW_LABELS: Record<HeatmapWindow, string> = {
   '1d':  '1 day',
 };
 
-const FIXED_BIN_ZOOM = 9;
-const FIXED_DISPLAY_PX = 24;
-const FIXED_KEY_MULT = 1 << 15;
-
 function formatDateTime(ts: number): string {
   const d = new Date(ts);
   return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
@@ -225,7 +221,6 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
   const dbBufferRef = useRef<HeatPoint[]>([]);
   const viewportFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchViewportRef = useRef<(() => void) | null>(null);
-  const fixedGridRef = useRef<Map<number, HeatPoint[]>>(new Map());
   const lastDragEndRef = useRef(0);
   const isSelectingRef = useRef(false);
   const selectStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -297,7 +292,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       .then(r => r.json())
       .then(data => {
         dbBufferRef.current = (data.strikes as Array<{ lat: number; lon: number; strike_time: number }>)
-          .map(s => ({ lat: s.lat, lon: s.lon, time: s.strike_time }));
+          .map(s => ({ lat: s.lat, lon: s.lon, time: s.strike_time, nx: mercNX(s.lon), ny: mercNY(s.lat) }));
         stateRef.current.drawHeatmap?.();
       })
       .catch(() => {});
@@ -319,9 +314,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
   };
 
   const stateRef = useRef<MapState>({
-    map: null, layer: null, renderer: null, tileLayer: null, labelsLayer: null,
-    markers: new Map(), processed: new Set(),
-    styleInterval: null, heatmapTimer: null,
+    map: null, tileLayer: null, labelsLayer: null,
+    processed: new Set(),
+    heatmapTimer: null,
     rings: [], liveDots: [], rafId: null, ready: false,
     heatCanvas: null, heatCtx: null, windCanvas: null, windCtx: null,
     windParticles: [], windScreenGrid: null, windWasActive: false, buildScreenGrid: null,
@@ -416,8 +411,6 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       s.labelsLayer = L.tileLayer(TILE_LABELS_URL, { pane: 'labelsPane', maxZoom: 19, opacity: 0.4 });
       if (satelliteRef.current) s.labelsLayer.addTo(map);
 
-      s.renderer = L.canvas({ padding: 0.5 });
-      s.layer = L.layerGroup().addTo(map);
       s.map = map;
 
       const dpr = window.devicePixelRatio || 1;
@@ -529,12 +522,24 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           const N_BUCKETS = 20;
           const buckets: number[][] = Array.from({ length: N_BUCKETS }, () => []);
 
+          // Screen transform from precomputed mercator coords: containerPoint = n * scale + offset.
+          // One Leaflet call per redraw instead of one per point.
+          const scale = 256 * Math.pow(2, s.map.getZoom());
+          const org = s.map.latLngToContainerPoint([0, 0]);
+          const ox = org.x - scale * 0.5;
+          const oy = org.y - scale * 0.5;
+          const cssW = hCnv.width / dpr;
+          const cssH = hCnv.height / dpr;
+
           const binDot = (pt: HeatPoint) => {
             if (pt.time < cutoff24h) return;
+            const x = pt.nx * scale + ox;
+            if (x < -4 || x > cssW + 4) return;
+            const y = pt.ny * scale + oy;
+            if (y < -4 || y > cssH + 4) return;
             const t = Math.min(1, (pt.time - cutoff24h) / windowMs);
             const bi = Math.min(N_BUCKETS - 1, Math.floor(t * N_BUCKETS));
-            const dp = s.map.latLngToContainerPoint([pt.lat, pt.lon]);
-            buckets[bi].push(dp.x, dp.y);
+            buckets[bi].push(x, y);
           };
           for (let i = dbBufferRef.current.length - 1; i >= 0; i--) binDot(dbBufferRef.current[i]);
           for (const pt of heatmapBufferRef.current) binDot(pt);
@@ -578,11 +583,11 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         // Bin visible strikes from live buffer + historical DB buffer
         const grid = new Map<number, number>();
         let maxCount = 0;
+        const binScale = 256 * Math.pow(2, binZoom); // world pixels at binZoom, from precomputed mercator
         const binPoint = (pt: HeatPoint) => {
           if (pt.time < cutoff) return;
-          const p = s.map!.project([pt.lat, pt.lon], binZoom);
-          const col = Math.floor(p.x / displayPx);
-          const row = Math.floor(p.y / displayPx);
+          const col = Math.floor(pt.nx * binScale / displayPx);
+          const row = Math.floor(pt.ny * binScale / displayPx);
           if (col < colMin || col > colMax || row < rowMin || row > rowMax) return;
           const key = row * KEY_MULT + col;
           const n = (grid.get(key) ?? 0) + 1;
@@ -713,31 +718,36 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         }
 
         hCtx.restore();
-
-        // Rebuild fixed-grid lookup for click detection
-        const cutoff2 = Date.now() - WINDOW_MS[timeWindowRef.current];
-        const cells = new Map<number, HeatPoint[]>();
-        for (const pt of heatmapBufferRef.current) {
-          if (pt.time < cutoff2) continue;
-          const p = s.map!.project([pt.lat, pt.lon], FIXED_BIN_ZOOM);
-          const col = Math.floor(p.x / FIXED_DISPLAY_PX);
-          const row = Math.floor(p.y / FIXED_DISPLAY_PX);
-          if (col < 0 || col >= FIXED_KEY_MULT || row < 0 || row >= FIXED_KEY_MULT) continue;
-          const key = row * FIXED_KEY_MULT + col;
-          const arr = cells.get(key);
-          if (arr) arr.push(pt);
-          else cells.set(key, [pt]);
-        }
-        fixedGridRef.current = cells;
       };
 
       // Refresh heatmap every 5 seconds to pick up new strikes
-      s.heatmapTimer = setInterval(() => s.drawHeatmap?.(), 5_000);
+      s.heatmapTimer = setInterval(() => { if (!document.hidden) s.drawHeatmap?.(); }, 5_000);
 
       // ── Ring animation RAF loop ──
+      // Full 60fps only while rings animate, wind is on, or the map is moving.
+      // Otherwise the overlay only holds slow-fading dots — 4fps is plenty.
       const ctx = overlay.getContext('2d')!;
+      let lastMoveAt = 0;
+      map.on('move', () => { lastMoveAt = performance.now(); });
+      let lastOverlayDraw = 0;
       const drawRings = (now: number) => {
+        const animating = s.rings.length > 0
+          || (windEnabledRef.current && s.windScreenGrid)
+          || s.windWasActive
+          || now - lastMoveAt < 300;
+        if (!animating && now - lastOverlayDraw < 250) {
+          s.rafId = requestAnimationFrame(drawRings);
+          return;
+        }
+        lastOverlayDraw = now;
+
         ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        // Screen transform from precomputed mercator coords — one Leaflet call per frame
+        const scale = 256 * Math.pow(2, map.getZoom());
+        const org = map.latLngToContainerPoint([0, 0]);
+        const ox = org.x - scale * 0.5;
+        const oy = org.y - scale * 0.5;
 
         if (s.rings.length > 0) {
           ctx.save();
@@ -755,10 +765,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
               if (zoom < 11) continue;
               const p = Math.min((now - ring.startTime) / 73_000, 1);
               if (p >= 1) { s.rings.splice(i, 1); continue; }
-              if (hmActive) continue;
-              const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
+              if (p <= 0 || hmActive) continue;
               ctx.beginPath();
-              ctx.arc(pt.x, pt.y, Math.max(1, soundMaxPx * p), 0, Math.PI * 2);
+              ctx.arc(ring.nx * scale + ox, ring.ny * scale + oy, Math.max(1, soundMaxPx * p), 0, Math.PI * 2);
               ctx.strokeStyle = `rgba(255,255,255,${(Math.pow(1 - p, 2) * 0.85).toFixed(3)})`;
               ctx.lineWidth = 0.5 + (1 - p) * 2.5;
               ctx.stroke();
@@ -766,10 +775,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
               if (zoom >= 11) continue;
               const p = Math.min((now - ring.startTime) / 600, 1);
               if (p >= 1) { s.rings.splice(i, 1); continue; }
-              if (hmActive) continue;
-              const pt = map.latLngToContainerPoint([ring.lat, ring.lon]);
+              if (p <= 0 || hmActive) continue;
               ctx.beginPath();
-              ctx.arc(pt.x, pt.y, Math.max(1, Math.sqrt(p) * 40), 0, Math.PI * 2);
+              ctx.arc(ring.nx * scale + ox, ring.ny * scale + oy, Math.max(1, Math.sqrt(p) * 40), 0, Math.PI * 2);
               ctx.strokeStyle = `rgba(255,220,60,${(Math.pow(1 - p, 1.5) * 0.95).toFixed(3)})`;
               ctx.lineWidth = 2.5 * (1 - p) + 0.5;
               ctx.stroke();
@@ -792,9 +800,8 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
             if (age > maxAge) { s.liveDots.splice(j, 1); continue; }
             const alpha = Math.pow(1 - age / maxAge, 0.4); // slow fade
             const radius = age < 10_000 ? 4 : 3;
-            const pt = map.latLngToContainerPoint([dot.lat, dot.lon]);
             ctx.beginPath();
-            ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+            ctx.arc(dot.nx * scale + ox, dot.ny * scale + oy, radius, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(255,224,64,${alpha.toFixed(3)})`;
             ctx.fill();
             if (age < 10_000) {
@@ -878,27 +885,6 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       };
       s.rafId = requestAnimationFrame(drawRings);
 
-      const refreshMarkers = () => {
-        const now = Date.now();
-        const toRemove: string[] = [];
-        s.markers.forEach((entry, id) => {
-          const age = now - entry.addedAt;
-          if (age > 30 * 60 * 1000) { toRemove.push(id); return; }
-          const style = getMarkerStyle(age);
-          entry.marker.setStyle({
-            fillColor: style.fillColor, color: style.color,
-            fillOpacity: style.fillOpacity, opacity: style.opacity, weight: style.weight,
-          });
-          entry.marker.setRadius(style.radius);
-        });
-        toRemove.forEach(id => {
-          const entry = s.markers.get(id);
-          if (entry) { s.layer.removeLayer(entry.marker); s.markers.delete(id); s.processed.delete(id); }
-        });
-      };
-
-      s.styleInterval = setInterval(refreshMarkers, 2000);
-      map.on('zoomend', refreshMarkers);
       s.ready = true;
 
       // Always seed DB data on load
@@ -907,7 +893,6 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
 
     return () => {
       const s = stateRef.current;
-      if (s.styleInterval) clearInterval(s.styleInterval);
       if (s.heatmapTimer) clearInterval(s.heatmapTimer);
       if (s.rafId !== null) cancelAnimationFrame(s.rafId);
       if (flashRafRef.current !== null) cancelAnimationFrame(flashRafRef.current);
@@ -1142,63 +1127,71 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     const s = stateRef.current;
     if (!s.ready || strikes.length === 0) return;
 
-    import('leaflet').then(({ default: L }) => {
-      for (const strike of strikes) {
-        if (s.processed.has(strike.id)) break;
-        s.processed.add(strike.id);
+    let scheduledTicks = 0;
+    const newPoints: HeatPoint[] = []; // collected newest-first, appended oldest-first below
+    for (const strike of strikes) {
+      if (s.processed.has(strike.id)) break;
+      s.processed.add(strike.id);
 
-        // Add to heatmap buffer
-        heatmapBufferRef.current.push({ lat: strike.lat, lon: strike.lon, time: strike.time });
+      const nx = mercNX(strike.lon);
+      const ny = mercNY(strike.lat);
 
-        if (!strike.id.startsWith('hist-')) {
-          const zoom = s.map.getZoom();
-          s.rings.push({ lat: strike.lat, lon: strike.lon, startTime: performance.now(), zoomed: zoom >= 11 });
-          s.liveDots.push({ lat: strike.lat, lon: strike.lon, addedAt: Date.now() });
+      newPoints.push({ lat: strike.lat, lon: strike.lon, time: strike.time, nx, ny });
 
-          if (heatmapEnabledRef.current) {
-            const { displayPx, binZoom } = (binLockedRef.current && lockedLevelRef.current)
-              ? lockedLevelRef.current
-              : getHeatmapLevel(zoom);
-            const p = s.map.project([strike.lat, strike.lon], binZoom);
-            const col = Math.floor(p.x / displayPx);
-            const row = Math.floor(p.y / displayPx);
-            cellFlashMapRef.current.set(row * CELL_KEY_MULT + col, Date.now());
-            startFlashLoop();
-          }
+      if (!strike.id.startsWith('hist-')) {
+        const zoom = s.map.getZoom();
+        // Stagger ring starts across the batch window so pulses stay continuous
+        s.rings.push({ nx, ny, startTime: performance.now() + Math.random() * 700, zoomed: zoom >= 11 });
+        s.liveDots.push({ nx, ny, addedAt: Date.now() });
 
-          if (soundRef.current && s.map.getBounds().contains([strike.lat, strike.lon])) {
-            if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+        if (heatmapEnabledRef.current) {
+          const { displayPx, binZoom } = (binLockedRef.current && lockedLevelRef.current)
+            ? lockedLevelRef.current
+            : getHeatmapLevel(zoom);
+          const binScale = 256 * Math.pow(2, binZoom);
+          const col = Math.floor(nx * binScale / displayPx);
+          const row = Math.floor(ny * binScale / displayPx);
+          cellFlashMapRef.current.set(row * CELL_KEY_MULT + col, Date.now());
+          startFlashLoop();
+        }
+
+        if (soundRef.current && scheduledTicks < 12 && s.map.getBounds().contains([strike.lat, strike.lon])) {
+          if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+          scheduledTicks++;
+          // Spread ticks across the batch window instead of firing all at once
+          setTimeout(() => {
             const now = performance.now();
             if (now - lastTickRef.current > 30) {
               lastTickRef.current = now;
-              playTick(audioCtxRef.current);
+              playTick(audioCtxRef.current!);
             }
-          }
+          }, Math.random() * 700);
         }
-
-        const age = strike.id.startsWith('hist-') ? Date.now() - strike.time : 0;
-        const style = getMarkerStyle(age);
-        const marker = L.circleMarker([strike.lat, strike.lon], {
-          ...style, renderer: s.renderer,
-        });
-        // Canvas draws all dots — Leaflet layer not used for dot rendering
-
-        s.markers.set(strike.id, { marker, addedAt: strike.time });
       }
+    }
 
-      // Prune heatmap buffer: keep last 72h, cap at 50k entries
-      const buf = heatmapBufferRef.current;
-      const cutoff72h = Date.now() - 3 * 24 * 60 * 60 * 1000;
-      let start = 0;
-      while (start < buf.length && buf[start].time < cutoff72h) start++;
-      if (start > 0) heatmapBufferRef.current = buf.slice(start);
-      if (heatmapBufferRef.current.length > 50_000) {
-        heatmapBufferRef.current = heatmapBufferRef.current.slice(-50_000);
-      }
+    // Keep the heatmap buffer ascending by time — the 72h prune scans from the front
+    for (let i = newPoints.length - 1; i >= 0; i--) heatmapBufferRef.current.push(newPoints[i]);
 
-      // Redraw heatmap to show newly arrived strikes
-      s.drawHeatmap?.();
-    });
+    // `processed` iterates in insertion order — drop oldest ids once well past the
+    // 20k strikes the list can hold, so the break-at-first-seen loop stays valid
+    if (s.processed.size > 30_000) {
+      const it = s.processed.values();
+      while (s.processed.size > 20_000) s.processed.delete(it.next().value as string);
+    }
+
+    // Prune heatmap buffer: keep last 72h, cap at 50k entries
+    const buf = heatmapBufferRef.current;
+    const cutoff72h = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    let start = 0;
+    while (start < buf.length && buf[start].time < cutoff72h) start++;
+    if (start > 0) heatmapBufferRef.current = buf.slice(start);
+    if (heatmapBufferRef.current.length > 50_000) {
+      heatmapBufferRef.current = heatmapBufferRef.current.slice(-50_000);
+    }
+
+    // Redraw heatmap to show newly arrived strikes
+    s.drawHeatmap?.();
   }, [strikes]);
 
   return (

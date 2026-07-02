@@ -14,6 +14,8 @@ export type CountryCounts = Record<string, number>;
 
 const MAX_STRIKES = 20000;
 const STRIKE_LIFETIME_MS = 30 * 60 * 1000;
+// Strikes can arrive at 30–100/sec globally — batching keeps React renders at ~1/sec
+const FLUSH_INTERVAL_MS = 800;
 
 export function useBlitzortung() {
   const [strikes, setStrikes] = useState<Strike[]>([]);
@@ -59,25 +61,47 @@ export function useBlitzortung() {
       }
     });
 
+    let pendingStrikes: Strike[] = [];
+    let pendingCounts: CountryCounts = {};
+    let pendingCountsDirty = false;
+
     es.onmessage = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data) as { lat: number; lon: number; cc?: string | null };
-        const strike: Strike = {
+        pendingStrikes.push({
           id: `${counterRef.current++}`,
           lat: data.lat,
           lon: data.lon,
           time: Date.now(),
           ...(data.cc ? { cc: data.cc } : {}),
-        };
-        setStrikes(prev => {
-          const next = [strike, ...prev];
-          return next.length > MAX_STRIKES ? next.slice(0, MAX_STRIKES) : next;
         });
         if (data.cc) {
-          setCountryCounts(prev => ({ ...prev, [data.cc!]: (prev[data.cc!] ?? 0) + 1 }));
+          pendingCounts[data.cc] = (pendingCounts[data.cc] ?? 0) + 1;
+          pendingCountsDirty = true;
         }
       } catch { /* ignore */ }
     };
+
+    const flushInterval = setInterval(() => {
+      if (pendingStrikes.length > 0) {
+        const batch = pendingStrikes.reverse(); // newest first, matching list order
+        pendingStrikes = [];
+        setStrikes(prev => {
+          const next = [...batch, ...prev];
+          return next.length > MAX_STRIKES ? next.slice(0, MAX_STRIKES) : next;
+        });
+      }
+      if (pendingCountsDirty) {
+        const counts = pendingCounts;
+        pendingCounts = {};
+        pendingCountsDirty = false;
+        setCountryCounts(prev => {
+          const next = { ...prev };
+          for (const cc in counts) next[cc] = (next[cc] ?? 0) + counts[cc];
+          return next;
+        });
+      }
+    }, FLUSH_INTERVAL_MS);
 
     es.onerror = () => setConnected(false);
 
@@ -87,6 +111,7 @@ export function useBlitzortung() {
     }, 30_000);
 
     return () => {
+      clearInterval(flushInterval);
       clearInterval(cleanupInterval);
       es.close();
     };
