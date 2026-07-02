@@ -524,21 +524,34 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
             ];
           };
 
-          const drawDot = (pt: HeatPoint) => {
+          // Batch dots by color bucket — one fill() per bucket instead of per dot.
+          // 20 buckets → ≤20 GPU state changes regardless of dot count.
+          const N_BUCKETS = 20;
+          const buckets: number[][] = Array.from({ length: N_BUCKETS }, () => []);
+
+          const binDot = (pt: HeatPoint) => {
             if (pt.time < cutoff24h) return;
-            const t = (pt.time - cutoff24h) / windowMs; // 0=at cutoff, 1=now
-            const [r, g, b, a] = lerpStop(t);
-            hCtx.fillStyle = `rgba(${r},${g},${b},${a})`;
+            const t = Math.min(1, (pt.time - cutoff24h) / windowMs);
+            const bi = Math.min(N_BUCKETS - 1, Math.floor(t * N_BUCKETS));
             const dp = s.map.latLngToContainerPoint([pt.lat, pt.lon]);
-            hCtx.beginPath();
-            hCtx.arc(dp.x, dp.y, dotR, 0, Math.PI * 2);
-            hCtx.fill();
+            buckets[bi].push(dp.x, dp.y);
           };
-          // Draw oldest first so newest (brightest) paint on top.
-          // dbBuffer arrives DESC from the DB — iterate backwards for ASC order.
-          for (let i = dbBufferRef.current.length - 1; i >= 0; i--) drawDot(dbBufferRef.current[i]);
-          // heatmapBuffer is pushed in arrival order (oldest first) — forward is correct.
-          for (const pt of heatmapBufferRef.current) drawDot(pt);
+          for (let i = dbBufferRef.current.length - 1; i >= 0; i--) binDot(dbBufferRef.current[i]);
+          for (const pt of heatmapBufferRef.current) binDot(pt);
+
+          // Draw oldest buckets first so newer (brighter) paint on top
+          for (let b = 0; b < N_BUCKETS; b++) {
+            const flat = buckets[b];
+            if (flat.length === 0) continue;
+            const [r, g, bc, a] = lerpStop((b + 0.5) / N_BUCKETS);
+            hCtx.fillStyle = `rgba(${r},${g},${bc},${a})`;
+            hCtx.beginPath();
+            for (let i = 0; i < flat.length; i += 2) {
+              hCtx.moveTo(flat[i] + dotR, flat[i + 1]);
+              hCtx.arc(flat[i], flat[i + 1], dotR, 0, Math.PI * 2);
+            }
+            hCtx.fill();
+          }
 
           hCtx.restore();
           return;
