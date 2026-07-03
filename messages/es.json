@@ -15,8 +15,6 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Actividad Tormentas",
-    "replay24h": "Rayos 24h",
-    "toggle24hReplay": "Activar/desactivar vista 24h",
     "wind": "Capa de viento",
     "toggleWind": "Activar/desactivar capa de viento"
   },
@@ -46,7 +44,7 @@
     "from": "Desde",
     "to": "Hasta",
     "minStrikes": "Min. rayos",
-"strikes": "Rayos",
+    "strikes": "Rayos",
     "noRecords": "No hay registros que coincidan con el filtro.",
     "close": "Cerrar",
     "back": "Volver"

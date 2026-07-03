@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import type { Strike } from '../hooks/useBlitzortung';
-import { useHeatmap, type HeatmapWindow } from '../context/HeatmapContext';
-import { useReplay } from '../context/ReplayContext';
+import { useHeatmap } from '../context/HeatmapContext';
 import { useWind } from '../context/WindContext';
 
 interface FlashRing {
@@ -157,19 +156,8 @@ const TILE_SAT = {
 };
 const TILE_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
 
-const WINDOW_MS: Record<HeatmapWindow, number> = {
-  '30m':  30 * 60 * 1000,
-  '1h':    1 * 60 * 60 * 1000,
-  '3h':    3 * 60 * 60 * 1000,
-  '1d':   24 * 60 * 60 * 1000,
-};
-
-const WINDOW_LABELS: Record<HeatmapWindow, string> = {
-  '30m': '30 min',
-  '1h':  '1 hr',
-  '3h':  '3 hrs',
-  '1d':  '1 day',
-};
+// Everything — dot view, heatmap, viewport backfill — shows the last 30 minutes
+const WINDOW_MS = 30 * 60 * 1000;
 
 function formatDateTime(ts: number): string {
   const d = new Date(ts);
@@ -201,23 +189,18 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastTickRef = useRef(0);
 
-  const { enabled: heatmapEnabled, timeWindow, setTimeWindow } = useHeatmap();
-  const { extend24h } = useReplay();
+  const { enabled: heatmapEnabled } = useHeatmap();
   const { enabled: windEnabled } = useWind();
-  const extend24hRef = useRef(extend24h);
-  extend24hRef.current = extend24h;
   const heatmapEnabledRef = useRef(heatmapEnabled);
   heatmapEnabledRef.current = heatmapEnabled;
-  const timeWindowRef = useRef(timeWindow);
-  timeWindowRef.current = timeWindow;
   const windEnabledRef = useRef(windEnabled);
   windEnabledRef.current = windEnabled;
   const windGridRef = useRef<WindGridData | null>(null);
   const windFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Long-lived buffer for heatmap — accumulates all strikes (max 7d, capped at 100k)
+  // Live strikes from SSE, pruned to the 30-min window
   const heatmapBufferRef = useRef<HeatPoint[]>([]);
-  // Historical strikes fetched from DB for the current viewport
+  // DB backfill for the current viewport — covers strikes the capped SSE history missed
   const dbBufferRef = useRef<HeatPoint[]>([]);
   const viewportFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchViewportRef = useRef<(() => void) | null>(null);
@@ -281,12 +264,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     const maxLat = Math.min(90,   b.getNorth() + latPad);
     const minLon = Math.max(-180, b.getWest()  - lonPad);
     const maxLon = Math.min(180,  b.getEast()  + lonPad);
-    const windowMs = heatmapEnabledRef.current
-      ? WINDOW_MS[timeWindowRef.current]
-      : extend24hRef.current
-        ? 24 * 60 * 60 * 1000
-        : 60 * 60 * 1000;
-    const since = Date.now() - windowMs;
+    const since = Date.now() - WINDOW_MS;
     const q = `minLat=${minLat}&maxLat=${maxLat}&minLon=${minLon}&maxLon=${maxLon}&since=${since}`;
     fetch(`/api/grid/viewport?${q}`)
       .then(r => r.json())
@@ -486,11 +464,9 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         hCtx.save();
         hCtx.scale(dpr, dpr);
 
-        // Dot view — always on when heatmap is inactive. Window: 24h or 1h.
+        // Dot view — always on when heatmap is inactive. Shows the last 30 minutes.
         if (!heatmapEnabledRef.current) {
-          const windowMs = extend24hRef.current ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
-          const nowMs = Date.now();
-          const cutoff24h = nowMs - windowMs;
+          const dotCutoff = Date.now() - WINDOW_MS;
           const dotR = Math.max(2, 3 / dpr);
           // Normalize against the fixed window so colors are viewport-independent:
           // t=0 → oldest possible (cutoff), t=1 → now
@@ -532,12 +508,12 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           const cssH = hCnv.height / dpr;
 
           const binDot = (pt: HeatPoint) => {
-            if (pt.time < cutoff24h) return;
+            if (pt.time < dotCutoff) return;
             const x = pt.nx * scale + ox;
             if (x < -4 || x > cssW + 4) return;
             const y = pt.ny * scale + oy;
             if (y < -4 || y > cssH + 4) return;
-            const t = Math.min(1, (pt.time - cutoff24h) / windowMs);
+            const t = Math.min(1, (pt.time - dotCutoff) / WINDOW_MS);
             const bi = Math.min(N_BUCKETS - 1, Math.floor(t * N_BUCKETS));
             buckets[bi].push(x, y);
           };
@@ -568,7 +544,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           : getHeatmapLevel(zoom);
         const KEY_MULT = CELL_KEY_MULT;
 
-        const cutoff = Date.now() - WINDOW_MS[timeWindowRef.current];
+        const cutoff = Date.now() - WINDOW_MS;
 
         // Viewport bounds in binZoom tile-pixel space — computed once, reused for binning + drawing
         const bounds = s.map.getBounds();
@@ -941,7 +917,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         maxLon: Math.max(sw.lng, ne.lng),
       };
 
-      const cutoff = Date.now() - WINDOW_MS[timeWindowRef.current];
+      const cutoff = Date.now() - WINDOW_MS;
       const inMemory = heatmapBufferRef.current.filter(pt =>
         pt.time >= cutoff &&
         pt.lat >= bounds.minLat && pt.lat <= bounds.maxLat &&
@@ -1014,7 +990,7 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         maxLon: Math.max(sw.lng, ne.lng),
       };
 
-      const cutoff = Date.now() - WINDOW_MS[timeWindowRef.current];
+      const cutoff = Date.now() - WINDOW_MS;
       const inMemory = heatmapBufferRef.current.filter(pt =>
         pt.time >= cutoff &&
         pt.lat >= bounds.minLat && pt.lat <= bounds.maxLat &&
@@ -1054,31 +1030,12 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     if (s.ready && s.drawHeatmap) s.drawHeatmap();
   }, [selectedCell]);
 
-  // Refetch + redraw when heatmap or 24h window changes
+  // Redraw when the view mode changes — both modes share the same 30-min window
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready) return;
-    dbBufferRef.current = [];
     s.drawHeatmap?.();
-    fetchViewportRef.current?.();
   }, [heatmapEnabled]);
-
-  useEffect(() => {
-    const s = stateRef.current;
-    if (!s.ready) return;
-    dbBufferRef.current = [];
-    s.drawHeatmap?.();
-    fetchViewportRef.current?.();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [extend24h]);
-
-  useEffect(() => {
-    const s = stateRef.current;
-    if (!s.ready) return;
-    dbBufferRef.current = [];
-    s.drawHeatmap?.();
-    scheduleFetchViewport();
-  }, [timeWindow]);
 
   useEffect(() => {
     const s = stateRef.current;
@@ -1180,11 +1137,11 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       while (s.processed.size > 20_000) s.processed.delete(it.next().value as string);
     }
 
-    // Prune heatmap buffer: keep last 72h, cap at 50k entries
+    // Prune heatmap buffer: keep the 30-min window, cap at 50k entries
     const buf = heatmapBufferRef.current;
-    const cutoff72h = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    const pruneCutoff = Date.now() - WINDOW_MS;
     let start = 0;
-    while (start < buf.length && buf[start].time < cutoff72h) start++;
+    while (start < buf.length && buf[start].time < pruneCutoff) start++;
     if (start > 0) heatmapBufferRef.current = buf.slice(start);
     if (heatmapBufferRef.current.length > 50_000) {
       heatmapBufferRef.current = heatmapBufferRef.current.slice(-50_000);
@@ -1265,17 +1222,8 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
       )}
       {heatmapEnabled && (
         <div className="heatmap-filter">
-          <span className="heatmap-filter-label">Heatmap interval</span>
+          <span className="heatmap-filter-label">Heatmap · last 30 min</span>
           <div className="heatmap-filter-buttons">
-            {(['30m', '1h', '3h', '1d'] as HeatmapWindow[]).map(w => (
-              <button
-                key={w}
-                className={`hm-filter-btn${timeWindow === w ? ' active' : ''}`}
-                onClick={() => setTimeWindow(w)}
-              >
-                {WINDOW_LABELS[w]}
-              </button>
-            ))}
             <button
               className={`hm-filter-btn${binLocked ? ' active' : ''}`}
               onClick={() => {

@@ -15,8 +15,6 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Gewitteraktivität",
-    "replay24h": "24h-Blitze",
-    "toggle24hReplay": "24h-Blitzansicht umschalten",
     "wind": "Windschicht",
     "toggleWind": "Windschicht umschalten"
   },
@@ -46,7 +44,7 @@
     "from": "Von",
     "to": "Bis",
     "minStrikes": "Min. Blitze",
-"strikes": "Blitze",
+    "strikes": "Blitze",
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
     "close": "Schließen",
     "back": "Zurück"

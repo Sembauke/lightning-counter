@@ -15,8 +15,6 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Storm Activity",
-    "replay24h": "24h Strikes",
-    "toggle24hReplay": "Toggle 24h strike view",
     "wind": "Wind Layer",
     "toggleWind": "Toggle wind layer"
   },
@@ -46,7 +44,7 @@
     "from": "From",
     "to": "To",
     "minStrikes": "Min discharges",
-"strikes": "Discharges",
+    "strikes": "Discharges",
     "noRecords": "No records match the filter.",
     "close": "Close",
     "back": "Back"

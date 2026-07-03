@@ -9,7 +9,6 @@ import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
-import { useReplay } from '../context/ReplayContext';
 import { useWind } from '../context/WindContext';
 
 const StormActivity = dynamic(() => import('./StormActivity'), { ssr: false });
@@ -134,7 +133,6 @@ export default function Navbar() {
   const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
-  const { extend24h, toggle: toggleReplay } = useReplay();
   const { enabled: windEnabled, toggle: toggleWind } = useWind();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
@@ -163,11 +161,6 @@ export default function Navbar() {
         <label className="settings-row" aria-label={t('toggleSound')}>
           <span className="settings-row-label">{t('sound')}</span>
           <input type="checkbox" checked={sound} onChange={toggleSound} />
-          <span className="satellite-track"><span className="satellite-thumb" /></span>
-        </label>
-        <label className="settings-row" aria-label={t('toggle24hReplay')}>
-          <span className="settings-row-label">{t('replay24h')}</span>
-          <input type="checkbox" checked={extend24h} onChange={toggleReplay} />
           <span className="satellite-track"><span className="satellite-thumb" /></span>
         </label>
       </div>
