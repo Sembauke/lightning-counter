@@ -1,5 +1,5 @@
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes } from '../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -106,6 +106,10 @@ setInterval(() => {
   const batch = pendingGridStrikes.splice(0);
   try { archiveGridStrikeBatch(batch); } catch (err) { console.error('[db] grid batch failed:', err); }
 }, 5_000);
+
+setInterval(() => {
+  try { pruneGridStrikes(); } catch (err) { console.error('[db] prune failed:', err); }
+}, 60 * 60 * 1000);
 
 // ── SSE endpoint ───────────────────────────────────────────────────────
 export async function GET() {

@@ -52,9 +52,18 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_gs_cell_time ON grid_strikes(cell_id, strike_time DESC);
     CREATE INDEX IF NOT EXISTS idx_gs_latlon ON grid_strikes(lat, lon);
+    CREATE INDEX IF NOT EXISTS idx_gs_time ON grid_strikes(strike_time);
     DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-3 days') * 1000;
   `);
   return _db;
+}
+
+// The startup DELETE above only runs once per process — a long-running server
+// needs this called periodically or grid_strikes grows without bound
+export function pruneGridStrikes(): void {
+  const db = getDb();
+  db.prepare('DELETE FROM grid_strikes WHERE strike_time < ?').run(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  db.pragma('wal_checkpoint(TRUNCATE)');
 }
 
 export function loadCounters(): { total: number; countries: Record<string, number> } {
@@ -199,8 +208,11 @@ export function getViewportStrikes(
   since: number, limit = 20_000
 ): Array<{ lat: number; lon: number; strike_time: number }> {
   const db = getDb();
+  // INDEXED BY: the planner picks idx_gs_latlon for wide viewports, which visits
+  // every row in the lat range and sorts (seconds on a big table). The time index
+  // walks newest-first and stops at `since` — the 30-min window keeps it tiny.
   return db.prepare(
-    `SELECT lat, lon, strike_time FROM grid_strikes
+    `SELECT lat, lon, strike_time FROM grid_strikes INDEXED BY idx_gs_time
      WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND strike_time >= ?
      ORDER BY strike_time DESC LIMIT ?`
   ).all(minLat, maxLat, minLon, maxLon, since, limit) as Array<{ lat: number; lon: number; strike_time: number }>;

@@ -763,18 +763,21 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           ctx.restore();
         }
 
-        // Live strike dots drawn on top (z=450) whenever the dot view is active
+        // Fresh-strike highlight (z=450) — only the last 2 min; older strikes are
+        // shown by the gradient dot layer underneath, so this stays a small set
         if (!heatmapEnabledRef.current && s.liveDots.length > 0) {
           ctx.save();
           ctx.scale(dpr, dpr);
           const nowMs = Date.now();
-          const maxAge = 30 * 60 * 1000;
-          let j = s.liveDots.length;
-          while (j--) {
-            const dot = s.liveDots[j];
+          const maxAge = 2 * 60 * 1000;
+          // Array is oldest-first — drop expired from the front…
+          let expired = 0;
+          while (expired < s.liveDots.length && nowMs - s.liveDots[expired].addedAt > maxAge) expired++;
+          if (expired > 0) s.liveDots.splice(0, expired);
+          // …then draw oldest→newest so the newest strikes paint on top
+          for (const dot of s.liveDots) {
             const age = nowMs - dot.addedAt;
-            if (age > maxAge) { s.liveDots.splice(j, 1); continue; }
-            const alpha = Math.pow(1 - age / maxAge, 0.4); // slow fade
+            const alpha = Math.pow(1 - age / maxAge, 0.4);
             const radius = age < 10_000 ? 4 : 3;
             ctx.beginPath();
             ctx.arc(dot.nx * scale + ox, dot.ny * scale + oy, radius, 0, Math.PI * 2);
