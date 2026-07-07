@@ -47,7 +47,8 @@
     "strikes": "Éclairs",
     "noRecords": "Aucun enregistrement ne correspond au filtre.",
     "close": "Fermer",
-    "back": "Retour"
+    "back": "Retour",
+    "peakTooltip": "Nombre de décharges le plus élevé jamais enregistré en une journée"
   },
   "storms": {
     "title": "Activité orageuse",

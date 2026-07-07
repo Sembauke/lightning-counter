@@ -288,7 +288,7 @@ export default function Navbar() {
         <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />
       </div>
 
-      {stormOpen && <StormActivity />}
+      {stormOpen && path === '/' && <StormActivity />}
     </>
   );
 }

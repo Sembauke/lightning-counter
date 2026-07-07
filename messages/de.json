@@ -47,7 +47,8 @@
     "strikes": "Blitze",
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
     "close": "Schließen",
-    "back": "Zurück"
+    "back": "Zurück",
+    "peakTooltip": "Höchste jemals an einem Tag gemessene Anzahl an Entladungen"
   },
   "storms": {
     "title": "Gewitteraktivität",

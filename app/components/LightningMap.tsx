@@ -396,10 +396,43 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
 
       // ── Heatmap canvas — sits between the Leaflet map pane (z=400) and the ring overlay (z=450) ──
       const heatCanvas = document.createElement('canvas');
-      heatCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:401;';
+      heatCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:401;transform-origin:0 0;';
       container.appendChild(heatCanvas);
       s.heatCanvas = heatCanvas;
       s.heatCtx = heatCanvas.getContext('2d')!;
+
+      // Baseline screen transform of the last full heat-canvas draw. While the
+      // map pans/zooms we translate+scale the canvas via CSS instead of redrawing;
+      // the real redraw happens on moveend.
+      let heatDrawScale = 0;
+      let heatDrawOx = 0;
+      let heatDrawOy = 0;
+
+      const setHeatTransform = (S1: number, o1x: number, o1y: number, animate: boolean) => {
+        if (!heatDrawScale) return;
+        const k = S1 / heatDrawScale;
+        heatCanvas.style.transition = animate ? 'transform 0.25s cubic-bezier(0,0,0.25,1)' : 'none';
+        heatCanvas.style.transform =
+          `translate(${o1x - k * heatDrawOx}px, ${o1y - k * heatDrawOy}px) scale(${k})`;
+      };
+
+      // Keep the heat canvas glued to the map while dragging (translate) and
+      // during animated zooms (scale, matching Leaflet's pane transition)
+      map.on('move', () => {
+        const S1 = 256 * Math.pow(2, map.getZoom());
+        const o = map.latLngToContainerPoint([0, 0]);
+        setHeatTransform(S1, o.x - S1 / 2, o.y - S1 / 2, false);
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.on('zoomanim', (e: any) => {
+        const S1 = 256 * Math.pow(2, e.zoom);
+        setHeatTransform(
+          S1,
+          container.offsetWidth / 2 - mercNX(e.center.lng) * S1,
+          container.offsetHeight / 2 - mercNY(e.center.lat) * S1,
+          true,
+        );
+      });
 
       // ── Wind particle canvas (z-index 402, above dot layer) ──
       const windCanvas = document.createElement('canvas');
@@ -459,6 +492,16 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
         const hCnv = s.heatCanvas;
         if (!hCtx || !hCnv || !s.map) return;
 
+        // Fresh draw in current view coordinates — drop any interim pan/zoom
+        // CSS transform and record the new baseline for setHeatTransform
+        heatCanvas.style.transition = 'none';
+        heatCanvas.style.transform = '';
+        const drawScale = 256 * Math.pow(2, s.map.getZoom());
+        const drawOrg = s.map.latLngToContainerPoint([0, 0]);
+        heatDrawScale = drawScale;
+        heatDrawOx = drawOrg.x - drawScale * 0.5;
+        heatDrawOy = drawOrg.y - drawScale * 0.5;
+
         hCtx.clearRect(0, 0, hCnv.width, hCnv.height);
 
         hCtx.save();
@@ -498,12 +541,10 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
           const N_BUCKETS = 20;
           const buckets: number[][] = Array.from({ length: N_BUCKETS }, () => []);
 
-          // Screen transform from precomputed mercator coords: containerPoint = n * scale + offset.
-          // One Leaflet call per redraw instead of one per point.
-          const scale = 256 * Math.pow(2, s.map.getZoom());
-          const org = s.map.latLngToContainerPoint([0, 0]);
-          const ox = org.x - scale * 0.5;
-          const oy = org.y - scale * 0.5;
+          // Screen transform from precomputed mercator coords: containerPoint = n * scale + offset
+          const scale = drawScale;
+          const ox = heatDrawOx;
+          const oy = heatDrawOy;
           const cssW = hCnv.width / dpr;
           const cssH = hCnv.height / dpr;
 

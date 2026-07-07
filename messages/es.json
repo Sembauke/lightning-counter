@@ -47,7 +47,8 @@
     "strikes": "Rayos",
     "noRecords": "No hay registros que coincidan con el filtro.",
     "close": "Cerrar",
-    "back": "Volver"
+    "back": "Volver",
+    "peakTooltip": "Mayor número de descargas registrado en un solo día"
   },
   "storms": {
     "title": "Actividad de Tormentas",

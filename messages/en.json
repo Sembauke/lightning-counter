@@ -47,7 +47,8 @@
     "strikes": "Discharges",
     "noRecords": "No records match the filter.",
     "close": "Close",
-    "back": "Back"
+    "back": "Back",
+    "peakTooltip": "All-time highest number of discharges recorded in a single day"
   },
   "storms": {
     "title": "Storm Activity",

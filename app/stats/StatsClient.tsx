@@ -96,7 +96,7 @@ export default function ArchivePage() {
               <th className="col-num th-sort" onClick={() => handleSort('today')}>
                 {t('today')}{sortIndicator('today')}
               </th>
-              <th className="col-num th-sort" onClick={() => handleSort('peak')}>
+              <th className="col-num th-sort" title={t('peakTooltip')} onClick={() => handleSort('peak')}>
                 {t('allTimeHigh')}{sortIndicator('peak')}
               </th>
               <th className="col-date">{t('date')}</th>

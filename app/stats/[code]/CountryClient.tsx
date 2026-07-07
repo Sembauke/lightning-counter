@@ -67,7 +67,7 @@ export default function CountryClient() {
               {row && (
                 <div className="detail-meta">
                   <span>{t('todayLabel')} <strong>{fmt(row.today)}</strong></span>
-                  <span>{t('peakLabel')} <strong>{fmt(row.peakCount)}</strong> {t('on')} {row.peakDate || '—'}</span>
+                  <span title={t('peakTooltip')}>{t('peakLabel')} <strong>{fmt(row.peakCount)}</strong> {t('on')} {row.peakDate || '—'}</span>
                 </div>
               )}
             </div>
