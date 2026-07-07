@@ -363,6 +363,49 @@ html, body {
   text-transform: uppercase;
 }
 
+/* ── Below-the-fold info section (homepage) ── */
+.site-info {
+  background: #0a0a0f;
+  color: rgba(255,255,255,0.72);
+  padding: 3rem 1.5rem 4rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.65;
+  border-top: 1px solid rgba(255,220,0,0.15);
+}
+.site-info h1,
+.site-info h2,
+.site-info p,
+.site-info details {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.site-info h1 {
+  font-size: 1.35rem;
+  letter-spacing: 0.06em;
+  color: rgba(255,230,80,0.9);
+  margin-bottom: 1.25rem;
+}
+.site-info h2 {
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+  color: rgba(255,230,80,0.8);
+  margin: 2rem auto 0.75rem;
+}
+.site-info p { margin: 0 auto 1rem; }
+.site-info a { color: rgba(255,220,0,0.75); text-decoration: none; }
+.site-info a:hover { color: #ffe040; }
+.site-info details {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  padding: 0.6rem 0;
+}
+.site-info summary {
+  cursor: pointer;
+  color: rgba(255,255,255,0.85);
+  font-weight: 600;
+}
+.site-info details p { margin: 0.6rem 0 0.2rem; }
+
 /* ── Attribution ── */
 .attribution {
   position: absolute;

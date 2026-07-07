@@ -6,8 +6,7 @@ import { SoundProvider } from './context/SoundContext';
 import { LocaleProvider } from './context/LocaleContext';
 import { HeatmapProvider } from './context/HeatmapContext';
 import { WindProvider } from './context/WindContext';
-
-const BASE = 'https://lightning-counter.fly.dev';
+import { SITE_URL as BASE } from './lib/site';
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE),
@@ -34,7 +33,7 @@ export const metadata: Metadata = {
     locale: 'en_US',
   },
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: 'Lightning Stats — Real-Time Global Lightning Tracker',
     description:
       'Watch lightning discharges happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
