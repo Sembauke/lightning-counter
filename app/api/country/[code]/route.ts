@@ -1,4 +1,4 @@
-import { getCountryHistory } from '../../../lib/db';
+import { getCountryHistory, getBiggestStorm } from '../../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,5 +17,5 @@ export async function GET(_req: Request, { params }: { params: { code: string } 
     todayInDb.count = todayCounts[code];
   }
 
-  return Response.json(history);
+  return Response.json({ history, biggestStorm: getBiggestStorm(code) });
 }

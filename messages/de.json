@@ -27,7 +27,9 @@
     "waiting": "Warte auf Daten…",
     "country": "Land",
     "strikes": "Blitze",
-    "share": "Anteil"
+    "share": "Anteil",
+    "searchPlaceholder": "Land suchen…",
+    "countriesFound": "{count} Länder"
   },
   "stats": {
     "title": "Blitzarchiv",
@@ -48,7 +50,8 @@
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
     "close": "Schließen",
     "back": "Zurück",
-    "peakTooltip": "Höchste jemals an einem Tag gemessene Anzahl an Entladungen"
+    "peakTooltip": "Höchste jemals an einem Tag gemessene Anzahl an Entladungen",
+    "biggestStorm": "Größtes erfasstes Gewitter"
   },
   "storms": {
     "title": "Gewitteraktivität",
@@ -58,6 +61,23 @@
     "athHeader": "Rekord",
     "noData": "Keine aktiven Gewitter erkannt.",
     "loading": "Gewitterdaten werden geladen…",
-    "close": "Schließen"
+    "close": "Schließen",
+    "stormNear": "Gewitter bei {city}",
+    "activeStorms": "{count, plural, one {# aktives Gewitter} other {# aktive Gewitter}}",
+    "strikesCount": "{count, plural, one {# Einschlag} other {# Einschläge}}",
+    "noCells": "Derzeit keine einzelnen Gewitterzellen.",
+    "flyTo": "Auf Karte zeigen",
+    "moving": "zieht nach {dir}",
+    "intensifying": "Nimmt zu",
+    "weakening": "Nimmt ab",
+    "steady": "Stabil",
+    "dirN": "N",
+    "dirNE": "NO",
+    "dirE": "O",
+    "dirSE": "SO",
+    "dirS": "S",
+    "dirSW": "SW",
+    "dirW": "W",
+    "dirNW": "NW"
   }
 }

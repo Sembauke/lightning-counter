@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLocale } from '../context/LocaleContext';
@@ -14,6 +14,9 @@ interface ArchiveRow { code: string; today: number; peakCount: number; peakDate:
 
 export default function ArchivePage() {
   const [data, setData] = useState<ArchiveRow[]>([]);
+  // code → timestamp of its last count change; keying rows on this restarts the flash animation
+  const [flash, setFlash] = useState<Record<string, number>>({});
+  const prevTodayRef = useRef<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState<SortCol>('today');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -31,9 +34,24 @@ export default function ArchivePage() {
   }
 
   useEffect(() => {
-    const load = () => fetch('/api/archive').then(r => r.json()).then(setData).catch(() => {});
+    const load = () => fetch('/api/archive')
+      .then(r => r.json())
+      .then((rows: ArchiveRow[]) => {
+        const prev = prevTodayRef.current;
+        const changed: Record<string, number> = {};
+        const now = Date.now();
+        for (const row of rows) {
+          if (prev[row.code] !== undefined && prev[row.code] !== row.today) changed[row.code] = now;
+          prev[row.code] = row.today;
+        }
+        if (Object.keys(changed).length > 0) setFlash(f => ({ ...f, ...changed }));
+        setData(rows);
+      })
+      .catch(() => {});
     load();
-    const timer = setInterval(load, 30_000);
+    // Counts are served from the server's live in-memory counters, so a short
+    // interval gives near-real-time updates
+    const timer = setInterval(load, 2_500);
     return () => clearInterval(timer);
   }, []);
 
@@ -108,8 +126,8 @@ export default function ArchivePage() {
             )}
             {filtered.map(row => (
               <tr
-                key={row.code}
-                className="archive-row"
+                key={`${row.code}:${flash[row.code] ?? 0}`}
+                className={`archive-row${flash[row.code] ? ' archive-row-flash' : ''}`}
                 onClick={() => router.push(`/stats/${row.code}`)}
                 style={{ cursor: 'pointer' }}
               >

@@ -9,16 +9,19 @@ function fmt(n: number) { return n.toLocaleString(); }
 
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
 interface HistoryRow { date: string; count: number; }
+interface BiggestStorm { count: number; rate: number; lat: number; lon: number; city: string | null; date: string; }
 
 export default function CountryClient() {
   const params = useParams();
   const code = (params.code as string).toUpperCase();
   const router = useRouter();
   const t = useTranslations('stats');
+  const ts = useTranslations('storms');
   const { locale } = useLocale();
 
   const [row, setRow] = useState<ArchiveRow | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [biggestStorm, setBiggestStorm] = useState<BiggestStorm | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [minStrikes, setMinStrikes] = useState('');
@@ -39,7 +42,10 @@ export default function CountryClient() {
       .catch(() => {});
     fetch(`/api/country/${code}`)
       .then(r => r.json())
-      .then(setHistory)
+      .then((data: { history: HistoryRow[]; biggestStorm: BiggestStorm | null }) => {
+        setHistory(data.history);
+        setBiggestStorm(data.biggestStorm);
+      })
       .catch(() => {});
   }, [code]);
 
@@ -73,6 +79,24 @@ export default function CountryClient() {
             </div>
           </div>
         </div>
+
+        {biggestStorm && (
+          <div className="biggest-storm-card">
+            <span className="bsc-title">{t('biggestStorm')}</span>
+            <span className="bsc-name">
+              ⚡ {biggestStorm.city
+                ? ts('stormNear', { city: biggestStorm.city })
+                : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`}
+            </span>
+            <span className="bsc-meta">
+              {ts('strikesCount', { count: biggestStorm.count })}
+              {' · '}
+              {biggestStorm.rate >= 10 ? Math.round(biggestStorm.rate) : biggestStorm.rate.toFixed(1)}/m
+              {' · '}
+              {biggestStorm.date}
+            </span>
+          </div>
+        )}
 
         <div className="detail-filters">
           <label>{t('from')} <input type="date" className="detail-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></label>

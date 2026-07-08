@@ -456,11 +456,12 @@ html, body {
 
 .country-list-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1.5rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .country-list-title {
@@ -684,6 +685,14 @@ html, body {
 .archive-row.selected { background: rgba(255,220,0,0.06); border-bottom-color: rgba(255,220,0,0.12); }
 .archive-row td { padding: 0.6rem 0.75rem; vertical-align: middle; }
 
+/* Plays once on mount; rows remount (via key) whenever their count changes */
+.archive-row-flash,
+.cl-row-flash { animation: row-flash 0.9s ease-out; }
+@keyframes row-flash {
+  0% { background: rgba(255,224,64,0.3); }
+  100% { background: transparent; }
+}
+
 .col-country {
   display: flex;
   align-items: center;
@@ -787,6 +796,42 @@ html, body {
 }
 .detail-meta strong { color: rgba(255,220,80,0.85); font-weight: 600; }
 
+/* ── Biggest storm on record card ── */
+.biggest-storm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  /* match the 900px content column of .detail-head, inset by its 2rem side padding */
+  align-self: center;
+  width: calc(100% - 4rem);
+  max-width: calc(900px - 4rem);
+  box-sizing: border-box;
+  margin: 0.85rem 0 0;
+  padding: 0.7rem 0.9rem;
+  background: rgba(255,220,0,0.05);
+  border: 1px solid rgba(255,220,0,0.18);
+  border-radius: 8px;
+}
+
+.bsc-title {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,225,90,0.8);
+  font-weight: 600;
+}
+
+.bsc-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: rgba(255,240,180,0.95);
+}
+
+.bsc-meta {
+  font-size: 0.78rem;
+  color: rgba(255,230,120,0.75);
+  font-variant-numeric: tabular-nums;
+}
 
 .detail-filters {
   display: flex;
@@ -958,7 +1003,7 @@ html, body {
 
 .storm-subtitle {
   font-size: 0.72rem;
-  color: rgba(255,220,0,0.35);
+  color: rgba(255,220,0,0.6);
   letter-spacing: 0.06em;
 }
 
@@ -970,7 +1015,7 @@ html, body {
 .storm-empty {
   padding: 2rem 0.9rem;
   text-align: center;
-  color: rgba(255,220,0,0.4);
+  color: rgba(255,230,120,0.75);
   font-size: 0.82rem;
   letter-spacing: 0.06em;
 }
@@ -990,7 +1035,7 @@ html, body {
   font-size: 0.68rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255,220,0,0.35);
+  color: rgba(255,220,0,0.6);
   font-weight: 600;
   text-align: left;
 }
@@ -1005,7 +1050,7 @@ html, body {
 
 .storm-rank {
   font-size: 0.72rem;
-  color: rgba(255,220,0,0.25);
+  color: rgba(255,220,0,0.5);
   text-align: center;
   font-variant-numeric: tabular-nums;
   padding: 0.5rem 0.25rem;
@@ -1045,11 +1090,120 @@ html, body {
 
 .storm-ath {
   font-size: 0.8rem;
-  color: rgba(255,220,0,0.55);
+  color: rgba(255,220,0,0.75);
   font-variant-numeric: tabular-nums;
   text-align: right;
   padding: 0.5rem 0.75rem 0.5rem 0.25rem;
   white-space: nowrap;
+}
+
+/* ── Expandable per-country storm details ── */
+.storm-row { cursor: pointer; }
+.storm-row:hover td { background: rgba(255,220,0,0.04); }
+.storm-row-open td { background: rgba(255,220,0,0.05); }
+
+.storm-chevron {
+  margin-left: 0.35rem;
+  font-size: 0.6rem;
+  color: rgba(255,220,0,0.3);
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.storm-chevron.open { transform: rotate(180deg); color: #ffe040; }
+
+.storm-detail-row td {
+  padding: 0;
+  background: rgba(255,220,0,0.03);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.storm-cells {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0.4rem 0.6rem 0.55rem;
+}
+
+.storm-cells-summary {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,225,90,0.8);
+  padding: 0 0.3rem 0.25rem;
+}
+
+.storm-cells-empty {
+  font-size: 0.75rem;
+  color: rgba(255,235,150,0.8);
+  padding: 0.2rem 0.3rem 0.3rem;
+}
+
+.storm-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,220,0,0.08);
+  border-radius: 6px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.storm-cell:hover {
+  background: rgba(255,220,0,0.07);
+  border-color: rgba(255,220,0,0.25);
+}
+
+.storm-cell-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.storm-cell-name {
+  font-size: 0.78rem;
+  color: rgba(255,240,180,0.92);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storm-cell-rate {
+  font-size: 0.78rem;
+  color: #ffe040;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.storm-trend {
+  margin-left: 0.35rem;
+  font-size: 0.6rem;
+}
+.storm-trend-up { color: #7dff8a; }
+.storm-trend-down { color: #ff8a7d; }
+.storm-trend-steady { color: rgba(255,220,0,0.35); }
+
+.storm-cell-meta {
+  font-size: 0.68rem;
+  color: rgba(255,230,120,0.75);
+  letter-spacing: 0.03em;
+}
+
+/* Storm-extent highlight circle; lifetime matches the 10 s removal timer in LightningMap */
+.storm-focus-circle {
+  animation: storm-focus-fade 10s ease-in-out forwards;
+}
+@keyframes storm-focus-fade {
+  0% { opacity: 0; }
+  6% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .settings-row-btn {
@@ -1081,8 +1235,10 @@ html, body {
     border-bottom: none;
   }
 
-  /* Bottom sheet is cramped on phones — top 5 is enough */
-  .storm-table tbody tr:nth-child(n+6) { display: none; }
+  /* Bottom sheet is cramped on phones — top 5 is enough.
+     Rank classes (not nth-child) so expanded detail rows don't shift the count. */
+  .storm-row-6, .storm-row-7, .storm-row-8, .storm-row-9, .storm-row-10,
+  .storm-row-11, .storm-row-12, .storm-row-13, .storm-row-14, .storm-row-15 { display: none; }
 }
 
 /* ── Settings button + popover ── */
@@ -1393,7 +1549,8 @@ html, body {
   right: 0;
   bottom: 0;
   width: 320px;
-  z-index: 900;
+  /* above the storm panel (1500), below navbar (2000) */
+  z-index: 1600;
   background: rgba(5, 5, 14, 0.97);
   border-left: 1px solid rgba(255, 220, 0, 0.18);
   backdrop-filter: blur(16px);

@@ -27,7 +27,9 @@
     "waiting": "Wachten op gegevens…",
     "country": "Land",
     "strikes": "Ontladingen",
-    "share": "Aandeel"
+    "share": "Aandeel",
+    "searchPlaceholder": "Land zoeken…",
+    "countriesFound": "{count} landen"
   },
   "stats": {
     "title": "Ontladingsarchief",
@@ -48,7 +50,8 @@
     "noRecords": "Geen records komen overeen met het filter.",
     "close": "Sluiten",
     "back": "Terug",
-    "peakTooltip": "Hoogste aantal ontladingen ooit gemeten op één dag"
+    "peakTooltip": "Hoogste aantal ontladingen ooit gemeten op één dag",
+    "biggestStorm": "Grootste onweersbui ooit gemeten"
   },
   "storms": {
     "title": "Onweeractiviteit",
@@ -58,6 +61,23 @@
     "athHeader": "Piek",
     "noData": "Geen actieve onweersbuien gedetecteerd.",
     "loading": "Onweerdata laden…",
-    "close": "Sluiten"
+    "close": "Sluiten",
+    "stormNear": "Onweer bij {city}",
+    "activeStorms": "{count, plural, one {# actieve bui} other {# actieve buien}}",
+    "strikesCount": "{count, plural, one {# inslag} other {# inslagen}}",
+    "noCells": "Momenteel geen afzonderlijke onweerscellen.",
+    "flyTo": "Toon op kaart",
+    "moving": "trekt naar {dir}",
+    "intensifying": "Neemt toe",
+    "weakening": "Neemt af",
+    "steady": "Stabiel",
+    "dirN": "N",
+    "dirNE": "NO",
+    "dirE": "O",
+    "dirSE": "ZO",
+    "dirS": "Z",
+    "dirSW": "ZW",
+    "dirW": "W",
+    "dirNW": "NW"
   }
 }

@@ -12,7 +12,8 @@ export interface Strike {
 
 export type CountryCounts = Record<string, number>;
 
-const MAX_STRIKES = 20000;
+// Must hold at least the storm widget's full 5-min window at peak rates (~100/s)
+const MAX_STRIKES = 40000;
 const STRIKE_LIFETIME_MS = 30 * 60 * 1000;
 // Strikes can arrive at 30–100/sec globally — batching keeps React renders at ~1/sec
 const FLUSH_INTERVAL_MS = 800;

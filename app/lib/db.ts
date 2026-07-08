@@ -38,6 +38,15 @@ function getDb(): Database.Database {
       code TEXT PRIMARY KEY,
       rate REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS country_biggest_storms (
+      code TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      rate REAL NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      city TEXT,
+      date TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS grid_cells (
       cell_id TEXT PRIMARY KEY,
       total_strikes INTEGER NOT NULL DEFAULT 0,
@@ -104,6 +113,40 @@ export function upsertCountryPeakRates(rates: Record<string, number>): void {
   );
   db.transaction(() => {
     for (const [code, rate] of Object.entries(rates)) stmt.run(code, rate);
+  })();
+}
+
+export interface BiggestStorm {
+  code: string;
+  count: number;   // strikes in the storm's 5-min window when the record was set
+  rate: number;    // strikes per minute
+  lat: number;
+  lon: number;
+  city: string | null;
+  date: string;
+}
+
+export function getBiggestStorm(code: string): BiggestStorm | null {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT code, count, rate, lat, lon, city, date FROM country_biggest_storms WHERE code = ?'
+  ).get(code) as BiggestStorm | undefined;
+  return row ?? null;
+}
+
+export function upsertBiggestStorms(storms: BiggestStorm[]): void {
+  if (storms.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO country_biggest_storms (code, count, rate, lat, lon, city, date)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(code) DO UPDATE SET
+      count = excluded.count, rate = excluded.rate, lat = excluded.lat,
+      lon = excluded.lon, city = excluded.city, date = excluded.date
+    WHERE excluded.count > count
+  `);
+  db.transaction(() => {
+    for (const s of storms) stmt.run(s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date);
   })();
 }
 

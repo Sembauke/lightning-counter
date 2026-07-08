@@ -1,7 +1,7 @@
 'use client';
 
 import { useBlitzortung } from '../hooks/useBlitzortung';
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLocale } from '../context/LocaleContext';
 
@@ -11,6 +11,21 @@ export default function CountriesPage() {
   const { countryCounts, totalCount } = useBlitzortung();
   const t = useTranslations('countries');
   const { locale } = useLocale();
+  // code → timestamp of its last count change; keying rows on this restarts the flash animation
+  const [flash, setFlash] = useState<Record<string, number>>({});
+  const prevCountsRef = useRef<Record<string, number>>({});
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const prev = prevCountsRef.current;
+    const changed: Record<string, number> = {};
+    const now = Date.now();
+    for (const [code, count] of Object.entries(countryCounts)) {
+      if (prev[code] !== undefined && prev[code] !== count) changed[code] = now;
+      prev[code] = count;
+    }
+    if (Object.keys(changed).length > 0) setFlash(f => ({ ...f, ...changed }));
+  }, [countryCounts]);
 
   const displayNames = useMemo(() => {
     if (typeof Intl === 'undefined') return null;
@@ -30,15 +45,32 @@ export default function CountriesPage() {
 
   const topCount = ranked[0]?.count ?? 1;
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return ranked;
+    return ranked.filter(({ code, name }) =>
+      name.toLowerCase().includes(q) || code.toLowerCase().includes(q)
+    );
+  }, [ranked, search]);
+
   return (
     <div className="country-list-page">
       <div className="country-list-header">
         <span className="country-list-title">{t('title')}</span>
+        <input
+          className="archive-search"
+          placeholder={t('searchPlaceholder')}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <span className="archive-count">{t('countriesFound', { count: filtered.length })}</span>
       </div>
 
       <div className="country-list-body">
-        {ranked.length === 0 ? (
-          <div className="country-list-empty">{t('waiting')}</div>
+        {filtered.length === 0 ? (
+          <div className="country-list-empty">
+            {ranked.length === 0 ? t('waiting') : t('countriesFound', { count: 0 })}
+          </div>
         ) : (
           <table className="country-list-table">
             <thead>
@@ -50,8 +82,8 @@ export default function CountriesPage() {
               </tr>
             </thead>
             <tbody>
-              {ranked.map(({ code, count, name }) => (
-                <tr key={code} className="cl-row">
+              {filtered.map(({ code, count, name }) => (
+                <tr key={`${code}:${flash[code] ?? 0}`} className={`cl-row${flash[code] ? ' cl-row-flash' : ''}`}>
                   <td>
                     <div className="cl-country">
                       <img

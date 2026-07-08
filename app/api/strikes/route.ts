@@ -1,5 +1,8 @@
+import fs from 'fs';
+import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, type BiggestStorm } from '../../lib/db';
+import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -19,8 +22,11 @@ let todayCounts: Record<string, number> = { ...loadDailyStrikes(currentDay) };
 // ── Strike buffers ─────────────────────────────────────────────────────
 interface RecentStrike { lat: number; lon: number; cc: string | null; time: number }
 const recentStrikes: RecentStrike[] = [];
-const MAX_HISTORY = 5000;
-const HISTORY_LIFETIME_MS = 30 * 60 * 1000;
+// Must fully cover the storm widget's 5-minute window (+1 min slack) even at
+// peak global rates (~100/s), or its rates collapse on every page refresh.
+// Older map visuals are seeded from the DB archive, not this buffer.
+const MAX_HISTORY = 40_000;
+const HISTORY_LIFETIME_MS = 6 * 60 * 1000;
 
 const pendingGridStrikes: Array<{ lat: number; lon: number; time: number }> = [];
 
@@ -84,20 +90,52 @@ setInterval(() => {
   while (recentStrikes.length > 0 && recentStrikes[0].time < cutoff) recentStrikes.shift();
 }, 60_000);
 
+// Per-country city lists for naming record storms, loaded from disk on demand
+const cityCache = new Map<string, CityTuple[]>();
+function citiesFor(cc: string): CityTuple[] {
+  let list = cityCache.get(cc);
+  if (!list) {
+    try {
+      list = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'public', 'cities', `${cc}.json`), 'utf8')) as CityTuple[];
+    } catch { list = []; }
+    cityCache.set(cc, list);
+  }
+  return list;
+}
+
 setInterval(() => {
   try {
     saveCounters(serverTotal, serverCountryCounts);
     saveDailyAndPeaks(currentDay, todayCounts);
 
     // Compute current 5-min rates and persist any new peaks
-    const cutoff5m = Date.now() - 5 * 60 * 1000;
+    const WINDOW_MS = 5 * 60 * 1000;
+    const cutoff5m = Date.now() - WINDOW_MS;
     const fiveMinCounts: Record<string, number> = {};
+    const byCountry: Record<string, RecentStrike[]> = {};
     for (const s of recentStrikes) {
-      if (s.time > cutoff5m && s.cc) fiveMinCounts[s.cc] = (fiveMinCounts[s.cc] ?? 0) + 1;
+      if (s.time > cutoff5m && s.cc) {
+        fiveMinCounts[s.cc] = (fiveMinCounts[s.cc] ?? 0) + 1;
+        (byCountry[s.cc] ??= []).push(s);
+      }
     }
     const rates: Record<string, number> = {};
     for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
     upsertCountryPeakRates(rates);
+
+    // Track each country's biggest storm cell on record
+    const records: BiggestStorm[] = [];
+    for (const [cc, strikes] of Object.entries(byCountry)) {
+      const top = detectStorms(strikes, WINDOW_MS)[0];
+      if (!top) continue;
+      const near = nearestCity(citiesFor(cc), top.lat, top.lon);
+      records.push({
+        code: cc, count: top.count, rate: top.rate,
+        lat: top.lat, lon: top.lon,
+        city: near?.name ?? null, date: currentDay,
+      });
+    }
+    upsertBiggestStorms(records);
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 

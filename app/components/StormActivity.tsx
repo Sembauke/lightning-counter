@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLocale } from '../context/LocaleContext';
 import { useBlitzortung } from '../hooks/useBlitzortung';
+import { detectStorms, nearestCity, type CityTuple } from '../lib/stormClusters';
 
 const WINDOW_MS = 5 * 60 * 1000;
 const TOP_N = 15;
@@ -18,11 +19,16 @@ function fmtRate(r: number) {
   return r >= 10 ? String(Math.round(r)) : r.toFixed(1);
 }
 
+// Per-country city lists, cached for the session
+const cityCache = new Map<string, CityTuple[]>();
+
 export default function StormActivity() {
   const { strikes, historyLoaded } = useBlitzortung();
   const t = useTranslations('storms');
   const { locale } = useLocale();
   const [peakRates, setPeakRates] = useState<Record<string, number>>({});
+  const [expandedCc, setExpandedCc] = useState<string | null>(null);
+  const [cities, setCities] = useState<CityTuple[] | null>(null);
 
   useEffect(() => {
     fetch('/api/archive')
@@ -34,6 +40,22 @@ export default function StormActivity() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!expandedCc) return;
+    const cached = cityCache.get(expandedCc);
+    if (cached) { setCities(cached); return; }
+    let cancelled = false;
+    setCities(null);
+    fetch(`/cities/${expandedCc}.json`)
+      .then(r => (r.ok ? r.json() : []))
+      .then((list: CityTuple[]) => {
+        cityCache.set(expandedCc, list);
+        if (!cancelled) setCities(list);
+      })
+      .catch(() => { if (!cancelled) setCities([]); });
+    return () => { cancelled = true; };
+  }, [expandedCc]);
 
   const displayNames = useMemo(() => {
     if (typeof Intl === 'undefined') return null;
@@ -58,6 +80,19 @@ export default function StormActivity() {
       .slice(0, TOP_N)
       .map(([cc, count]) => ({ cc, count, rate: count / 5 }));
   }, [strikes]);
+
+  const cells = useMemo(() => {
+    if (!expandedCc) return [];
+    const cutoff = Date.now() - WINDOW_MS;
+    return detectStorms(
+      strikes.filter(s => s.cc === expandedCc && s.time > cutoff),
+      WINDOW_MS,
+    );
+  }, [strikes, expandedCc]);
+
+  function flyTo(lat: number, lon: number, radiusKm: number) {
+    window.dispatchEvent(new CustomEvent('lc:flyto', { detail: { lat, lon, radiusKm } }));
+  }
 
   return (
     <div className="storm-panel">
@@ -84,30 +119,24 @@ export default function StormActivity() {
               </tr>
             </thead>
             <tbody>
-              {storms.map(({ cc, rate }, i) => {
+              {storms.map(({ cc, count, rate }, i) => {
                 const peak = peakRates[cc];
+                const isOpen = expandedCc === cc;
                 return (
-                  <tr key={cc} className={`storm-row storm-row-${i + 1}`}>
-                    <td className="storm-col-rank storm-rank">{i + 1}</td>
-                    <td className="storm-col-country">
-                      <img
-                        src={`https://flagcdn.com/w20/${cc.toLowerCase()}.png`}
-                        alt={countryName(cc)}
-                        width={20}
-                        height={15}
-                        className="cl-flag-img"
-                        loading="lazy"
-                      />
-                      <span>{countryName(cc)}</span>
-                    </td>
-                    <td className="storm-col-rate storm-rate">
-                      {fmtRate(rate)}
-                      <span className="storm-rate-unit">/m</span>
-                    </td>
-                    <td className="storm-col-ath storm-ath">
-                      {peak != null ? <>{fmtRate(peak)}<span className="storm-rate-unit">/m</span></> : '—'}
-                    </td>
-                  </tr>
+                  <StormRow
+                    key={cc}
+                    rank={i + 1}
+                    cc={cc}
+                    name={countryName(cc)}
+                    count={count}
+                    rate={rate}
+                    peak={peak}
+                    isOpen={isOpen}
+                    onToggle={() => setExpandedCc(isOpen ? null : cc)}
+                    cells={isOpen ? cells : null}
+                    cities={isOpen ? cities : null}
+                    onFlyTo={flyTo}
+                  />
                 );
               })}
             </tbody>
@@ -116,5 +145,104 @@ export default function StormActivity() {
       </div>
 
     </div>
+  );
+}
+
+function StormRow({ rank, cc, name, count, rate, peak, isOpen, onToggle, cells, cities, onFlyTo }: {
+  rank: number;
+  cc: string;
+  name: string;
+  count: number;
+  rate: number;
+  peak: number | undefined;
+  isOpen: boolean;
+  onToggle: () => void;
+  cells: ReturnType<typeof detectStorms> | null;
+  cities: CityTuple[] | null;
+  onFlyTo: (lat: number, lon: number, radiusKm: number) => void;
+}) {
+  const t = useTranslations('storms');
+
+  return (
+    <>
+      <tr
+        className={`storm-row storm-row-${rank}${isOpen ? ' storm-row-open' : ''}`}
+        onClick={onToggle}
+        role="button"
+        aria-expanded={isOpen}
+      >
+        <td className="storm-col-rank storm-rank">{rank}</td>
+        <td className="storm-col-country">
+          <img
+            src={`https://flagcdn.com/w20/${cc.toLowerCase()}.png`}
+            alt={name}
+            width={20}
+            height={15}
+            className="cl-flag-img"
+            loading="lazy"
+          />
+          <span>{name}</span>
+          <span className={`storm-chevron${isOpen ? ' open' : ''}`}>▾</span>
+        </td>
+        <td className="storm-col-rate storm-rate">
+          {fmtRate(rate)}
+          <span className="storm-rate-unit">/m</span>
+        </td>
+        <td className="storm-col-ath storm-ath">
+          {peak != null ? <>{fmtRate(peak)}<span className="storm-rate-unit">/m</span></> : '—'}
+        </td>
+      </tr>
+
+      {isOpen && (
+        <tr className="storm-detail-row">
+          <td colSpan={4}>
+            <div className="storm-cells">
+              <div className="storm-cells-summary">
+                {t('activeStorms', { count: cells?.length ?? 0 })}
+                {' · '}
+                {t('strikesCount', { count })}
+              </div>
+              {cells === null || cities === null ? (
+                <div className="storm-cells-empty">…</div>
+              ) : cells.length === 0 ? (
+                <div className="storm-cells-empty">{t('noCells')}</div>
+              ) : (
+                cells.map((cell, idx) => {
+                  const near = nearestCity(cities, cell.lat, cell.lon);
+                  return (
+                    <button
+                      key={idx}
+                      className="storm-cell"
+                      onClick={(e) => { e.stopPropagation(); onFlyTo(cell.lat, cell.lon, cell.radiusKm); }}
+                      title={t('flyTo')}
+                    >
+                      <span className="storm-cell-main">
+                        <span className="storm-cell-name">
+                          ⚡ {near ? t('stormNear', { city: near.name }) : `${cell.lat.toFixed(1)}, ${cell.lon.toFixed(1)}`}
+                        </span>
+                        <span className="storm-cell-rate">
+                          {fmtRate(cell.rate)}<span className="storm-rate-unit">/m</span>
+                          <span
+                            className={`storm-trend storm-trend-${cell.trend}`}
+                            title={t(cell.trend === 'up' ? 'intensifying' : cell.trend === 'down' ? 'weakening' : 'steady')}
+                          >
+                            {cell.trend === 'up' ? '▲' : cell.trend === 'down' ? '▼' : '►'}
+                          </span>
+                        </span>
+                      </span>
+                      <span className="storm-cell-meta">
+                        {near && near.km > 0 ? `${near.km} km ${t(`dir${near.dir}`)} · ` : ''}
+                        {t('strikesCount', { count: cell.count })}
+                        {cell.drift ? ` · ${t('moving', { dir: t(`dir${cell.drift}`) })}` : ''}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

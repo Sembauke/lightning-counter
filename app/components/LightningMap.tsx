@@ -923,6 +923,45 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     };
   }, []);
 
+  // Fly to a location when requested elsewhere in the UI (e.g. storm panel),
+  // highlighting the storm extent with a circle that fades out after 10 s
+  useEffect(() => {
+    let circle: { remove: () => void } | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleFlyTo = (e: Event) => {
+      const { lat, lon, radiusKm } = (e as CustomEvent<{ lat: number; lon: number; radiusKm?: number }>).detail;
+      const map = stateRef.current.map;
+      if (!map) return;
+      map.flyTo([lat, lon], Math.max(map.getZoom(), 7), { duration: 1.2 });
+
+      import('leaflet').then(({ default: L }) => {
+        if (!stateRef.current.map) return;
+        circle?.remove();
+        if (timer) clearTimeout(timer);
+        const c = L.circle([lat, lon], {
+          radius: (radiusKm ?? 30) * 1000,
+          color: '#ffe040',
+          weight: 2,
+          dashArray: '6 6',
+          fillColor: '#ffe040',
+          fillOpacity: 0.05,
+          interactive: false,
+          className: 'storm-focus-circle',
+        }).addTo(stateRef.current.map);
+        circle = c;
+        timer = setTimeout(() => { c.remove(); if (circle === c) circle = null; }, 10_000);
+      });
+    };
+
+    window.addEventListener('lc:flyto', handleFlyTo);
+    return () => {
+      window.removeEventListener('lc:flyto', handleFlyTo);
+      if (timer) clearTimeout(timer);
+      circle?.remove();
+    };
+  }, []);
+
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready || !s.tileLayer) return;

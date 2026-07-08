@@ -27,7 +27,9 @@
     "waiting": "Waiting for data…",
     "country": "Country",
     "strikes": "Discharges",
-    "share": "Share"
+    "share": "Share",
+    "searchPlaceholder": "Search country…",
+    "countriesFound": "{count} countries"
   },
   "stats": {
     "title": "Discharge Archive",
@@ -48,7 +50,8 @@
     "noRecords": "No records match the filter.",
     "close": "Close",
     "back": "Back",
-    "peakTooltip": "All-time highest number of discharges recorded in a single day"
+    "peakTooltip": "All-time highest number of discharges recorded in a single day",
+    "biggestStorm": "Biggest storm on record"
   },
   "storms": {
     "title": "Storm Activity",
@@ -58,6 +61,23 @@
     "athHeader": "Peak",
     "noData": "No active storms detected.",
     "loading": "Loading storm data…",
-    "close": "Close"
+    "close": "Close",
+    "stormNear": "Storm near {city}",
+    "activeStorms": "{count, plural, one {# active storm} other {# active storms}}",
+    "strikesCount": "{count, plural, one {# strike} other {# strikes}}",
+    "noCells": "No distinct storm cells right now.",
+    "flyTo": "Show on map",
+    "moving": "moving {dir}",
+    "intensifying": "Intensifying",
+    "weakening": "Weakening",
+    "steady": "Steady",
+    "dirN": "N",
+    "dirNE": "NE",
+    "dirE": "E",
+    "dirSE": "SE",
+    "dirS": "S",
+    "dirSW": "SW",
+    "dirW": "W",
+    "dirNW": "NW"
   }
 }

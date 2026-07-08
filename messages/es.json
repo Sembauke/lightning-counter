@@ -27,7 +27,9 @@
     "waiting": "Esperando datos…",
     "country": "País",
     "strikes": "Rayos",
-    "share": "Porcentaje"
+    "share": "Porcentaje",
+    "searchPlaceholder": "Buscar país…",
+    "countriesFound": "{count} países"
   },
   "stats": {
     "title": "Archivo de rayos",
@@ -48,7 +50,8 @@
     "noRecords": "No hay registros que coincidan con el filtro.",
     "close": "Cerrar",
     "back": "Volver",
-    "peakTooltip": "Mayor número de descargas registrado en un solo día"
+    "peakTooltip": "Mayor número de descargas registrado en un solo día",
+    "biggestStorm": "Mayor tormenta registrada"
   },
   "storms": {
     "title": "Actividad de Tormentas",
@@ -58,6 +61,23 @@
     "athHeader": "Récord",
     "noData": "No se detectaron tormentas activas.",
     "loading": "Cargando datos de tormentas…",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "stormNear": "Tormenta cerca de {city}",
+    "activeStorms": "{count, plural, one {# tormenta activa} other {# tormentas activas}}",
+    "strikesCount": "{count, plural, one {# rayo} other {# rayos}}",
+    "noCells": "No hay células de tormenta diferenciadas ahora mismo.",
+    "flyTo": "Ver en el mapa",
+    "moving": "se desplaza hacia {dir}",
+    "intensifying": "Intensificándose",
+    "weakening": "Debilitándose",
+    "steady": "Estable",
+    "dirN": "N",
+    "dirNE": "NE",
+    "dirE": "E",
+    "dirSE": "SE",
+    "dirS": "S",
+    "dirSW": "SO",
+    "dirW": "O",
+    "dirNW": "NO"
   }
 }

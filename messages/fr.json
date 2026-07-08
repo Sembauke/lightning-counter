@@ -27,7 +27,9 @@
     "waiting": "En attente de données…",
     "country": "Pays",
     "strikes": "Éclairs",
-    "share": "Part"
+    "share": "Part",
+    "searchPlaceholder": "Rechercher un pays…",
+    "countriesFound": "{count} pays"
   },
   "stats": {
     "title": "Archive des éclairs",
@@ -48,7 +50,8 @@
     "noRecords": "Aucun enregistrement ne correspond au filtre.",
     "close": "Fermer",
     "back": "Retour",
-    "peakTooltip": "Nombre de décharges le plus élevé jamais enregistré en une journée"
+    "peakTooltip": "Nombre de décharges le plus élevé jamais enregistré en une journée",
+    "biggestStorm": "Plus gros orage enregistré"
   },
   "storms": {
     "title": "Activité orageuse",
@@ -58,6 +61,23 @@
     "athHeader": "Record",
     "noData": "Aucun orage actif détecté.",
     "loading": "Chargement des données…",
-    "close": "Fermer"
+    "close": "Fermer",
+    "stormNear": "Orage près de {city}",
+    "activeStorms": "{count, plural, one {# orage actif} other {# orages actifs}}",
+    "strikesCount": "{count, plural, one {# impact} other {# impacts}}",
+    "noCells": "Aucune cellule orageuse distincte pour le moment.",
+    "flyTo": "Voir sur la carte",
+    "moving": "se déplace vers {dir}",
+    "intensifying": "En intensification",
+    "weakening": "En affaiblissement",
+    "steady": "Stable",
+    "dirN": "N",
+    "dirNE": "NE",
+    "dirE": "E",
+    "dirSE": "SE",
+    "dirS": "S",
+    "dirSW": "SO",
+    "dirW": "O",
+    "dirNW": "NO"
   }
 }
