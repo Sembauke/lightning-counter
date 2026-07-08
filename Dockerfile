@@ -23,7 +23,7 @@ RUN adduser --system --uid 1001 nextjs
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
-RUN mkdir -p ./public
+COPY --from=builder /app/public ./public
 COPY package.json server.mjs ./
 
 USER nextjs
