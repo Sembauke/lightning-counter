@@ -1,16 +1,12 @@
 {
   "nav": {
     "strikemap": "Blitzkarte",
-    "bycountry": "Blitze nach Land",
     "archive": "Blitzarchiv",
-    "satellite": "Satellit",
     "sound": "Ton",
     "strikes": "Blitze",
-    "toggleSatellite": "Satellitenansicht umschalten",
     "toggleSound": "Blitzgeräusche umschalten",
     "toggleNav": "Navigation umschalten",
     "watching": "zuschauer",
-    "more": "Mehr",
     "settings": "Einstellungen",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
@@ -18,23 +14,11 @@
     "wind": "Windschicht",
     "toggleWind": "Windschicht umschalten"
   },
-  "home": {
-    "loadingMap": "Karte wird geladen…"
-  },
-  "countries": {
-    "title": "Blitze nach Land",
-    "totalStrikes": "{count} Blitze gesamt",
-    "waiting": "Warte auf Daten…",
-    "country": "Land",
-    "strikes": "Blitze",
-    "share": "Anteil",
-    "searchPlaceholder": "Land suchen…",
-    "countriesFound": "{count} Länder"
-  },
   "stats": {
     "title": "Blitzarchiv",
     "searchPlaceholder": "Land suchen…",
     "countriesFound": "{count} Länder",
+    "total": "Gesamt",
     "country": "Land",
     "today": "Heute",
     "allTimeHigh": "Allzeitrekord",
@@ -48,10 +32,10 @@
     "minStrikes": "Min. Blitze",
     "strikes": "Blitze",
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
-    "close": "Schließen",
     "back": "Zurück",
     "peakTooltip": "Höchste jemals an einem Tag gemessene Anzahl an Entladungen",
-    "biggestStorm": "Größtes erfasstes Gewitter"
+    "biggestStorm": "Größtes erfasstes Gewitter",
+    "replay": "Wiedergabe"
   },
   "storms": {
     "title": "Gewitteraktivität",
@@ -61,7 +45,6 @@
     "athHeader": "Rekord",
     "noData": "Keine aktiven Gewitter erkannt.",
     "loading": "Gewitterdaten werden geladen…",
-    "close": "Schließen",
     "stormNear": "Gewitter bei {city}",
     "activeStorms": "{count, plural, one {# aktives Gewitter} other {# aktive Gewitter}}",
     "strikesCount": "{count, plural, one {# Einschlag} other {# Einschläge}}",

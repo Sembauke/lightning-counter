@@ -45,7 +45,8 @@ function getDb(): Database.Database {
       lat REAL NOT NULL,
       lon REAL NOT NULL,
       city TEXT,
-      date TEXT NOT NULL
+      date TEXT NOT NULL,
+      strikes TEXT
     );
     CREATE TABLE IF NOT EXISTS grid_cells (
       cell_id TEXT PRIMARY KEY,
@@ -64,6 +65,8 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_gs_time ON grid_strikes(strike_time);
     DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-3 days') * 1000;
   `);
+  // Migration for databases created before the replay feature
+  try { _db.exec('ALTER TABLE country_biggest_storms ADD COLUMN strikes TEXT'); } catch { /* column exists */ }
   return _db;
 }
 
@@ -116,6 +119,9 @@ export function upsertCountryPeakRates(rates: Record<string, number>): void {
   })();
 }
 
+/** [lat, lon, epochMs] — compact form for the record storm's strike sample */
+export type StormStrike = [number, number, number];
+
 export interface BiggestStorm {
   code: string;
   count: number;   // strikes in the storm's 5-min window when the record was set
@@ -124,29 +130,40 @@ export interface BiggestStorm {
   lon: number;
   city: string | null;
   date: string;
+  strikes: StormStrike[] | null;
 }
 
 export function getBiggestStorm(code: string): BiggestStorm | null {
   const db = getDb();
   const row = db.prepare(
-    'SELECT code, count, rate, lat, lon, city, date FROM country_biggest_storms WHERE code = ?'
-  ).get(code) as BiggestStorm | undefined;
-  return row ?? null;
+    'SELECT code, count, rate, lat, lon, city, date, strikes FROM country_biggest_storms WHERE code = ?'
+  ).get(code) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
+  if (!row) return null;
+  let strikes: StormStrike[] | null = null;
+  try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt — treat as absent */ }
+  return { ...row, strikes };
 }
 
 export function upsertBiggestStorms(storms: BiggestStorm[]): void {
   if (storms.length === 0) return;
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO country_biggest_storms (code, count, rate, lat, lon, city, date)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO country_biggest_storms (code, count, rate, lat, lon, city, date, strikes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET
       count = excluded.count, rate = excluded.rate, lat = excluded.lat,
-      lon = excluded.lon, city = excluded.city, date = excluded.date
+      lon = excluded.lon, city = excluded.city, date = excluded.date,
+      strikes = excluded.strikes
     WHERE excluded.count > count
+      -- transition: records saved before the replay feature have no strikes;
+      -- let the next qualifying storm claim them so the map can appear
+      OR strikes IS NULL
   `);
   db.transaction(() => {
-    for (const s of storms) stmt.run(s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date);
+    for (const s of storms) {
+      stmt.run(s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
+        s.strikes ? JSON.stringify(s.strikes) : null);
+    }
   })();
 }
 

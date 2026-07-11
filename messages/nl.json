@@ -1,16 +1,12 @@
 {
   "nav": {
     "strikemap": "Bliksemkaart",
-    "bycountry": "Ontladingen per Land",
     "archive": "Ontladingsarchief",
-    "satellite": "Satelliet",
     "sound": "Geluid",
     "strikes": "ontladingen",
-    "toggleSatellite": "Satellietweergave in-/uitschakelen",
     "toggleSound": "Bliksemgeluiden in-/uitschakelen",
     "toggleNav": "Navigatie in-/uitschakelen",
     "watching": "kijkers",
-    "more": "Meer",
     "settings": "Instellingen",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
@@ -18,23 +14,11 @@
     "wind": "Windlaag",
     "toggleWind": "Windlaag in-/uitschakelen"
   },
-  "home": {
-    "loadingMap": "Kaart laden…"
-  },
-  "countries": {
-    "title": "Ontladingen per Land",
-    "totalStrikes": "{count} ontladingen totaal",
-    "waiting": "Wachten op gegevens…",
-    "country": "Land",
-    "strikes": "Ontladingen",
-    "share": "Aandeel",
-    "searchPlaceholder": "Land zoeken…",
-    "countriesFound": "{count} landen"
-  },
   "stats": {
     "title": "Ontladingsarchief",
     "searchPlaceholder": "Land zoeken…",
     "countriesFound": "{count} landen",
+    "total": "Totaal",
     "country": "Land",
     "today": "Vandaag",
     "allTimeHigh": "Historisch Maximum",
@@ -48,10 +32,10 @@
     "minStrikes": "Min. ontladingen",
     "strikes": "Ontladingen",
     "noRecords": "Geen records komen overeen met het filter.",
-    "close": "Sluiten",
     "back": "Terug",
     "peakTooltip": "Hoogste aantal ontladingen ooit gemeten op één dag",
-    "biggestStorm": "Grootste onweersbui ooit gemeten"
+    "biggestStorm": "Grootste onweersbui ooit gemeten",
+    "replay": "Opnieuw afspelen"
   },
   "storms": {
     "title": "Onweeractiviteit",
@@ -61,7 +45,6 @@
     "athHeader": "Piek",
     "noData": "Geen actieve onweersbuien gedetecteerd.",
     "loading": "Onweerdata laden…",
-    "close": "Sluiten",
     "stormNear": "Onweer bij {city}",
     "activeStorms": "{count, plural, one {# actieve bui} other {# actieve buien}}",
     "strikesCount": "{count, plural, one {# inslag} other {# inslagen}}",

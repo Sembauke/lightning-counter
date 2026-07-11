@@ -14,6 +14,8 @@ export interface StormCell {
   trend: 'up' | 'down' | 'steady';
   /** 8-point compass direction the storm is drifting toward, or null if stationary */
   drift: 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW' | null;
+  /** the strikes that make up this storm */
+  members: StrikePoint[];
 }
 
 export type CityTuple = [name: string, lat: number, lon: number];
@@ -142,6 +144,7 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
         radiusKm: Math.max(10, Math.sqrt(maxD2)),
         trend,
         drift,
+        members: cluster,
       };
     });
 }

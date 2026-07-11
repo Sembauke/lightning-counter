@@ -2,9 +2,11 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
-import { useLocale } from '../context/LocaleContext';
 import { useBlitzortung } from '../hooks/useBlitzortung';
+import { useCountryName } from '../hooks/useCountryName';
 import { detectStorms, nearestCity, type CityTuple } from '../lib/stormClusters';
+import { fmtRate } from '../lib/format';
+import CountryFlag from './CountryFlag';
 
 const WINDOW_MS = 5 * 60 * 1000;
 const TOP_N = 15;
@@ -15,17 +17,13 @@ interface StormEntry {
   rate: number;
 }
 
-function fmtRate(r: number) {
-  return r >= 10 ? String(Math.round(r)) : r.toFixed(1);
-}
-
 // Per-country city lists, cached for the session
 const cityCache = new Map<string, CityTuple[]>();
 
 export default function StormActivity() {
   const { strikes, historyLoaded } = useBlitzortung();
   const t = useTranslations('storms');
-  const { locale } = useLocale();
+  const countryName = useCountryName();
   const [peakRates, setPeakRates] = useState<Record<string, number>>({});
   const [expandedCc, setExpandedCc] = useState<string | null>(null);
   const [cities, setCities] = useState<CityTuple[] | null>(null);
@@ -56,15 +54,6 @@ export default function StormActivity() {
       .catch(() => { if (!cancelled) setCities([]); });
     return () => { cancelled = true; };
   }, [expandedCc]);
-
-  const displayNames = useMemo(() => {
-    if (typeof Intl === 'undefined') return null;
-    try { return new Intl.DisplayNames([locale], { type: 'region' }); } catch { return null; }
-  }, [locale]);
-
-  function countryName(code: string): string {
-    try { return displayNames?.of(code) ?? code; } catch { return code; }
-  }
 
   const storms = useMemo<StormEntry[]>(() => {
     const now = Date.now();
@@ -173,14 +162,7 @@ function StormRow({ rank, cc, name, count, rate, peak, isOpen, onToggle, cells, 
       >
         <td className="storm-col-rank storm-rank">{rank}</td>
         <td className="storm-col-country">
-          <img
-            src={`https://flagcdn.com/w20/${cc.toLowerCase()}.png`}
-            alt={name}
-            width={20}
-            height={15}
-            className="cl-flag-img"
-            loading="lazy"
-          />
+          <CountryFlag code={cc} name={name} />
           <span>{name}</span>
           <span className={`storm-chevron${isOpen ? ' open' : ''}`}>▾</span>
         </td>

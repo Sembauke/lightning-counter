@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, type BiggestStorm } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +12,8 @@ const { total, countries } = loadCounters();
 let serverTotal = total;
 const serverCountryCounts: Record<string, number> = { ...countries };
 (globalThis as any)._serverTotal = serverTotal;
+// Mutated in place, so other routes always see live per-country totals
+(globalThis as any)._serverCountryCounts = serverCountryCounts;
 
 function todayDate() { return new Date().toISOString().slice(0, 10); }
 let currentDay = todayDate();
@@ -124,15 +126,24 @@ setInterval(() => {
     upsertCountryPeakRates(rates);
 
     // Track each country's biggest storm cell on record
+    const STRIKE_SAMPLE_MAX = 4000;
     const records: BiggestStorm[] = [];
     for (const [cc, strikes] of Object.entries(byCountry)) {
       const top = detectStorms(strikes, WINDOW_MS)[0];
       if (!top) continue;
       const near = nearestCity(citiesFor(cc), top.lat, top.lon);
+      // Even time-sample of the cluster's strikes so replay stays bounded
+      const step = Math.max(1, Math.ceil(top.members.length / STRIKE_SAMPLE_MAX));
+      const sample: StormStrike[] = [];
+      for (let i = 0; i < top.members.length; i += step) {
+        const m = top.members[i];
+        sample.push([Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time]);
+      }
       records.push({
         code: cc, count: top.count, rate: top.rate,
         lat: top.lat, lon: top.lon,
         city: near?.name ?? null, date: currentDay,
+        strikes: sample,
       });
     }
     upsertBiggestStorms(records);

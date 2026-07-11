@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import type { Strike } from '../hooks/useBlitzortung';
+import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
 import { useHeatmap } from '../context/HeatmapContext';
 import { useWind } from '../context/WindContext';
 
@@ -146,15 +147,6 @@ function getHeatColor(count: number, maxCount: number): string {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-const TILE_DARK = {
-  url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  options: { subdomains: 'abcd', maxZoom: 19 },
-};
-const TILE_SAT = {
-  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  options: { maxZoom: 19 },
-};
-const TILE_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
 
 // Everything — dot view, heatmap, viewport backfill — shows the last 30 minutes
 const WINDOW_MS = 30 * 60 * 1000;
@@ -180,10 +172,8 @@ function playTick(ctx: AudioContext) {
   src.start();
 }
 
-export default function LightningMap({ strikes, satellite, sound, historyLoaded }: { strikes: Strike[]; satellite: boolean; sound: boolean; historyLoaded: boolean }) {
+export default function LightningMap({ strikes, sound, historyLoaded }: { strikes: Strike[]; sound: boolean; historyLoaded: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const satelliteRef = useRef(satellite);
-  satelliteRef.current = satellite;
   const soundRef = useRef(sound);
   soundRef.current = sound;
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -376,18 +366,13 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
 
       setZoom(map.getZoom());
 
-      const initTile = satelliteRef.current ? TILE_SAT : TILE_DARK;
-      s.tileLayer = L.tileLayer(initTile.url, initTile.options).addTo(map);
-
-      if (satelliteRef.current) {
-        (map.getPanes().tilePane as HTMLElement).style.filter = 'brightness(0.55)';
-      }
+      s.tileLayer = L.tileLayer(TILE_SAT.url, TILE_SAT.options).addTo(map);
+      (map.getPanes().tilePane as HTMLElement).style.filter = TILE_DIM_FILTER;
 
       map.createPane('labelsPane');
       (map.getPane('labelsPane') as HTMLElement).style.zIndex = '250';
       (map.getPane('labelsPane') as HTMLElement).style.pointerEvents = 'none';
-      s.labelsLayer = L.tileLayer(TILE_LABELS_URL, { pane: 'labelsPane', maxZoom: 19, opacity: 0.4 });
-      if (satelliteRef.current) s.labelsLayer.addTo(map);
+      s.labelsLayer = L.tileLayer(TILE_LABELS_URL, { pane: 'labelsPane', maxZoom: 19, opacity: 0.75 }).addTo(map);
 
       s.map = map;
 
@@ -962,14 +947,6 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     };
   }, []);
 
-  useEffect(() => {
-    const s = stateRef.current;
-    if (!s.ready || !s.tileLayer) return;
-    s.tileLayer.setUrl(satellite ? TILE_SAT.url : TILE_DARK.url);
-    (s.map.getPanes().tilePane as HTMLElement).style.filter = satellite ? 'brightness(0.55)' : '';
-    if (satellite) { s.labelsLayer.addTo(s.map); } else { s.labelsLayer.remove(); }
-  }, [satellite]);
-
   // Native click + shift+drag handlers on the map container
   useEffect(() => {
     const container = containerRef.current;
@@ -1214,10 +1191,11 @@ export default function LightningMap({ strikes, satellite, sound, historyLoaded 
     for (let i = newPoints.length - 1; i >= 0; i--) heatmapBufferRef.current.push(newPoints[i]);
 
     // `processed` iterates in insertion order — drop oldest ids once well past the
-    // 20k strikes the list can hold, so the break-at-first-seen loop stays valid
-    if (s.processed.size > 30_000) {
+    // 40k strikes the list can hold (useBlitzortung MAX_STRIKES), so the
+    // break-at-first-seen loop stays valid
+    if (s.processed.size > 50_000) {
       const it = s.processed.values();
-      while (s.processed.size > 20_000) s.processed.delete(it.next().value as string);
+      while (s.processed.size > 40_000) s.processed.delete(it.next().value as string);
     }
 
     // Prune heatmap buffer: keep the 30-min window, cap at 50k entries

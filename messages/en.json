@@ -1,16 +1,12 @@
 {
   "nav": {
     "strikemap": "Discharge Map",
-    "bycountry": "Discharges by Country",
     "archive": "Discharge Archive",
-    "satellite": "Satellite",
     "sound": "Sound",
     "strikes": "discharges",
-    "toggleSatellite": "Toggle satellite view",
     "toggleSound": "Toggle discharge sounds",
     "toggleNav": "Toggle navigation",
     "watching": "watching",
-    "more": "More",
     "settings": "Settings",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
@@ -18,23 +14,11 @@
     "wind": "Wind Layer",
     "toggleWind": "Toggle wind layer"
   },
-  "home": {
-    "loadingMap": "Loading map…"
-  },
-  "countries": {
-    "title": "Discharges per Country",
-    "totalStrikes": "{count} total discharges",
-    "waiting": "Waiting for data…",
-    "country": "Country",
-    "strikes": "Discharges",
-    "share": "Share",
-    "searchPlaceholder": "Search country…",
-    "countriesFound": "{count} countries"
-  },
   "stats": {
     "title": "Discharge Archive",
     "searchPlaceholder": "Search country…",
     "countriesFound": "{count} countries",
+    "total": "Total",
     "country": "Country",
     "today": "Today",
     "allTimeHigh": "All-Time High",
@@ -48,10 +32,10 @@
     "minStrikes": "Min discharges",
     "strikes": "Discharges",
     "noRecords": "No records match the filter.",
-    "close": "Close",
     "back": "Back",
     "peakTooltip": "All-time highest number of discharges recorded in a single day",
-    "biggestStorm": "Biggest storm on record"
+    "biggestStorm": "Biggest storm on record",
+    "replay": "Replay"
   },
   "storms": {
     "title": "Storm Activity",
@@ -61,7 +45,6 @@
     "athHeader": "Peak",
     "noData": "No active storms detected.",
     "loading": "Loading storm data…",
-    "close": "Close",
     "stormNear": "Storm near {city}",
     "activeStorms": "{count, plural, one {# active storm} other {# active storms}}",
     "strikesCount": "{count, plural, one {# strike} other {# strikes}}",

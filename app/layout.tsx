@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import Navbar from './components/Navbar';
-import { SatelliteProvider } from './context/SatelliteContext';
 import { SoundProvider } from './context/SoundContext';
 import { LocaleProvider } from './context/LocaleContext';
 import { HeatmapProvider } from './context/HeatmapContext';
@@ -66,16 +65,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body style={{ margin: 0, padding: 0 }}>
         <LocaleProvider>
-          <SatelliteProvider>
-            <SoundProvider>
-              <HeatmapProvider>
-                <WindProvider>
-                  <Navbar />
-                  {children}
-                </WindProvider>
-              </HeatmapProvider>
-            </SoundProvider>
-          </SatelliteProvider>
+          <SoundProvider>
+            <HeatmapProvider>
+              <WindProvider>
+                <Navbar />
+                {children}
+              </WindProvider>
+            </HeatmapProvider>
+          </SoundProvider>
         </LocaleProvider>
       </body>
     </html>

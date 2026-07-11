@@ -38,12 +38,11 @@ export default function Home() {
           in bright yellow with an expanding ring, then fade toward red as they age.
         </p>
         <p>
-          Beyond the live map you can switch on a density heatmap grid with per-cell strike counts,
-          a wind-flow layer, satellite imagery, and sound alerts that tick for every discharge in
-          view. Live counts are ranked on the{' '}
-          <Link href="/countries">discharges by country</Link> page, and the{' '}
-          <Link href="/stats">discharge archive</Link> keeps daily totals, all-time records, and a
-          browsable history for every country.
+          The map is drawn over live satellite imagery, and you can switch on a density heatmap
+          grid with per-cell strike counts, a wind-flow layer, and sound alerts that tick for
+          every discharge in view. The <Link href="/stats">discharge archive</Link> ranks live
+          totals by country and keeps daily counts, all-time records, and a browsable history
+          for every country.
         </p>
 
         <h2>Frequently asked questions</h2>

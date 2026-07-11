@@ -4,47 +4,43 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLocale } from '../context/LocaleContext';
+import { useCountryName } from '../hooks/useCountryName';
+import { fmt } from '../lib/format';
+import CountryFlag from '../components/CountryFlag';
 
-function fmt(n: number) { return n.toLocaleString(); }
-
-type SortCol = 'name' | 'today' | 'peak';
+type SortCol = 'name' | 'total' | 'today' | 'peak';
 type SortDir = 'asc' | 'desc';
 
-interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
+interface ArchiveRow { code: string; total: number; today: number; peakCount: number; peakDate: string; }
 
 export default function ArchivePage() {
   const [data, setData] = useState<ArchiveRow[]>([]);
-  // code → timestamp of its last count change; keying rows on this restarts the flash animation
-  const [flash, setFlash] = useState<Record<string, number>>({});
+  // code → last increase of its today-count; rendered as a fading "+N" chip
+  const [deltas, setDeltas] = useState<Record<string, { amount: number; ts: number }>>({});
   const prevTodayRef = useRef<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState<SortCol>('today');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const t = useTranslations('stats');
   const { locale } = useLocale();
+  const countryName = useCountryName();
   const router = useRouter();
-
-  const displayNames = useMemo(() => {
-    if (typeof Intl === 'undefined') return null;
-    try { return new Intl.DisplayNames([locale], { type: 'region' }); } catch { return null; }
-  }, [locale]);
-
-  function countryName(code: string): string {
-    try { return displayNames?.of(code) ?? code; } catch { return code; }
-  }
 
   useEffect(() => {
     const load = () => fetch('/api/archive')
       .then(r => r.json())
       .then((rows: ArchiveRow[]) => {
         const prev = prevTodayRef.current;
-        const changed: Record<string, number> = {};
+        const changed: Record<string, { amount: number; ts: number }> = {};
         const now = Date.now();
         for (const row of rows) {
-          if (prev[row.code] !== undefined && prev[row.code] !== row.today) changed[row.code] = now;
+          const before = prev[row.code];
+          if (before !== undefined && row.today > before) {
+            changed[row.code] = { amount: row.today - before, ts: now };
+          }
           prev[row.code] = row.today;
         }
-        if (Object.keys(changed).length > 0) setFlash(f => ({ ...f, ...changed }));
+        if (Object.keys(changed).length > 0) setDeltas(d => ({ ...d, ...changed }));
         setData(rows);
       })
       .catch(() => {});
@@ -79,6 +75,8 @@ export default function ArchivePage() {
       let cmp = 0;
       if (sortCol === 'name') {
         cmp = countryName(a.code).localeCompare(countryName(b.code), locale);
+      } else if (sortCol === 'total') {
+        cmp = a.total - b.total;
       } else if (sortCol === 'today') {
         cmp = a.today - b.today;
       } else {
@@ -89,7 +87,7 @@ export default function ArchivePage() {
 
     return rows;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, search, sortCol, sortDir, displayNames]);
+  }, [data, search, sortCol, sortDir, locale]);
 
   return (
     <div className="archive-page">
@@ -111,6 +109,9 @@ export default function ArchivePage() {
               <th className="th-sort" onClick={() => handleSort('name')}>
                 {t('country')}{sortIndicator('name')}
               </th>
+              <th className="col-num th-sort" onClick={() => handleSort('total')}>
+                {t('total')}{sortIndicator('total')}
+              </th>
               <th className="col-num th-sort" onClick={() => handleSort('today')}>
                 {t('today')}{sortIndicator('today')}
               </th>
@@ -122,27 +123,30 @@ export default function ArchivePage() {
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={4} className="archive-empty">{t('noData')}</td></tr>
+              <tr><td colSpan={5} className="archive-empty">{t('noData')}</td></tr>
             )}
             {filtered.map(row => (
               <tr
-                key={`${row.code}:${flash[row.code] ?? 0}`}
-                className={`archive-row${flash[row.code] ? ' archive-row-flash' : ''}`}
+                key={row.code}
+                className="archive-row"
                 onClick={() => router.push(`/stats/${row.code}`)}
                 style={{ cursor: 'pointer' }}
               >
                 <td className="col-country">
-                  <img
-                    src={`https://flagcdn.com/w20/${row.code.toLowerCase()}.png`}
-                    alt={countryName(row.code)}
-                    width={20}
-                    height={15}
-                    className="cl-flag-img"
-                    loading="lazy"
-                  />
+                  <CountryFlag code={row.code} name={countryName(row.code)} />
                   <span className="row-name">{countryName(row.code)}</span>
                 </td>
-                <td className="col-num today-val">{row.today > 0 ? fmt(row.today) : '—'}</td>
+                <td className="col-num total-val">{row.total > 0 ? fmt(row.total) : '—'}</td>
+                <td className="col-num today-val">
+                  <span className="delta-anchor">
+                    {deltas[row.code] && (
+                      <span className="delta-chip" key={deltas[row.code].ts}>
+                        +{fmt(deltas[row.code].amount)}
+                      </span>
+                    )}
+                    {row.today > 0 ? fmt(row.today) : '—'}
+                  </span>
+                </td>
                 <td className="col-num peak-val">{row.peakCount > 0 ? fmt(row.peakCount) : '—'}</td>
                 <td className="col-date">{row.peakDate || '—'}</td>
               </tr>

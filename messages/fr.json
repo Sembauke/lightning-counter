@@ -1,16 +1,12 @@
 {
   "nav": {
     "strikemap": "Carte des éclairs",
-    "bycountry": "Éclairs par pays",
     "archive": "Archive des éclairs",
-    "satellite": "Satellite",
     "sound": "Son",
     "strikes": "éclairs",
-    "toggleSatellite": "Basculer la vue satellite",
     "toggleSound": "Basculer les sons d'éclairs",
     "toggleNav": "Basculer la navigation",
     "watching": "en ligne",
-    "more": "Plus",
     "settings": "Paramètres",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
@@ -18,23 +14,11 @@
     "wind": "Couche de vent",
     "toggleWind": "Activer/désactiver la couche de vent"
   },
-  "home": {
-    "loadingMap": "Chargement de la carte…"
-  },
-  "countries": {
-    "title": "Éclairs par pays",
-    "totalStrikes": "{count} éclairs au total",
-    "waiting": "En attente de données…",
-    "country": "Pays",
-    "strikes": "Éclairs",
-    "share": "Part",
-    "searchPlaceholder": "Rechercher un pays…",
-    "countriesFound": "{count} pays"
-  },
   "stats": {
     "title": "Archive des éclairs",
     "searchPlaceholder": "Rechercher un pays…",
     "countriesFound": "{count} pays",
+    "total": "Total",
     "country": "Pays",
     "today": "Aujourd'hui",
     "allTimeHigh": "Record absolu",
@@ -48,10 +32,10 @@
     "minStrikes": "Min. éclairs",
     "strikes": "Éclairs",
     "noRecords": "Aucun enregistrement ne correspond au filtre.",
-    "close": "Fermer",
     "back": "Retour",
     "peakTooltip": "Nombre de décharges le plus élevé jamais enregistré en une journée",
-    "biggestStorm": "Plus gros orage enregistré"
+    "biggestStorm": "Plus gros orage enregistré",
+    "replay": "Rejouer"
   },
   "storms": {
     "title": "Activité orageuse",
@@ -61,7 +45,6 @@
     "athHeader": "Record",
     "noData": "Aucun orage actif détecté.",
     "loading": "Chargement des données…",
-    "close": "Fermer",
     "stormNear": "Orage près de {city}",
     "activeStorms": "{count, plural, one {# orage actif} other {# orages actifs}}",
     "strikesCount": "{count, plural, one {# impact} other {# impacts}}",

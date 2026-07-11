@@ -2,14 +2,18 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
-import { useLocale } from '../../context/LocaleContext';
+import { useCountryName } from '../../hooks/useCountryName';
+import { fmt, fmtRate } from '../../lib/format';
+import CountryFlag from '../../components/CountryFlag';
+import type { StormStrike } from '../../lib/db';
 
-function fmt(n: number) { return n.toLocaleString(); }
+const StormReplayMap = dynamic(() => import('./StormReplayMap'), { ssr: false });
 
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
 interface HistoryRow { date: string; count: number; }
-interface BiggestStorm { count: number; rate: number; lat: number; lon: number; city: string | null; date: string; }
+interface BiggestStorm { count: number; rate: number; lat: number; lon: number; city: string | null; date: string; strikes: StormStrike[] | null; }
 
 export default function CountryClient() {
   const params = useParams();
@@ -17,7 +21,7 @@ export default function CountryClient() {
   const router = useRouter();
   const t = useTranslations('stats');
   const ts = useTranslations('storms');
-  const { locale } = useLocale();
+  const countryName = useCountryName();
 
   const [row, setRow] = useState<ArchiveRow | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
@@ -25,15 +29,6 @@ export default function CountryClient() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [minStrikes, setMinStrikes] = useState('');
-
-  const displayNames = useMemo(() => {
-    if (typeof Intl === 'undefined') return null;
-    try { return new Intl.DisplayNames([locale], { type: 'region' }); } catch { return null; }
-  }, [locale]);
-
-  function countryName(c: string): string {
-    try { return displayNames?.of(c) ?? c; } catch { return c; }
-  }
 
   useEffect(() => {
     fetch('/api/archive')
@@ -61,13 +56,7 @@ export default function CountryClient() {
       <div className="archive-detail standalone">
         <div className="detail-head">
           <div className="detail-head-main">
-            <img
-              src={`https://flagcdn.com/w20/${code.toLowerCase()}.png`}
-              alt={countryName(code)}
-              width={20}
-              height={15}
-              className="cl-flag-img"
-            />
+            <CountryFlag code={code} name={countryName(code)} />
             <div className="detail-head-info">
               <span className="detail-country-name">{countryName(code)}</span>
               {row && (
@@ -91,10 +80,13 @@ export default function CountryClient() {
             <span className="bsc-meta">
               {ts('strikesCount', { count: biggestStorm.count })}
               {' · '}
-              {biggestStorm.rate >= 10 ? Math.round(biggestStorm.rate) : biggestStorm.rate.toFixed(1)}/m
+              {fmtRate(biggestStorm.rate)}/m
               {' · '}
               {biggestStorm.date}
             </span>
+            {biggestStorm.strikes && biggestStorm.strikes.length > 0 && (
+              <StormReplayMap strikes={biggestStorm.strikes} />
+            )}
           </div>
         )}
 

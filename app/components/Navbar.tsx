@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
-import { useSatellite } from '../context/SatelliteContext';
 import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
@@ -124,13 +123,14 @@ export default function Navbar() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [stormOpen, setStormOpen] = useState(false);
   useEffect(() => {
-    if (localStorage.getItem('stormOpen') === 'true') setStormOpen(true);
+    const saved = localStorage.getItem('stormOpen');
+    if (saved !== null) setStormOpen(saved === 'true');
+    // Default on for desktop; the bottom-sheet layout is too intrusive on phones
+    else setStormOpen(window.matchMedia('(min-width: 641px)').matches);
   }, []);
-  const more = usePopover();
   const settings = usePopover();
   const tools = usePopover();
   const { display, connected, viewers } = useNavCount();
-  const { satellite, toggle: toggleSatellite } = useSatellite();
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
   const { enabled: windEnabled, toggle: toggleWind } = useWind();
@@ -138,9 +138,8 @@ export default function Navbar() {
   const t = useTranslations('nav');
 
   const tabs = [
-    { href: '/',          label: t('strikemap') },
-    { href: '/countries', label: t('bycountry') },
-    { href: '/stats',     label: t('archive') },
+    { href: '/',      label: t('strikemap') },
+    { href: '/stats', label: t('archive') },
   ];
 
   const langButtons = LOCALES.map(l => (
@@ -153,11 +152,6 @@ export default function Navbar() {
   const switches = (
     <>
       <div className="settings-toggles">
-        <label className="settings-row" aria-label={t('toggleSatellite')}>
-          <span className="settings-row-label">{t('satellite')}</span>
-          <input type="checkbox" checked={satellite} onChange={toggleSatellite} />
-          <span className="satellite-track"><span className="satellite-thumb" /></span>
-        </label>
         <label className="settings-row" aria-label={t('toggleSound')}>
           <span className="settings-row-label">{t('sound')}</span>
           <input type="checkbox" checked={sound} onChange={toggleSound} />
@@ -198,29 +192,13 @@ export default function Navbar() {
           <span className="site-title">Lightning Stats</span>
         </Link>
 
-        {/* Desktop "More" pages dropdown */}
-        <div className="settings-btn-wrap" ref={more.ref}>
-          <button
-            className={`settings-btn${more.open ? ' active' : ''}`}
-            onClick={() => more.setOpen(o => !o)}
-          >
-            {t('more')} ▾
-          </button>
-          {more.open && (
-            <div className="settings-popover more-popover">
-              {tabs.map(tab => (
-                <Link
-                  key={tab.href}
-                  href={tab.href}
-                  className={`more-link${path === tab.href ? ' active' : ''}`}
-                  onClick={() => more.setOpen(false)}
-                >
-                  {tab.label}
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Desktop archive link */}
+        <Link
+          href="/stats"
+          className={`settings-btn${path === '/stats' ? ' active' : ''}`}
+        >
+          {t('archive')}
+        </Link>
 
         <div className="navbar-sep" aria-hidden="true" />
 

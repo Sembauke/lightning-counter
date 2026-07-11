@@ -1,16 +1,12 @@
 {
   "nav": {
     "strikemap": "Mapa de rayos",
-    "bycountry": "Rayos por país",
     "archive": "Archivo de rayos",
-    "satellite": "Satélite",
     "sound": "Sonido",
     "strikes": "rayos",
-    "toggleSatellite": "Alternar vista satélite",
     "toggleSound": "Alternar sonidos de rayos",
     "toggleNav": "Alternar navegación",
     "watching": "viendo",
-    "more": "Más",
     "settings": "Ajustes",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
@@ -18,23 +14,11 @@
     "wind": "Capa de viento",
     "toggleWind": "Activar/desactivar capa de viento"
   },
-  "home": {
-    "loadingMap": "Cargando mapa…"
-  },
-  "countries": {
-    "title": "Rayos por país",
-    "totalStrikes": "{count} rayos en total",
-    "waiting": "Esperando datos…",
-    "country": "País",
-    "strikes": "Rayos",
-    "share": "Porcentaje",
-    "searchPlaceholder": "Buscar país…",
-    "countriesFound": "{count} países"
-  },
   "stats": {
     "title": "Archivo de rayos",
     "searchPlaceholder": "Buscar país…",
     "countriesFound": "{count} países",
+    "total": "Total",
     "country": "País",
     "today": "Hoy",
     "allTimeHigh": "Récord histórico",
@@ -48,10 +32,10 @@
     "minStrikes": "Min. rayos",
     "strikes": "Rayos",
     "noRecords": "No hay registros que coincidan con el filtro.",
-    "close": "Cerrar",
     "back": "Volver",
     "peakTooltip": "Mayor número de descargas registrado en un solo día",
-    "biggestStorm": "Mayor tormenta registrada"
+    "biggestStorm": "Mayor tormenta registrada",
+    "replay": "Reproducir"
   },
   "storms": {
     "title": "Actividad de Tormentas",
@@ -61,7 +45,6 @@
     "athHeader": "Récord",
     "noData": "No se detectaron tormentas activas.",
     "loading": "Cargando datos de tormentas…",
-    "close": "Cerrar",
     "stormNear": "Tormenta cerca de {city}",
     "activeStorms": "{count, plural, one {# tormenta activa} other {# tormentas activas}}",
     "strikesCount": "{count, plural, one {# rayo} other {# rayos}}",
