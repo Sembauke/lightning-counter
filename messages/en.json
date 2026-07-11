@@ -46,6 +46,8 @@
     "noData": "No active storms detected.",
     "loading": "Loading storm data…",
     "stormNear": "Storm near {city}",
+    "stormFromTo": "Storm from {from} to {to}",
+    "traveled": "{km} km traveled",
     "activeStorms": "{count, plural, one {# active storm} other {# active storms}}",
     "strikesCount": "{count, plural, one {# strike} other {# strikes}}",
     "noCells": "No distinct storm cells right now.",

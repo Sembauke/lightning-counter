@@ -6,22 +6,24 @@ import 'leaflet/dist/leaflet.css';
 import type { Map as LeafletMap } from 'leaflet';
 import type { StormStrike } from '../../lib/db';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../../lib/tiles';
+import { ageColor } from '../../lib/ageGradient';
+import { fmtClock } from '../../lib/format';
 
 const REPLAY_MS = 10_000;
-// Strikes younger than this (in storm time) are drawn bright with a red border,
-// matching the fresh-strike treatment on the live map
+// In the static view, strikes from the storm's last 20 s are drawn bright with
+// a red border, matching the fresh-strike treatment on the live map. During
+// playback freshness follows real time instead (see play()).
 const FRESH_MS = 20_000;
 const RING_MS = 600;
-const MAX_RINGS = 80;
+// Rings are an accent, not a light show — keep only a few alive at once
+const MAX_RINGS = 12;
+const TARGET_RING_COUNT = 60;
+// Dot colors age against a fixed 4-hour scale (matching how slowly colors
+// shift on the live map) instead of cycling the full spectrum per replay
+const GRADIENT_REF_MS = 4 * 60 * 60 * 1000;
 
 interface Projected { x: number; y: number; time: number }
 interface Ring { x: number; y: number; start: number }
-
-function fmtClock(t: number, seconds = false) {
-  return new Date(t).toLocaleTimeString(undefined, {
-    hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}),
-  });
-}
 
 export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,7 +49,7 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
   const timeRange = `${fmtClock(minTime)} – ${fmtClock(maxTime)}`;
 
   // Draw every strike at or before `cutoff` (storm time) plus active ring pulses
-  const draw = (cutoff: number, now: number) => {
+  const draw = (cutoff: number, now: number, freshMs = FRESH_MS) => {
     const cnv = canvasRef.current;
     if (!cnv) return;
     const ctx = cnv.getContext('2d');
@@ -56,17 +58,27 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cnv.width / dpr, cnv.height / dpr);
 
+    // Same age gradient as the live map: dots drift subtly toward orange as
+    // the replay leaves them behind, on a 4-hour reference scale
     for (const pt of projectedRef.current) {
       if (pt.time > cutoff) continue;
-      const fresh = cutoff - pt.time < FRESH_MS;
+      const age = cutoff - pt.time;
       ctx.beginPath();
-      ctx.arc(pt.x, pt.y, fresh ? 3.5 : 2, 0, Math.PI * 2);
-      ctx.fillStyle = fresh ? '#ffe040' : 'rgba(255,140,50,0.55)';
-      ctx.fill();
-      if (fresh) {
-        ctx.strokeStyle = 'rgba(255,34,34,0.9)';
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
+      if (age < freshMs) {
+        const f = age / freshMs;
+        ctx.arc(pt.x, pt.y, 3.5 - 1.5 * f, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,${Math.round(230 - 60 * f)},${Math.round(64 - 30 * f)},${(1 - 0.2 * f).toFixed(3)})`;
+        ctx.fill();
+        if (f < 0.35) {
+          ctx.strokeStyle = 'rgba(255,34,34,0.9)';
+          ctx.lineWidth = 1.8;
+          ctx.stroke();
+        }
+      } else {
+        const [r, g, b, a] = ageColor(Math.max(0, 1 - age / GRADIENT_REF_MS));
+        ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+        ctx.fill();
       }
     }
 
@@ -77,7 +89,7 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
       if (p >= 1) { rings.splice(i, 1); continue; }
       if (p <= 0) continue;
       ctx.beginPath();
-      ctx.arc(rings[i].x, rings[i].y, Math.max(1, Math.sqrt(p) * 30), 0, Math.PI * 2);
+      ctx.arc(rings[i].x, rings[i].y, Math.max(1, Math.sqrt(p) * 18), 0, Math.PI * 2);
       ctx.strokeStyle = `rgba(255,220,60,${(Math.pow(1 - p, 1.5) * 0.95).toFixed(3)})`;
       ctx.lineWidth = 2.5 * (1 - p) + 0.5;
       ctx.stroke();
@@ -98,8 +110,15 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
       L.tileLayer(TILE_LABELS_URL, { maxZoom: 19, opacity: 0.75 }).addTo(map);
       (map.getPanes().tilePane as HTMLElement).style.filter = TILE_DIM_FILTER;
 
-      const bounds = L.latLngBounds(strikes.map(([lat, lon]) => [lat, lon] as [number, number]));
-      map.fitBounds(bounds.pad(0.2), { animate: false });
+      // Fit the dense core of the storm (10th–90th percentile) — chained storm
+      // complexes and outlier strikes would otherwise zoom the view way out.
+      // Strikes outside the core still draw, just off-center.
+      const lats = strikes.map(s => s[0]).sort((a, b) => a - b);
+      const lons = strikes.map(s => s[1]).sort((a, b) => a - b);
+      const lo = Math.floor(strikes.length * 0.1);
+      const hi = Math.ceil(strikes.length * 0.9) - 1;
+      const bounds = L.latLngBounds([lats[lo], lons[lo]], [lats[hi], lons[hi]]);
+      map.fitBounds(bounds, { animate: false });
       mapRef.current = map;
 
       // The view is static, so strikes can be projected to pixels once
@@ -137,20 +156,23 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
     ringsRef.current = [];
     let nextIdx = 0;
     const start = performance.now();
+    // Sample rings evenly across the storm instead of ringing every strike
+    const ringEvery = Math.max(1, Math.round(proj.length / TARGET_RING_COUNT));
+    // During playback a strike counts as "fresh" for ~1.2 real seconds
+    const freshMs = ((maxTime - minTime) / REPLAY_MS) * 1200;
 
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / REPLAY_MS);
       const cutoff = minTime + p * (maxTime - minTime);
 
-      // Ring pulse for strikes appearing this frame, capped to keep dense storms readable
       while (nextIdx < proj.length && proj[nextIdx].time <= cutoff) {
-        if (ringsRef.current.length < MAX_RINGS) {
+        if (nextIdx % ringEvery === 0 && ringsRef.current.length < MAX_RINGS) {
           ringsRef.current.push({ x: proj[nextIdx].x, y: proj[nextIdx].y, start: now + Math.random() * 150 });
         }
         nextIdx++;
       }
 
-      draw(cutoff, now);
+      draw(cutoff, now, freshMs);
       if (timeRef.current) timeRef.current.textContent = fmtClock(cutoff, true);
 
       if (p < 1 || ringsRef.current.length > 0) {

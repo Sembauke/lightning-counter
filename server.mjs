@@ -51,11 +51,11 @@ function markDisconnected(source) {
 
 // Strike processor — called by route.ts once it has loaded geo/db imports
 // Falls back to a queue if route.ts not yet initialised
-function onStrike(lat, lon) {
+function onStrike(lat, lon, time) {
   if (typeof globalThis._processStrike === 'function') {
-    globalThis._processStrike(lat, lon);
+    globalThis._processStrike(lat, lon, time);
   } else {
-    globalThis._strikeQueue.push({ lat, lon });
+    globalThis._strikeQueue.push({ lat, lon, time });
   }
 }
 
@@ -100,7 +100,9 @@ function connectLMWS(url) {
         } else if (Array.isArray(msg.strokes)) {
           for (const s of msg.strokes) {
             if (typeof s.lat === 'number' && typeof s.lon === 'number') {
-              if (!isWsDuplicate(s.id, s.src)) onStrike(s.lat, s.lon);
+              // s.time is the actual discharge time — arrival time would collapse
+              // reconnect backlogs into artificial bursts
+              if (!isWsDuplicate(s.id, s.src)) onStrike(s.lat, s.lon, s.time);
             }
           }
         }

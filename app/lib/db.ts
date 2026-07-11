@@ -7,6 +7,9 @@ const DB_FILE = path.join(DB_DIR, 'lightning.db');
 
 let _db: Database.Database | null = null;
 
+/** [lat, lon, epochMs] — compact form for the record storm's strike sample */
+export type StormStrike = [number, number, number];
+
 function getDb(): Database.Database {
   if (_db) return _db;
   fs.mkdirSync(DB_DIR, { recursive: true });
@@ -65,9 +68,52 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_gs_time ON grid_strikes(strike_time);
     DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-3 days') * 1000;
   `);
-  // Migration for databases created before the replay feature
-  try { _db.exec('ALTER TABLE country_biggest_storms ADD COLUMN strikes TEXT'); } catch { /* column exists */ }
+  // Migrations for databases created before the replay / storm-tracking features
+  const migrations = [
+    'ALTER TABLE country_biggest_storms ADD COLUMN strikes TEXT',
+    'ALTER TABLE country_biggest_storms ADD COLUMN origin_lat REAL',
+    'ALTER TABLE country_biggest_storms ADD COLUMN origin_lon REAL',
+    'ALTER TABLE country_biggest_storms ADD COLUMN origin_city TEXT',
+    'ALTER TABLE country_biggest_storms ADD COLUMN start_time INTEGER',
+    'ALTER TABLE country_biggest_storms ADD COLUMN end_time INTEGER',
+    'ALTER TABLE country_biggest_storms ADD COLUMN storm_key TEXT',
+    'ALTER TABLE country_biggest_storms ADD COLUMN traveled_km REAL',
+  ];
+  for (const m of migrations) {
+    try { _db.exec(m); } catch { /* column exists */ }
+  }
+
+  // One-time sanitation: before strike times flowed through the pipeline,
+  // reconnect backlogs were stamped with a single arrival time, minting
+  // impossible records (e.g. "993/min") that block genuine storms forever.
+  try {
+    const rows = _db.prepare('SELECT code, strikes FROM country_biggest_storms WHERE strikes IS NOT NULL')
+      .all() as Array<{ code: string; strikes: string }>;
+    const del = _db.prepare('DELETE FROM country_biggest_storms WHERE code = ?');
+    for (const row of rows) {
+      try {
+        if (hasTimestampBurst(JSON.parse(row.strikes))) del.run(row.code);
+      } catch { del.run(row.code); }
+    }
+  } catch { /* best-effort */ }
   return _db;
+}
+
+/**
+ * True when an implausible share of strikes lands in a single second — the
+ * signature of an ingestion backlog flush, not a real storm.
+ */
+export function hasTimestampBurst(points: StormStrike[]): boolean {
+  if (points.length < 50) return false;
+  const perSecond = new Map<number, number>();
+  let max = 0;
+  for (const p of points) {
+    const k = Math.floor(p[2] / 1000);
+    const n = (perSecond.get(k) ?? 0) + 1;
+    perSecond.set(k, n);
+    if (n > max) max = n;
+  }
+  return max > points.length * 0.2;
 }
 
 // The startup DELETE above only runs once per process — a long-running server
@@ -119,25 +165,34 @@ export function upsertCountryPeakRates(rates: Record<string, number>): void {
   })();
 }
 
-/** [lat, lon, epochMs] — compact form for the record storm's strike sample */
-export type StormStrike = [number, number, number];
 
 export interface BiggestStorm {
   code: string;
-  count: number;   // strikes in the storm's 5-min window when the record was set
-  rate: number;    // strikes per minute
-  lat: number;
+  count: number;   // strikes in the storm's best 5-min window
+  rate: number;    // strikes per minute at that peak
+  lat: number;     // current/last-tracked centroid
   lon: number;
   city: string | null;
   date: string;
+  originLat: number | null;   // where the storm first crossed the threshold
+  originLon: number | null;
+  originCity: string | null;
+  startTime: number | null;   // first tracked strike (epoch ms)
+  endTime: number | null;     // last time it was seen above the threshold
+  stormKey: string | null;    // identity across tracker passes
+  traveledKm: number | null;  // cumulative centroid path length
   strikes: StormStrike[] | null;
 }
 
 export function getBiggestStorm(code: string): BiggestStorm | null {
   const db = getDb();
-  const row = db.prepare(
-    'SELECT code, count, rate, lat, lon, city, date, strikes FROM country_biggest_storms WHERE code = ?'
-  ).get(code) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
+  const row = db.prepare(`
+    SELECT code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime, storm_key AS stormKey,
+           traveled_km AS traveledKm, strikes
+    FROM country_biggest_storms WHERE code = ?
+  `).get(code) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
   if (!row) return null;
   let strikes: StormStrike[] | null = null;
   try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt — treat as absent */ }
@@ -148,13 +203,22 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
   if (storms.length === 0) return;
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO country_biggest_storms (code, count, rate, lat, lon, city, date, strikes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO country_biggest_storms
+      (code, count, rate, lat, lon, city, date,
+       origin_lat, origin_lon, origin_city, start_time, end_time, storm_key,
+       traveled_km, strikes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET
       count = excluded.count, rate = excluded.rate, lat = excluded.lat,
       lon = excluded.lon, city = excluded.city, date = excluded.date,
-      strikes = excluded.strikes
+      origin_lat = excluded.origin_lat, origin_lon = excluded.origin_lon,
+      origin_city = excluded.origin_city, start_time = excluded.start_time,
+      end_time = excluded.end_time, storm_key = excluded.storm_key,
+      traveled_km = excluded.traveled_km, strikes = excluded.strikes
     WHERE excluded.count > count
+      -- the record-holding storm keeps updating its own row while it lives
+      -- (path end point, end time, growing peak)
+      OR (excluded.storm_key IS NOT NULL AND excluded.storm_key = storm_key)
       -- transition: records saved before the replay feature have no strikes;
       -- let the next qualifying storm claim them so the map can appear
       OR strikes IS NULL
@@ -162,7 +226,8 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
   db.transaction(() => {
     for (const s of storms) {
       stmt.run(s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
-        s.strikes ? JSON.stringify(s.strikes) : null);
+        s.originLat, s.originLon, s.originCity, s.startTime, s.endTime, s.stormKey,
+        s.traveledKm, s.strikes ? JSON.stringify(s.strikes) : null);
     }
   })();
 }

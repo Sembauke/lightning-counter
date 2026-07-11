@@ -46,6 +46,8 @@
     "noData": "Geen actieve onweersbuien gedetecteerd.",
     "loading": "Onweerdata laden…",
     "stormNear": "Onweer bij {city}",
+    "stormFromTo": "Onweer van {from} naar {to}",
+    "traveled": "{km} km afgelegd",
     "activeStorms": "{count, plural, one {# actieve bui} other {# actieve buien}}",
     "strikesCount": "{count, plural, one {# inslag} other {# inslagen}}",
     "noCells": "Momenteel geen afzonderlijke onweerscellen.",

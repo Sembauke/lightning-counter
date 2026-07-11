@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
-import { fmt, fmtRate } from '../../lib/format';
+import { fmt, fmtRate, fmtClock } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { StormStrike } from '../../lib/db';
 
@@ -13,7 +13,13 @@ const StormReplayMap = dynamic(() => import('./StormReplayMap'), { ssr: false })
 
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
 interface HistoryRow { date: string; count: number; }
-interface BiggestStorm { count: number; rate: number; lat: number; lon: number; city: string | null; date: string; strikes: StormStrike[] | null; }
+interface BiggestStorm {
+  count: number; rate: number; lat: number; lon: number;
+  city: string | null; date: string;
+  originCity: string | null; startTime: number | null; endTime: number | null;
+  traveledKm: number | null;
+  strikes: StormStrike[] | null;
+}
 
 export default function CountryClient() {
   const params = useParams();
@@ -73,9 +79,11 @@ export default function CountryClient() {
           <div className="biggest-storm-card">
             <span className="bsc-title">{t('biggestStorm')}</span>
             <span className="bsc-name">
-              ⚡ {biggestStorm.city
-                ? ts('stormNear', { city: biggestStorm.city })
-                : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`}
+              ⚡ {biggestStorm.originCity && biggestStorm.city && biggestStorm.originCity !== biggestStorm.city
+                ? ts('stormFromTo', { from: biggestStorm.originCity, to: biggestStorm.city })
+                : biggestStorm.city
+                  ? ts('stormNear', { city: biggestStorm.city })
+                  : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`}
             </span>
             <span className="bsc-meta">
               {ts('strikesCount', { count: biggestStorm.count })}
@@ -83,6 +91,12 @@ export default function CountryClient() {
               {fmtRate(biggestStorm.rate)}/m
               {' · '}
               {biggestStorm.date}
+              {biggestStorm.startTime && biggestStorm.endTime && (
+                <> · {fmtClock(biggestStorm.startTime)} – {fmtClock(biggestStorm.endTime)}</>
+              )}
+              {biggestStorm.traveledKm != null && biggestStorm.traveledKm >= 5 && (
+                <> · {ts('traveled', { km: biggestStorm.traveledKm })}</>
+              )}
             </span>
             {biggestStorm.strikes && biggestStorm.strikes.length > 0 && (
               <StormReplayMap strikes={biggestStorm.strikes} />

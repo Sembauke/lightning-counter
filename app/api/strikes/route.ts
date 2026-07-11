@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, hasTimestampBurst, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -50,7 +50,7 @@ function broadcastSSE(chunk: string) {
 }
 
 // ── Core strike processor — registered on globalThis for server.mjs ────
-function processStrike(lat: number, lon: number) {
+function processStrike(lat: number, lon: number, time?: number) {
   const today = todayDate();
   if (today !== currentDay) {
     saveDailyAndPeaks(currentDay, todayCounts);
@@ -70,21 +70,27 @@ function processStrike(lat: number, lon: number) {
     todayCounts[cc] = (todayCounts[cc] ?? 0) + 1;
   }
 
+  // Prefer the upstream discharge time; fall back to arrival time when it is
+  // missing or in the future
   const now = Date.now();
-  recentStrikes.push({ lat, lon, cc, time: now });
-  if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
-  pendingGridStrikes.push({ lat, lon, time: now });
-
-  broadcastSSE(`data: ${JSON.stringify({ lat, lon, cc })}\n\n`);
+  const t = typeof time === 'number' && time <= now + 60_000 ? time : now;
+  // Stale deliveries (reconnect backlogs) count toward the totals above, but
+  // restamping them into the live window would fabricate storm bursts
+  if (t > now - 10 * 60_000) {
+    recentStrikes.push({ lat, lon, cc, time: t });
+    if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
+    pendingGridStrikes.push({ lat, lon, time: t });
+    broadcastSSE(`data: ${JSON.stringify({ lat, lon, cc, time: t })}\n\n`);
+  }
 }
 
 // Register with server.mjs so it can call us for incoming WS strikes
 (globalThis as any)._processStrike = processStrike;
 
 // Drain any strikes that arrived before this module loaded
-const queued: Array<{ lat: number; lon: number }> = (globalThis as any)._strikeQueue ?? [];
+const queued: Array<{ lat: number; lon: number; time?: number }> = (globalThis as any)._strikeQueue ?? [];
 (globalThis as any)._strikeQueue = [];
-for (const { lat, lon } of queued) processStrike(lat, lon);
+for (const { lat, lon, time } of queued) processStrike(lat, lon, time);
 
 // ── Periodic maintenance ───────────────────────────────────────────────
 setInterval(() => {
@@ -105,6 +111,49 @@ function citiesFor(cc: string): CityTuple[] {
   return list;
 }
 
+// ── Storm tracking across passes ────────────────────────────────────────
+// A storm keeps its identity while it stays above the detection threshold,
+// so records can say "from Amsterdam to Hoorn, 22:10 – 22:35" as it moves.
+interface TrackedStorm {
+  key: string;
+  cc: string;
+  originLat: number;
+  originLon: number;
+  originCity: string | null;
+  startTime: number;
+  lat: number;
+  lon: number;
+  city: string | null;
+  peakCount: number;
+  peakRate: number;
+  peakSample: StormStrike[];
+  traveledKm: number;
+  lastSeen: number;
+}
+const trackedStorms: TrackedStorm[] = [];
+// A cell within this distance of a tracked storm's last centroid is the same storm
+const STORM_MATCH_KM = 60;
+// Drop a storm after missing ~3 passes below the threshold
+const STORM_DROP_MS = 100_000;
+const STRIKE_SAMPLE_MAX = 4000;
+let stormSeq = 0;
+
+function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const dLat = (aLat - bLat) * 111.32;
+  const dLon = (aLon - bLon) * 111.32 * Math.cos(((aLat + bLat) / 2) * Math.PI / 180);
+  return Math.hypot(dLat, dLon);
+}
+
+function sampleCell(members: Array<{ lat: number; lon: number; time: number }>): StormStrike[] {
+  const step = Math.max(1, Math.ceil(members.length / STRIKE_SAMPLE_MAX));
+  const sample: StormStrike[] = [];
+  for (let i = 0; i < members.length; i += step) {
+    const m = members[i];
+    sample.push([Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time]);
+  }
+  return sample;
+}
+
 setInterval(() => {
   try {
     saveCounters(serverTotal, serverCountryCounts);
@@ -112,7 +161,8 @@ setInterval(() => {
 
     // Compute current 5-min rates and persist any new peaks
     const WINDOW_MS = 5 * 60 * 1000;
-    const cutoff5m = Date.now() - WINDOW_MS;
+    const nowMs = Date.now();
+    const cutoff5m = nowMs - WINDOW_MS;
     const fiveMinCounts: Record<string, number> = {};
     const byCountry: Record<string, RecentStrike[]> = {};
     for (const s of recentStrikes) {
@@ -125,28 +175,77 @@ setInterval(() => {
     for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
     upsertCountryPeakRates(rates);
 
-    // Track each country's biggest storm cell on record
-    const STRIKE_SAMPLE_MAX = 4000;
-    const records: BiggestStorm[] = [];
+    // Match detected cells to tracked storms, spawning new tracks as needed
+    const matched = new Set<TrackedStorm>();
     for (const [cc, strikes] of Object.entries(byCountry)) {
-      const top = detectStorms(strikes, WINDOW_MS)[0];
-      if (!top) continue;
-      const near = nearestCity(citiesFor(cc), top.lat, top.lon);
-      // Even time-sample of the cluster's strikes so replay stays bounded
-      const step = Math.max(1, Math.ceil(top.members.length / STRIKE_SAMPLE_MAX));
-      const sample: StormStrike[] = [];
-      for (let i = 0; i < top.members.length; i += step) {
-        const m = top.members[i];
-        sample.push([Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time]);
+      for (const cell of detectStorms(strikes, WINDOW_MS)) {
+        const sample = sampleCell(cell.members);
+        // A backlog flush can masquerade as a huge storm — never track those
+        if (hasTimestampBurst(sample)) continue;
+
+        let best: TrackedStorm | null = null;
+        let bestKm = STORM_MATCH_KM;
+        for (const st of trackedStorms) {
+          if (st.cc !== cc || matched.has(st)) continue;
+          const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
+          if (km <= bestKm) { bestKm = km; best = st; }
+        }
+
+        const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
+        if (best) {
+          // Count a hop as travel only when it looks like physical storm motion:
+          // sub-2km is window jitter, >15km per 30s pass (~180 km/h) is cluster
+          // growth or re-merging shifting the centroid, not the storm moving
+          if (bestKm >= 2 && bestKm <= 15) best.traveledKm += bestKm;
+          best.lat = cell.lat;
+          best.lon = cell.lon;
+          best.city = city;
+          best.lastSeen = nowMs;
+          if (cell.count > best.peakCount) {
+            best.peakCount = cell.count;
+            best.peakRate = cell.rate;
+            best.peakSample = sample;
+          }
+          matched.add(best);
+        } else {
+          let firstStrike = Infinity;
+          for (const m of cell.members) if (m.time < firstStrike) firstStrike = m.time;
+          const fresh: TrackedStorm = {
+            key: `${cc}:${nowMs}:${stormSeq++}`,
+            cc,
+            originLat: cell.lat, originLon: cell.lon, originCity: city,
+            startTime: firstStrike,
+            lat: cell.lat, lon: cell.lon, city,
+            peakCount: cell.count, peakRate: cell.rate, peakSample: sample,
+            traveledKm: 0,
+            lastSeen: nowMs,
+          };
+          trackedStorms.push(fresh);
+          matched.add(fresh);
+        }
       }
+    }
+
+    // Offer every storm seen this pass as a record candidate; the upsert only
+    // accepts ones that beat the stored count or already hold the record
+    const records: BiggestStorm[] = [];
+    for (const st of trackedStorms) {
+      if (st.lastSeen !== nowMs) continue;
       records.push({
-        code: cc, count: top.count, rate: top.rate,
-        lat: top.lat, lon: top.lon,
-        city: near?.name ?? null, date: currentDay,
-        strikes: sample,
+        code: st.cc, count: st.peakCount, rate: st.peakRate,
+        lat: st.lat, lon: st.lon, city: st.city, date: currentDay,
+        originLat: st.originLat, originLon: st.originLon, originCity: st.originCity,
+        startTime: st.startTime, endTime: st.lastSeen, stormKey: st.key,
+        traveledKm: Math.round(st.traveledKm), strikes: st.peakSample,
       });
     }
     upsertBiggestStorms(records);
+
+    // Expire storms that fell below the threshold for several passes
+    let i = trackedStorms.length;
+    while (i--) {
+      if (nowMs - trackedStorms[i].lastSeen > STORM_DROP_MS) trackedStorms.splice(i, 1);
+    }
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 

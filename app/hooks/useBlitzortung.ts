@@ -68,12 +68,12 @@ export function useBlitzortung() {
 
     es.onmessage = (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data) as { lat: number; lon: number; cc?: string | null };
+        const data = JSON.parse(e.data) as { lat: number; lon: number; cc?: string | null; time?: number };
         pendingStrikes.push({
           id: `${counterRef.current++}`,
           lat: data.lat,
           lon: data.lon,
-          time: Date.now(),
+          time: data.time ?? Date.now(),
           ...(data.cc ? { cc: data.cc } : {}),
         });
         if (data.cc) {

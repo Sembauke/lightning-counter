@@ -46,6 +46,8 @@
     "noData": "No se detectaron tormentas activas.",
     "loading": "Cargando datos de tormentas…",
     "stormNear": "Tormenta cerca de {city}",
+    "stormFromTo": "Tormenta de {from} a {to}",
+    "traveled": "{km} km recorridos",
     "activeStorms": "{count, plural, one {# tormenta activa} other {# tormentas activas}}",
     "strikesCount": "{count, plural, one {# rayo} other {# rayos}}",
     "noCells": "No hay células de tormenta diferenciadas ahora mismo.",

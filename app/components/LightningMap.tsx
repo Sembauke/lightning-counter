@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import type { Strike } from '../hooks/useBlitzortung';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
+import { ageColor } from '../lib/ageGradient';
 import { useHeatmap } from '../context/HeatmapContext';
 import { useWind } from '../context/WindContext';
 
@@ -499,28 +500,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           // Normalize against the fixed window so colors are viewport-independent:
           // t=0 → oldest possible (cutoff), t=1 → now
 
-          // Multi-stop gradient: dark purple → violet → red → orange → yellow
-          type Stop = [number, number, number, number, number]; // pos, r, g, b, a
-          const stops: Stop[] = [
-            [0,    30,   0,   80, 0.20],
-            [0.30, 120,  0,  160, 0.42],
-            [0.55, 210,  10,  10, 0.65],
-            [0.78, 255, 120,   0, 0.80],
-            [1,    255, 230,   0, 0.92],
-          ];
-          const lerpStop = (t: number): [number, number, number, number] => {
-            let i = 0;
-            while (i < stops.length - 2 && stops[i + 1][0] <= t) i++;
-            const s0 = stops[i], s1 = stops[i + 1];
-            const f = s1[0] > s0[0] ? (t - s0[0]) / (s1[0] - s0[0]) : 0;
-            return [
-              Math.round(s0[1] + f * (s1[1] - s0[1])),
-              Math.round(s0[2] + f * (s1[2] - s0[2])),
-              Math.round(s0[3] + f * (s1[3] - s0[3])),
-              +(s0[4] + f * (s1[4] - s0[4])).toFixed(2),
-            ];
-          };
-
           // Batch dots by color bucket — one fill() per bucket instead of per dot.
           // 20 buckets → ≤20 GPU state changes regardless of dot count.
           const N_BUCKETS = 20;
@@ -550,7 +529,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           for (let b = 0; b < N_BUCKETS; b++) {
             const flat = buckets[b];
             if (flat.length === 0) continue;
-            const [r, g, bc, a] = lerpStop((b + 0.5) / N_BUCKETS);
+            const [r, g, bc, a] = ageColor((b + 0.5) / N_BUCKETS);
             hCtx.fillStyle = `rgba(${r},${g},${bc},${a})`;
             hCtx.beginPath();
             for (let i = 0; i < flat.length; i += 2) {
