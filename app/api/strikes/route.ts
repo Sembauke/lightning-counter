@@ -126,9 +126,16 @@ interface TrackedStorm {
   city: string | null;
   peakCount: number;
   peakRate: number;
-  peakSample: StormStrike[];
   traveledKm: number;
   lastSeen: number;
+  // Full-life strike accumulation for the replay: passes overlap, so only
+  // strikes newer than lastStrikeTime get appended; keepEvery thins the
+  // stream once the array would outgrow ALL_STRIKES_MAX
+  allStrikes: StormStrike[];
+  lastStrikeTime: number;
+  totalStrikes: number;
+  keepEvery: number;
+  appendSeq: number;
 }
 const trackedStorms: TrackedStorm[] = [];
 // A cell within this distance of a tracked storm's last centroid is the same storm
@@ -136,6 +143,8 @@ const STORM_MATCH_KM = 60;
 // Drop a storm after missing ~3 passes below the threshold
 const STORM_DROP_MS = 100_000;
 const STRIKE_SAMPLE_MAX = 4000;
+// Cap on a storm's accumulated replay strikes; halved (and thinned) on overflow
+const ALL_STRIKES_MAX = 24_000;
 let stormSeq = 0;
 
 function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
@@ -144,14 +153,31 @@ function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): numb
   return Math.hypot(dLat, dLon);
 }
 
+function roundPt(m: { lat: number; lon: number; time: number }): StormStrike {
+  return [Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time];
+}
+
 function sampleCell(members: Array<{ lat: number; lon: number; time: number }>): StormStrike[] {
   const step = Math.max(1, Math.ceil(members.length / STRIKE_SAMPLE_MAX));
   const sample: StormStrike[] = [];
-  for (let i = 0; i < members.length; i += step) {
-    const m = members[i];
-    sample.push([Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time]);
-  }
+  for (let i = 0; i < members.length; i += step) sample.push(roundPt(members[i]));
   return sample;
+}
+
+/** Append a pass's new strikes to the storm's full-life accumulation */
+function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>): void {
+  let newest = st.lastStrikeTime;
+  for (const m of members) {
+    if (m.time <= st.lastStrikeTime) continue;
+    st.totalStrikes++;
+    if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
+    if (m.time > newest) newest = m.time;
+  }
+  st.lastStrikeTime = newest;
+  if (st.allStrikes.length > ALL_STRIKES_MAX) {
+    st.allStrikes = st.allStrikes.filter((_, i) => i % 2 === 0);
+    st.keepEvery *= 2;
+  }
 }
 
 setInterval(() => {
@@ -204,8 +230,8 @@ setInterval(() => {
           if (cell.count > best.peakCount) {
             best.peakCount = cell.count;
             best.peakRate = cell.rate;
-            best.peakSample = sample;
           }
+          accumulateStrikes(best, cell.members);
           matched.add(best);
         } else {
           let firstStrike = Infinity;
@@ -216,10 +242,12 @@ setInterval(() => {
             originLat: cell.lat, originLon: cell.lon, originCity: city,
             startTime: firstStrike,
             lat: cell.lat, lon: cell.lon, city,
-            peakCount: cell.count, peakRate: cell.rate, peakSample: sample,
+            peakCount: cell.count, peakRate: cell.rate,
             traveledKm: 0,
             lastSeen: nowMs,
+            allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
           };
+          accumulateStrikes(fresh, cell.members);
           trackedStorms.push(fresh);
           matched.add(fresh);
         }
@@ -236,7 +264,8 @@ setInterval(() => {
         lat: st.lat, lon: st.lon, city: st.city, date: currentDay,
         originLat: st.originLat, originLon: st.originLon, originCity: st.originCity,
         startTime: st.startTime, endTime: st.lastSeen, stormKey: st.key,
-        traveledKm: Math.round(st.traveledKm), strikes: st.peakSample,
+        traveledKm: Math.round(st.traveledKm), totalCount: st.totalStrikes,
+        strikes: st.allStrikes,
       });
     }
     upsertBiggestStorms(records);

@@ -48,6 +48,7 @@
     "stormNear": "Tormenta cerca de {city}",
     "stormFromTo": "Tormenta de {from} a {to}",
     "traveled": "{km} km recorridos",
+    "peakRate": "pico {rate}/m",
     "activeStorms": "{count, plural, one {# tormenta activa} other {# tormentas activas}}",
     "strikesCount": "{count, plural, one {# rayo} other {# rayos}}",
     "noCells": "No hay células de tormenta diferenciadas ahora mismo.",

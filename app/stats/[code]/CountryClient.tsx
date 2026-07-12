@@ -17,7 +17,7 @@ interface BiggestStorm {
   count: number; rate: number; lat: number; lon: number;
   city: string | null; date: string;
   originCity: string | null; startTime: number | null; endTime: number | null;
-  traveledKm: number | null;
+  traveledKm: number | null; totalCount: number | null;
   strikes: StormStrike[] | null;
 }
 
@@ -86,9 +86,9 @@ export default function CountryClient() {
                   : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`}
             </span>
             <span className="bsc-meta">
-              {ts('strikesCount', { count: biggestStorm.count })}
+              {ts('strikesCount', { count: biggestStorm.totalCount ?? biggestStorm.count })}
               {' · '}
-              {fmtRate(biggestStorm.rate)}/m
+              {ts('peakRate', { rate: fmtRate(biggestStorm.rate) })}
               {' · '}
               {biggestStorm.date}
               {biggestStorm.startTime && biggestStorm.endTime && (

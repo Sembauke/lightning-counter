@@ -48,6 +48,7 @@
     "stormNear": "Orage près de {city}",
     "stormFromTo": "Orage de {from} à {to}",
     "traveled": "{km} km parcourus",
+    "peakRate": "pic {rate}/m",
     "activeStorms": "{count, plural, one {# orage actif} other {# orages actifs}}",
     "strikesCount": "{count, plural, one {# impact} other {# impacts}}",
     "noCells": "Aucune cellule orageuse distincte pour le moment.",

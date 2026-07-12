@@ -48,6 +48,7 @@
     "stormNear": "Gewitter bei {city}",
     "stormFromTo": "Gewitter von {from} nach {to}",
     "traveled": "{km} km zurückgelegt",
+    "peakRate": "Spitze {rate}/m",
     "activeStorms": "{count, plural, one {# aktives Gewitter} other {# aktive Gewitter}}",
     "strikesCount": "{count, plural, one {# Einschlag} other {# Einschläge}}",
     "noCells": "Derzeit keine einzelnen Gewitterzellen.",

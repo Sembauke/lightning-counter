@@ -78,6 +78,7 @@ function getDb(): Database.Database {
     'ALTER TABLE country_biggest_storms ADD COLUMN end_time INTEGER',
     'ALTER TABLE country_biggest_storms ADD COLUMN storm_key TEXT',
     'ALTER TABLE country_biggest_storms ADD COLUMN traveled_km REAL',
+    'ALTER TABLE country_biggest_storms ADD COLUMN total_count INTEGER',
   ];
   for (const m of migrations) {
     try { _db.exec(m); } catch { /* column exists */ }
@@ -181,6 +182,7 @@ export interface BiggestStorm {
   endTime: number | null;     // last time it was seen above the threshold
   stormKey: string | null;    // identity across tracker passes
   traveledKm: number | null;  // cumulative centroid path length
+  totalCount: number | null;  // strikes over the storm's whole tracked life
   strikes: StormStrike[] | null;
 }
 
@@ -190,7 +192,7 @@ export function getBiggestStorm(code: string): BiggestStorm | null {
     SELECT code, count, rate, lat, lon, city, date,
            origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
            start_time AS startTime, end_time AS endTime, storm_key AS stormKey,
-           traveled_km AS traveledKm, strikes
+           traveled_km AS traveledKm, total_count AS totalCount, strikes
     FROM country_biggest_storms WHERE code = ?
   `).get(code) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
   if (!row) return null;
@@ -206,15 +208,16 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
     INSERT INTO country_biggest_storms
       (code, count, rate, lat, lon, city, date,
        origin_lat, origin_lon, origin_city, start_time, end_time, storm_key,
-       traveled_km, strikes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       traveled_km, total_count, strikes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET
       count = excluded.count, rate = excluded.rate, lat = excluded.lat,
       lon = excluded.lon, city = excluded.city, date = excluded.date,
       origin_lat = excluded.origin_lat, origin_lon = excluded.origin_lon,
       origin_city = excluded.origin_city, start_time = excluded.start_time,
       end_time = excluded.end_time, storm_key = excluded.storm_key,
-      traveled_km = excluded.traveled_km, strikes = excluded.strikes
+      traveled_km = excluded.traveled_km, total_count = excluded.total_count,
+      strikes = excluded.strikes
     WHERE excluded.count > count
       -- the record-holding storm keeps updating its own row while it lives
       -- (path end point, end time, growing peak)
@@ -227,7 +230,7 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
     for (const s of storms) {
       stmt.run(s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
         s.originLat, s.originLon, s.originCity, s.startTime, s.endTime, s.stormKey,
-        s.traveledKm, s.strikes ? JSON.stringify(s.strikes) : null);
+        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null);
     }
   })();
 }

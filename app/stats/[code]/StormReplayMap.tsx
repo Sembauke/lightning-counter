@@ -9,7 +9,11 @@ import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../../lib/tiles';
 import { ageColor } from '../../lib/ageGradient';
 import { fmtClock } from '../../lib/format';
 
-const REPLAY_MS = 10_000;
+// Playback lasts ~2 s per storm-minute, clamped so short storms stay watchable
+// and multi-hour storms don't drag
+const REPLAY_MS_MIN = 10_000;
+const REPLAY_MS_MAX = 40_000;
+const REPLAY_MS_PER_STORM_MIN = 2_000;
 // In the static view, strikes from the storm's last 20 s are drawn bright with
 // a red border, matching the fresh-strike treatment on the live map. During
 // playback freshness follows real time instead (see play()).
@@ -156,13 +160,15 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
     ringsRef.current = [];
     let nextIdx = 0;
     const start = performance.now();
+    const spanMs = Math.max(1, maxTime - minTime);
+    const replayMs = Math.min(REPLAY_MS_MAX, Math.max(REPLAY_MS_MIN, (spanMs / 60_000) * REPLAY_MS_PER_STORM_MIN));
     // Sample rings evenly across the storm instead of ringing every strike
     const ringEvery = Math.max(1, Math.round(proj.length / TARGET_RING_COUNT));
     // During playback a strike counts as "fresh" for ~1.2 real seconds
-    const freshMs = ((maxTime - minTime) / REPLAY_MS) * 1200;
+    const freshMs = (spanMs / replayMs) * 1200;
 
     const tick = (now: number) => {
-      const p = Math.min(1, (now - start) / REPLAY_MS);
+      const p = Math.min(1, (now - start) / replayMs);
       const cutoff = minTime + p * (maxTime - minTime);
 
       while (nextIdx < proj.length && proj[nextIdx].time <= cutoff) {
