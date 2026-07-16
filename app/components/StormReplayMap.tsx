@@ -4,10 +4,10 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import 'leaflet/dist/leaflet.css';
 import type { Map as LeafletMap } from 'leaflet';
-import type { StormStrike } from '../../lib/db';
-import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../../lib/tiles';
-import { ageColor } from '../../lib/ageGradient';
-import { fmtClock } from '../../lib/format';
+import type { StormStrike } from '../lib/db';
+import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
+import { ageColor } from '../lib/ageGradient';
+import { fmtClock } from '../lib/format';
 
 // Playback lasts ~2 s per storm-minute, clamped so short storms stay watchable
 // and multi-hour storms don't drag

@@ -11,8 +11,9 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Activité orageuse",
-    "wind": "Couche de vent",
-    "toggleWind": "Activer/désactiver la couche de vent"
+    "records": "Records",
+    "storms": "Orages",
+    "countryTooltip": "Info-bulle pays"
   },
   "stats": {
     "title": "Archive des éclairs",
@@ -65,5 +66,23 @@
     "dirSW": "SO",
     "dirW": "O",
     "dirNW": "NO"
+  },
+  "records": {
+    "title": "Records d'orages",
+    "biggest": "Plus gros orage",
+    "longest": "Orage le plus durable",
+    "farthest": "Plus longue distance",
+    "fastest": "Déplacement le plus rapide",
+    "dailyPeak": "Plus de décharges en une journée",
+    "noData": "Pas encore de records — les orages sont suivis."
+  },
+  "stormLog": {
+    "title": "Journal des orages",
+    "noStorms": "Aucun orage suivi ce jour-là.",
+    "searchPlaceholder": "Rechercher un pays ou une ville…",
+    "stormsFound": "{count, plural, one {# orage} other {# orages}}"
+  },
+  "map": {
+    "strikesToday": "{count, plural, one {# éclair aujourd'hui} other {# éclairs aujourd'hui}}"
   }
 }

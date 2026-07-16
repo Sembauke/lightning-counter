@@ -9,7 +9,7 @@ import { fmt, fmtRate, fmtClock } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { StormStrike } from '../../lib/db';
 
-const StormReplayMap = dynamic(() => import('./StormReplayMap'), { ssr: false });
+const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
 
 interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
 interface HistoryRow { date: string; count: number; }

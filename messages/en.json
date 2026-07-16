@@ -1,21 +1,22 @@
 {
   "nav": {
-    "strikemap": "Discharge Map",
-    "archive": "Discharge Archive",
+    "strikemap": "Strike Map",
+    "archive": "Strike Archive",
     "sound": "Sound",
-    "strikes": "discharges",
-    "toggleSound": "Toggle discharge sounds",
+    "strikes": "strikes",
+    "toggleSound": "Toggle strike sounds",
     "toggleNav": "Toggle navigation",
     "watching": "watching",
     "settings": "Settings",
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Storm Activity",
-    "wind": "Wind Layer",
-    "toggleWind": "Toggle wind layer"
+    "records": "Records",
+    "storms": "Storms",
+    "countryTooltip": "Country tooltip"
   },
   "stats": {
-    "title": "Discharge Archive",
+    "title": "Strike Archive",
     "searchPlaceholder": "Search country…",
     "countriesFound": "{count} countries",
     "total": "Total",
@@ -23,17 +24,17 @@
     "today": "Today",
     "allTimeHigh": "All-Time High",
     "date": "Date",
-    "noData": "No data yet — discharges accumulate over time.",
+    "noData": "No data yet — strikes accumulate over time.",
     "todayLabel": "Today:",
     "peakLabel": "Peak:",
     "on": "on",
     "from": "From",
     "to": "To",
-    "minStrikes": "Min discharges",
-    "strikes": "Discharges",
+    "minStrikes": "Min strikes",
+    "strikes": "Strikes",
     "noRecords": "No records match the filter.",
     "back": "Back",
-    "peakTooltip": "All-time highest number of discharges recorded in a single day",
+    "peakTooltip": "All-time highest number of strikes recorded in a single day",
     "biggestStorm": "Biggest storm on record",
     "replay": "Replay"
   },
@@ -65,5 +66,23 @@
     "dirSW": "SW",
     "dirW": "W",
     "dirNW": "NW"
+  },
+  "records": {
+    "title": "Storm Records",
+    "biggest": "Biggest storm",
+    "longest": "Longest-lived storm",
+    "farthest": "Farthest traveled",
+    "fastest": "Fastest moving",
+    "dailyPeak": "Most strikes in one day",
+    "noData": "No records yet — storms are being tracked."
+  },
+  "stormLog": {
+    "title": "Storm Log",
+    "noStorms": "No storms tracked on this day.",
+    "searchPlaceholder": "Search country or city…",
+    "stormsFound": "{count, plural, one {# storm} other {# storms}}"
+  },
+  "map": {
+    "strikesToday": "{count, plural, one {# strike today} other {# strikes today}}"
   }
 }

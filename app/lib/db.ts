@@ -41,6 +41,45 @@ function getDb(): Database.Database {
       code TEXT PRIMARY KEY,
       rate REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS storms (
+      storm_key TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      rate REAL NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      city TEXT,
+      date TEXT NOT NULL,
+      origin_lat REAL,
+      origin_lon REAL,
+      origin_city TEXT,
+      start_time INTEGER,
+      end_time INTEGER,
+      traveled_km REAL,
+      total_count INTEGER,
+      strikes TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_storms_date_count ON storms(date, count DESC);
+    CREATE INDEX IF NOT EXISTS idx_storms_code_date ON storms(code, date);
+    CREATE TABLE IF NOT EXISTS storm_records (
+      category TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      rate REAL NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      city TEXT,
+      date TEXT NOT NULL,
+      origin_lat REAL,
+      origin_lon REAL,
+      origin_city TEXT,
+      start_time INTEGER,
+      end_time INTEGER,
+      storm_key TEXT,
+      traveled_km REAL,
+      total_count INTEGER,
+      strikes TEXT
+    );
     CREATE TABLE IF NOT EXISTS country_biggest_storms (
       code TEXT PRIMARY KEY,
       count INTEGER NOT NULL,
@@ -233,6 +272,147 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
         s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null);
     }
   })();
+}
+
+// ── Global storm hall of fame ───────────────────────────────────────────
+export type StormRecordCategory = 'biggest' | 'longest' | 'farthest' | 'fastest';
+
+export interface GlobalStormRecord extends BiggestStorm {
+  category: StormRecordCategory;
+}
+
+const RECORD_METRICS: Record<StormRecordCategory, (s: BiggestStorm) => number | null> = {
+  biggest: s => s.count,
+  longest: s => (s.startTime != null && s.endTime != null ? s.endTime - s.startTime : null),
+  farthest: s => (s.traveledKm != null && s.traveledKm >= 5 ? s.traveledKm : null),
+  // km/h over the storm's life; short or barely-moving storms aren't eligible
+  fastest: s => {
+    if (s.traveledKm == null || s.startTime == null || s.endTime == null) return null;
+    const hours = (s.endTime - s.startTime) / 3_600_000;
+    if (s.traveledKm < 20 || hours < 1 / 6) return null;
+    return s.traveledKm / hours;
+  },
+};
+
+export function getStormRecords(): GlobalStormRecord[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT category, code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime, storm_key AS stormKey,
+           traveled_km AS traveledKm, total_count AS totalCount, strikes
+    FROM storm_records
+  `).all() as Array<Omit<GlobalStormRecord, 'strikes'> & { strikes: string | null }>;
+  return rows.map(row => {
+    let strikes: StormStrike[] | null = null;
+    try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt */ }
+    return { ...row, strikes };
+  });
+}
+
+/** Offer this pass's storms as hall-of-fame candidates for every category */
+export function upsertStormRecords(candidates: BiggestStorm[]): void {
+  if (candidates.length === 0) return;
+  const db = getDb();
+  const current = new Map(getStormRecords().map(r => [r.category, r]));
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO storm_records
+      (category, code, count, rate, lat, lon, city, date,
+       origin_lat, origin_lon, origin_city, start_time, end_time, storm_key,
+       traveled_km, total_count, strikes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  db.transaction(() => {
+    for (const category of Object.keys(RECORD_METRICS) as StormRecordCategory[]) {
+      const metric = RECORD_METRICS[category];
+      let holder = current.get(category) ?? null;
+      for (const s of candidates) {
+        const value = metric(s);
+        if (value == null) continue;
+        // The record-holding storm refreshes its own entry as it lives on;
+        // challengers must beat the stored metric
+        const sameStorm = holder?.stormKey != null && holder.stormKey === s.stormKey;
+        const holderValue = holder ? metric(holder) : null;
+        if (sameStorm || holderValue == null || value > holderValue) {
+          holder = { ...s, category };
+        }
+      }
+      if (holder && holder !== current.get(category)) {
+        stmt.run(category, holder.code, holder.count, holder.rate, holder.lat, holder.lon,
+          holder.city, holder.date, holder.originLat, holder.originLon, holder.originCity,
+          holder.startTime, holder.endTime, holder.stormKey, holder.traveledKm,
+          holder.totalCount, holder.strikes ? JSON.stringify(holder.strikes) : null);
+      }
+    }
+  })();
+}
+
+// ── Storm history log ──────────────────────────────────────────────────
+/** Metadata-only storm row for day listings (strikes fetched separately) */
+export type StormLogRow = Omit<BiggestStorm, 'strikes'> & { stormKey: string };
+
+/** Keep every tracked storm's latest state; rows persist after the storm dies */
+export function upsertStorms(storms: BiggestStorm[]): void {
+  if (storms.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO storms
+      (storm_key, code, count, rate, lat, lon, city, date,
+       origin_lat, origin_lon, origin_city, start_time, end_time,
+       traveled_km, total_count, strikes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const s of storms) {
+      if (!s.stormKey) continue;
+      stmt.run(s.stormKey, s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
+        s.originLat, s.originLon, s.originCity, s.startTime, s.endTime,
+        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null);
+    }
+  })();
+}
+
+export function getStormsForDate(date: string, code?: string): StormLogRow[] {
+  const db = getDb();
+  const base = `
+    SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime,
+           traveled_km AS traveledKm, total_count AS totalCount
+    FROM storms WHERE date = ?`;
+  return (code
+    ? db.prepare(`${base} AND code = ? ORDER BY count DESC`).all(date, code)
+    : db.prepare(`${base} ORDER BY count DESC`).all(date)) as StormLogRow[];
+}
+
+export function getStormByKey(stormKey: string): BiggestStorm | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime,
+           traveled_km AS traveledKm, total_count AS totalCount, strikes
+    FROM storms WHERE storm_key = ?
+  `).get(stormKey) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
+  if (!row) return null;
+  let strikes: StormStrike[] | null = null;
+  try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt */ }
+  return { ...row, strikes };
+}
+
+/** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
+export function pruneStormStrikes(): void {
+  const db = getDb();
+  db.prepare('UPDATE storms SET strikes = NULL WHERE strikes IS NOT NULL AND end_time < ?')
+    .run(Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
+
+export function getTopDailyPeak(): { code: string; count: number; date: string } | null {
+  const db = getDb();
+  const row = db.prepare('SELECT code, count, date FROM country_peaks ORDER BY count DESC LIMIT 1')
+    .get() as { code: string; count: number; date: string } | undefined;
+  return row ?? null;
 }
 
 export function getCountryHistory(code: string): Array<{ date: string; count: number }> {

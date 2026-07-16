@@ -11,8 +11,9 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Actividad Tormentas",
-    "wind": "Capa de viento",
-    "toggleWind": "Activar/desactivar capa de viento"
+    "records": "Récords",
+    "storms": "Tormentas",
+    "countryTooltip": "Tooltip de país"
   },
   "stats": {
     "title": "Archivo de rayos",
@@ -65,5 +66,23 @@
     "dirSW": "SO",
     "dirW": "O",
     "dirNW": "NO"
+  },
+  "records": {
+    "title": "Récords de tormentas",
+    "biggest": "Mayor tormenta",
+    "longest": "Tormenta más duradera",
+    "farthest": "Mayor distancia recorrida",
+    "fastest": "Movimiento más rápido",
+    "dailyPeak": "Más descargas en un día",
+    "noData": "Aún no hay récords — se están siguiendo las tormentas."
+  },
+  "stormLog": {
+    "title": "Registro de tormentas",
+    "noStorms": "No se registraron tormentas este día.",
+    "searchPlaceholder": "Buscar país o ciudad…",
+    "stormsFound": "{count, plural, one {# tormenta} other {# tormentas}}"
+  },
+  "map": {
+    "strikesToday": "{count, plural, one {# rayo hoy} other {# rayos hoy}}"
   }
 }

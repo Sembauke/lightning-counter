@@ -11,8 +11,9 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Gewitteraktivität",
-    "wind": "Windschicht",
-    "toggleWind": "Windschicht umschalten"
+    "records": "Rekorde",
+    "storms": "Gewitter",
+    "countryTooltip": "Länder-Tooltip"
   },
   "stats": {
     "title": "Blitzarchiv",
@@ -65,5 +66,23 @@
     "dirSW": "SW",
     "dirW": "W",
     "dirNW": "NW"
+  },
+  "records": {
+    "title": "Gewitterrekorde",
+    "biggest": "Größtes Gewitter",
+    "longest": "Langlebigstes Gewitter",
+    "farthest": "Weiteste Strecke",
+    "fastest": "Schnellste Bewegung",
+    "dailyPeak": "Meiste Entladungen an einem Tag",
+    "noData": "Noch keine Rekorde — Gewitter werden verfolgt."
+  },
+  "stormLog": {
+    "title": "Gewitterprotokoll",
+    "noStorms": "An diesem Tag wurden keine Gewitter verfolgt.",
+    "searchPlaceholder": "Land oder Stadt suchen…",
+    "stormsFound": "{count, plural, one {# Gewitter} other {# Gewitter}}"
+  },
+  "map": {
+    "strikesToday": "{count, plural, one {# Blitz heute} other {# Blitze heute}}"
   }
 }

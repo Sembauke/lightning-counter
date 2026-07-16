@@ -782,6 +782,184 @@ html, body {
 }
 .bsc-replay-btn:disabled { opacity: 0.5; cursor: default; }
 
+/* ── Storm records (hall of fame) page ── */
+.records-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 2rem;
+}
+
+.records-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+  gap: 1rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.rec-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255,220,0,0.05);
+  border: 1px solid rgba(255,220,0,0.18);
+  border-radius: 8px;
+}
+
+.rec-country {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: rgba(255,220,0,0.85);
+}
+
+.rec-highlight {
+  margin-left: auto;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #ffe040;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .records-grid { grid-template-columns: 1fr; }
+  .records-body { padding: 0.75rem 0.75rem 2rem; }
+}
+
+/* ── Country hover tooltip ── */
+.country-tooltip {
+  position: absolute;
+  z-index: 800;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0.65rem;
+  background: rgba(8,8,18,0.92);
+  border: 1px solid rgba(255,220,0,0.3);
+  border-radius: 6px;
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+  /* opacity-only — transform is owned by the cursor-follow/edge-flip logic */
+  animation: tooltip-fade-in 0.12s ease-out;
+}
+@keyframes tooltip-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.country-tooltip-name {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255,240,180,0.95);
+}
+
+.country-tooltip-count {
+  font-size: 0.72rem;
+  color: #ffe040;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Storm log page ── */
+.storm-log-datenav {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.storm-log-daybtn {
+  padding: 0.35rem 0.7rem;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  color: rgba(255,220,0,0.85);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.storm-log-daybtn:hover:not(:disabled) { border-color: rgba(255,220,0,0.4); }
+.storm-log-daybtn:disabled { opacity: 0.35; cursor: default; }
+
+.storm-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.storm-log-row {
+  background: rgba(255,220,0,0.04);
+  border: 1px solid rgba(255,220,0,0.14);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.storm-log-row.open { border-color: rgba(255,220,0,0.3); }
+
+.storm-log-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  background: none;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.storm-log-head:hover { background: rgba(255,220,0,0.05); }
+
+.storm-log-country {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+  width: 150px;
+  font-size: 0.8rem;
+  color: rgba(255,220,0,0.8);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.storm-log-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgba(255,240,180,0.92);
+  flex-shrink: 0;
+  max-width: 34%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.storm-log-stats {
+  font-size: 0.72rem;
+  color: rgba(255,230,120,0.75);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  text-align: right;
+}
+
+.storm-log-row .bsc-map { margin: 0 0.85rem 0.85rem; }
+
+.storm-log-loading {
+  padding: 1rem;
+  text-align: center;
+  color: rgba(255,220,0,0.5);
+}
+
+@media (max-width: 640px) {
+  .storm-log-head { flex-wrap: wrap; gap: 0.3rem 0.6rem; }
+  .storm-log-country { width: auto; }
+  .storm-log-name { max-width: 100%; }
+  .storm-log-stats { margin-left: 0; text-align: left; width: 100%; }
+  .storm-log-datenav { width: 100%; }
+}
+
 .detail-filters {
   display: flex;
   align-items: center;
@@ -1316,9 +1494,10 @@ html, body {
 }
 
 
-/* hide desktop popovers and separator on mobile — drawer handles it */
+/* hide desktop popovers, page links and separator on mobile — drawer handles it */
 @media (max-width: 640px) {
   .settings-btn-wrap { display: none; }
+  .navbar-page-link { display: none; }
   .navbar-sep { display: none; }
 }
 

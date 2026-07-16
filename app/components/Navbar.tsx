@@ -8,7 +8,7 @@ import { useTranslations } from 'next-intl';
 import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
-import { useWind } from '../context/WindContext';
+import { useCountryTooltip } from '../context/TooltipContext';
 
 const StormActivity = dynamic(() => import('./StormActivity'), { ssr: false });
 
@@ -133,13 +133,15 @@ export default function Navbar() {
   const { display, connected, viewers } = useNavCount();
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
-  const { enabled: windEnabled, toggle: toggleWind } = useWind();
+  const { enabled: tooltipEnabled, toggle: toggleTooltip } = useCountryTooltip();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
 
   const tabs = [
-    { href: '/',      label: t('strikemap') },
-    { href: '/stats', label: t('archive') },
+    { href: '/',        label: t('strikemap') },
+    { href: '/stats',   label: t('archive') },
+    { href: '/storms',  label: t('storms') },
+    { href: '/records', label: t('records') },
   ];
 
   const langButtons = LOCALES.map(l => (
@@ -176,9 +178,9 @@ export default function Navbar() {
         <input type="checkbox" checked={stormOpen} onChange={() => setStormOpen(o => { const next = !o; localStorage.setItem('stormOpen', String(next)); return next; })} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
-      <label className="settings-row" aria-label={t('toggleWind')}>
-        <span className="settings-row-label">{t('wind')}</span>
-        <input type="checkbox" checked={windEnabled} onChange={toggleWind} />
+      <label className="settings-row">
+        <span className="settings-row-label">{t('countryTooltip')}</span>
+        <input type="checkbox" checked={tooltipEnabled} onChange={toggleTooltip} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
     </div>
@@ -192,12 +194,24 @@ export default function Navbar() {
           <span className="site-title">Lightning Stats</span>
         </Link>
 
-        {/* Desktop archive link */}
+        {/* Desktop page links — the mobile drawer covers navigation on phones */}
         <Link
           href="/stats"
-          className={`settings-btn${path === '/stats' ? ' active' : ''}`}
+          className={`settings-btn navbar-page-link${path === '/stats' ? ' active' : ''}`}
         >
           {t('archive')}
+        </Link>
+        <Link
+          href="/storms"
+          className={`settings-btn navbar-page-link${path === '/storms' ? ' active' : ''}`}
+        >
+          {t('storms')}
+        </Link>
+        <Link
+          href="/records"
+          className={`settings-btn navbar-page-link${path === '/records' ? ' active' : ''}`}
+        >
+          {t('records')}
         </Link>
 
         <div className="navbar-sep" aria-hidden="true" />

@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import 'leaflet/dist/leaflet.css';
 import type { Strike } from '../hooks/useBlitzortung';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
 import { ageColor } from '../lib/ageGradient';
 import { useHeatmap } from '../context/HeatmapContext';
-import { useWind } from '../context/WindContext';
+import { useCountryTooltip } from '../context/TooltipContext';
+import { useCountryName } from '../hooks/useCountryName';
 
 interface FlashRing {
   nx: number;
@@ -35,41 +37,6 @@ function mercNY(lat: number): number {
   return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
 }
 
-interface WindParticle {
-  x: number;
-  y: number;
-  trail: [number, number][];
-  age: number;
-  maxAge: number;
-}
-
-interface WindGridData {
-  points: { u: number; v: number }[];
-  cols: number;
-  rows: number;
-  south: number;
-  north: number;
-  west: number;
-  east: number;
-}
-
-function interpWind(lat: number, lng: number, grid: WindGridData): { u: number; v: number } {
-  const { points, cols, rows, south, north, west, east } = grid;
-  const tx = (lng - west) / (east - west) * (cols - 1);
-  const ty = (north - lat) / (north - south) * (rows - 1);
-  const x0 = Math.max(0, Math.min(cols - 2, Math.floor(tx)));
-  const x1 = x0 + 1;
-  const y0 = Math.max(0, Math.min(rows - 2, Math.floor(ty)));
-  const y1 = y0 + 1;
-  const fx = Math.max(0, Math.min(1, tx - x0));
-  const fy = Math.max(0, Math.min(1, ty - y0));
-  const g = (r: number, c: number) => points[r * cols + c] ?? { u: 0, v: 0 };
-  return {
-    u: (1-fx)*(1-fy)*g(y0,x0).u + fx*(1-fy)*g(y0,x1).u + (1-fx)*fy*g(y1,x0).u + fx*fy*g(y1,x1).u,
-    v: (1-fx)*(1-fy)*g(y0,x0).v + fx*(1-fy)*g(y0,x1).v + (1-fx)*fy*g(y1,x0).v + fx*fy*g(y1,x1).v,
-  };
-}
-
 interface CellData {
   id: string;
   col: number;
@@ -96,12 +63,6 @@ interface MapState {
   ready: boolean;
   heatCanvas: HTMLCanvasElement | null;
   heatCtx: CanvasRenderingContext2D | null;
-  windCanvas: HTMLCanvasElement | null;
-  windCtx: CanvasRenderingContext2D | null;
-  windParticles: WindParticle[];
-  windScreenGrid: { dxdy: Float32Array; cols: number; rows: number; cell: number } | null;
-  windWasActive: boolean;
-  buildScreenGrid: (() => void) | null;
   dpr: number;
   drawHeatmap: (() => void) | null;
 }
@@ -181,13 +142,8 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const lastTickRef = useRef(0);
 
   const { enabled: heatmapEnabled } = useHeatmap();
-  const { enabled: windEnabled } = useWind();
   const heatmapEnabledRef = useRef(heatmapEnabled);
   heatmapEnabledRef.current = heatmapEnabled;
-  const windEnabledRef = useRef(windEnabled);
-  windEnabledRef.current = windEnabled;
-  const windGridRef = useRef<WindGridData | null>(null);
-  const windFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live strikes from SSE, pruned to the 30-min window
   const heatmapBufferRef = useRef<HeatPoint[]>([]);
@@ -200,6 +156,26 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const selectStartRef = useRef<{ x: number; y: number } | null>(null);
   const selectRectRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
+
+  // Country-under-cursor tooltip with today's strike count
+  const { enabled: tooltipEnabled } = useCountryTooltip();
+  const tooltipEnabledRef = useRef(tooltipEnabled);
+  tooltipEnabledRef.current = tooltipEnabled;
+  const [tooltip, setTooltip] = useState<{ cc: string; today: number } | null>(null);
+  const tooltipPosRef = useRef({ x: 0, y: 0 });
+  const tooltipDivRef = useRef<HTMLDivElement | null>(null);
+  const tm = useTranslations('map');
+  const countryName = useCountryName();
+
+  // Follows the cursor without re-rendering, flipping away from the edges
+  const placeTooltip = (el: HTMLDivElement, x: number, y: number) => {
+    const parent = containerRef.current;
+    const flipX = parent ? x > parent.offsetWidth - 190 : false;
+    const flipY = parent ? y > parent.offsetHeight - 90 : false;
+    el.style.left = `${x + (flipX ? -14 : 14)}px`;
+    el.style.top = `${y + (flipY ? -14 : 14)}px`;
+    el.style.transform = `translate(${flipX ? '-100%' : '0'}, ${flipY ? '-100%' : '0'})`;
+  };
   const [binLocked, setBinLocked] = useState(() =>
     typeof window !== 'undefined' && localStorage.getItem('gridBinLocked') === 'true'
   );
@@ -287,8 +263,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     processed: new Set(),
     heatmapTimer: null,
     rings: [], liveDots: [], rafId: null, ready: false,
-    heatCanvas: null, heatCtx: null, windCanvas: null, windCtx: null,
-    windParticles: [], windScreenGrid: null, windWasActive: false, buildScreenGrid: null,
+    heatCanvas: null, heatCtx: null,
     dpr: 1, drawHeatmap: null,
   });
 
@@ -314,44 +289,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       });
       map.zoomControl.setPosition('bottomright');
 
-      const scheduleWindFetch = () => {
-        if (windFetchTimerRef.current) clearTimeout(windFetchTimerRef.current);
-        windFetchTimerRef.current = setTimeout(() => {
-          if (!windEnabledRef.current) return;
-          const b = map.getBounds();
-          const south = Math.max(-85, b.getSouth());
-          const north = Math.min(85, b.getNorth());
-          const west = b.getWest();
-          const east = b.getEast();
-          const COLS = 10, ROWS = 6;
-          const lats: string[] = [], lons: string[] = [];
-          for (let r = 0; r < ROWS; r++) {
-            const lat = south + (north - south) * r / (ROWS - 1);
-            for (let c = 0; c < COLS; c++) {
-              lats.push(lat.toFixed(3));
-              lons.push((west + (east - west) * c / (COLS - 1)).toFixed(3));
-            }
-          }
-          fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${lats.join(',')}&longitude=${lons.join(',')}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=UTC`
-          )
-            .then(r => r.json())
-            .then(data => {
-              const arr = Array.isArray(data) ? data : [data];
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const points = arr.map((item: any) => {
-                const speed = item?.current?.wind_speed_10m ?? 0;
-                const dir = item?.current?.wind_direction_10m ?? 0;
-                const rad = (dir * Math.PI) / 180;
-                return { u: -speed * Math.sin(rad), v: -speed * Math.cos(rad) };
-              });
-              windGridRef.current = { points, cols: COLS, rows: ROWS, south, north, west, east };
-              buildScreenGrid();
-            })
-            .catch(() => {});
-        }, 600);
-      };
-
       map.on('moveend zoomend', () => {
         const c = map.getCenter();
         const z = map.getZoom();
@@ -359,8 +296,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
         setZoom(z);
         s.drawHeatmap?.();
         scheduleFetchViewport();
-        scheduleWindFetch();
-        if (windGridRef.current) buildScreenGrid(); // reproject on pan/zoom
       });
 
       map.on('dragend', () => { lastDragEndRef.current = Date.now(); });
@@ -420,50 +355,16 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
         );
       });
 
-      // ── Wind particle canvas (z-index 402, above dot layer) ──
-      const windCanvas = document.createElement('canvas');
-      windCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:402;';
-      container.appendChild(windCanvas);
-      s.windCanvas = windCanvas;
-      s.windCtx = windCanvas.getContext('2d')!;
-
       // ── Strike ring overlay canvas (z-index 450) ──
       const overlay = document.createElement('canvas');
       overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:450;';
       container.appendChild(overlay);
-
-      const WIND_N = 150;
-      const WIND_TRAIL = 5;
-      const WIND_SCALE = 0.4;
-      const WIND_CELL = 50; // CSS px — screen grid cell size
-
-      // Precompute a screen-space wind grid so the RAF loop never calls containerPointToLatLng
-      const buildScreenGrid = () => {
-        const geo = windGridRef.current;
-        if (!geo) { s.windScreenGrid = null; return; }
-        const css_w = container.offsetWidth;
-        const css_h = container.offsetHeight;
-        const cols = Math.ceil(css_w / WIND_CELL) + 2;
-        const rows = Math.ceil(css_h / WIND_CELL) + 2;
-        const dxdy = new Float32Array(cols * rows * 2);
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            const latlng = map.containerPointToLatLng([c * WIND_CELL, r * WIND_CELL]);
-            const { u, v } = interpWind(latlng.lat, latlng.lng, geo);
-            dxdy[(r * cols + c) * 2    ] = u * WIND_SCALE;
-            dxdy[(r * cols + c) * 2 + 1] = -v * WIND_SCALE;
-          }
-        }
-        s.windScreenGrid = { dxdy, cols, rows, cell: WIND_CELL };
-      };
-      s.buildScreenGrid = buildScreenGrid;
 
       const sizeCanvases = () => {
         const w = container.offsetWidth * dpr;
         const h = container.offsetHeight * dpr;
         overlay.width = w;   overlay.height = h;
         heatCanvas.width = w; heatCanvas.height = h;
-        windCanvas.width = w; windCanvas.height = h;
       };
       sizeCanvases();
       const ro = new ResizeObserver(sizeCanvases);
@@ -705,16 +606,14 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       s.heatmapTimer = setInterval(() => { if (!document.hidden) s.drawHeatmap?.(); }, 5_000);
 
       // ── Ring animation RAF loop ──
-      // Full 60fps only while rings animate, wind is on, or the map is moving.
-      // Otherwise the overlay only holds slow-fading dots — 4fps is plenty.
+      // Full 60fps only while rings animate or the map is moving. Otherwise
+      // the overlay only holds slow-fading dots — 4fps is plenty.
       const ctx = overlay.getContext('2d')!;
       let lastMoveAt = 0;
       map.on('move', () => { lastMoveAt = performance.now(); });
       let lastOverlayDraw = 0;
       const drawRings = (now: number) => {
         const animating = s.rings.length > 0
-          || (windEnabledRef.current && s.windScreenGrid)
-          || s.windWasActive
           || now - lastMoveAt < 300;
         if (!animating && now - lastOverlayDraw < 250) {
           s.rafId = requestAnimationFrame(drawRings);
@@ -797,74 +696,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           ctx.restore();
         }
 
-        // Wind particle layer — screen-space grid lookup, one stroke per particle
-        if (s.windCanvas && s.windCtx) {
-          const wCtx = s.windCtx;
-          const wCnv = s.windCanvas;
-          const sg = s.windScreenGrid;
-          if (windEnabledRef.current && sg) {
-            const css_w = wCnv.width / dpr;
-            const css_h = wCnv.height / dpr;
-            s.windWasActive = true;
-
-            if (s.windParticles.length === 0) {
-              for (let i = 0; i < WIND_N; i++) {
-                s.windParticles.push({
-                  x: Math.random() * css_w,
-                  y: Math.random() * css_h,
-                  trail: [],
-                  age: Math.floor(Math.random() * 100),
-                  maxAge: 80 + Math.floor(Math.random() * 160),
-                });
-              }
-            }
-
-            wCtx.clearRect(0, 0, wCnv.width, wCnv.height);
-            wCtx.save();
-            wCtx.scale(dpr, dpr);
-            wCtx.strokeStyle = 'rgba(180,220,255,0.4)';
-            wCtx.lineWidth = 1;
-            wCtx.lineCap = 'round';
-
-            for (const p of s.windParticles) {
-              // Look up precomputed screen-space wind (no Leaflet calls per frame)
-              const ci = Math.max(0, Math.min(sg.cols - 1, Math.floor(p.x / sg.cell)));
-              const ri = Math.max(0, Math.min(sg.rows - 1, Math.floor(p.y / sg.cell)));
-              const base = (ri * sg.cols + ci) * 2;
-              const dx = sg.dxdy[base], dy = sg.dxdy[base + 1];
-
-              p.trail.push([p.x, p.y]);
-              if (p.trail.length > WIND_TRAIL) p.trail.shift();
-
-              p.x += dx;
-              p.y += dy;
-              p.age++;
-
-              if (p.x < -5 || p.x > css_w + 5 || p.y < -5 || p.y > css_h + 5 || p.age > p.maxAge) {
-                p.x = Math.random() * css_w;
-                p.y = Math.random() * css_h;
-                p.trail = [];
-                p.age = 0;
-                p.maxAge = 80 + Math.floor(Math.random() * 160);
-                continue;
-              }
-
-              if (p.trail.length < 2) continue;
-              // One stroke per particle (not per segment) — avoids 150k GPU state changes/sec
-              wCtx.beginPath();
-              wCtx.moveTo(p.trail[0][0], p.trail[0][1]);
-              for (let i = 1; i < p.trail.length; i++) wCtx.lineTo(p.trail[i][0], p.trail[i][1]);
-              wCtx.stroke();
-            }
-
-            wCtx.restore();
-          } else if (s.windWasActive) {
-            // Only clear when transitioning from active → inactive
-            wCtx.clearRect(0, 0, wCnv.width, wCnv.height);
-            s.windWasActive = false;
-          }
-        }
-
         s.rafId = requestAnimationFrame(drawRings);
       };
       s.rafId = requestAnimationFrame(drawRings);
@@ -880,12 +711,82 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       if (s.heatmapTimer) clearInterval(s.heatmapTimer);
       if (s.rafId !== null) cancelAnimationFrame(s.rafId);
       if (flashRafRef.current !== null) cancelAnimationFrame(flashRafRef.current);
-      if (windFetchTimerRef.current) clearTimeout(windFetchTimerRef.current);
       s.map?.remove();
       s.map = null;
       s.ready = false;
     };
   }, []);
+
+  // Country tooltip: stays visible while the mouse moves, updating as the
+  // cursor crosses borders. Position follows every move via direct DOM writes;
+  // country lookups are throttled to one per 150 ms (cache absorbs most).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let trailing: ReturnType<typeof setTimeout> | null = null;
+    let lastLookup = 0;
+    let ctrl: AbortController | null = null;
+    // ~10 km grid — country lookups repeat constantly while roaming one region
+    const cache = new Map<string, { cc: string | null; today: number; ts: number }>();
+
+    const lookup = () => {
+      const s = stateRef.current;
+      if (!s.map || !tooltipEnabledRef.current) return;
+      lastLookup = performance.now();
+      const { x, y } = tooltipPosRef.current;
+      const ll = s.map.containerPointToLatLng([x, y]);
+      if (Math.abs(ll.lat) > 85) { setTooltip(null); return; }
+      const key = `${ll.lat.toFixed(1)}:${ll.lng.toFixed(1)}`;
+      const hit = cache.get(key);
+      if (hit && Date.now() - hit.ts < 60_000) {
+        setTooltip(hit.cc ? { cc: hit.cc, today: hit.today } : null);
+        return;
+      }
+      ctrl?.abort();
+      ctrl = new AbortController();
+      fetch(`/api/geo?lat=${ll.lat.toFixed(4)}&lon=${ll.lng.toFixed(4)}`, { signal: ctrl.signal })
+        .then(r => r.json())
+        .then((d: { cc: string | null; today: number }) => {
+          cache.set(key, { ...d, ts: Date.now() });
+          setTooltip(d.cc ? { cc: d.cc, today: d.today } : null);
+        })
+        .catch(() => {});
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!tooltipEnabledRef.current) return;
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      tooltipPosRef.current = { x, y };
+      if (tooltipDivRef.current) placeTooltip(tooltipDivRef.current, x, y);
+
+      const since = performance.now() - lastLookup;
+      if (since >= 150) {
+        lookup();
+      } else if (!trailing) {
+        trailing = setTimeout(() => { trailing = null; lookup(); }, 150 - since);
+      }
+    };
+    const onLeave = () => {
+      if (trailing) { clearTimeout(trailing); trailing = null; }
+      setTooltip(null);
+    };
+
+    container.addEventListener('mousemove', onMove);
+    container.addEventListener('mouseleave', onLeave);
+    return () => {
+      container.removeEventListener('mousemove', onMove);
+      container.removeEventListener('mouseleave', onLeave);
+      if (trailing) clearTimeout(trailing);
+      ctrl?.abort();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!tooltipEnabled) setTooltip(null);
+  }, [tooltipEnabled]);
 
   // Fly to a location when requested elsewhere in the UI (e.g. storm panel),
   // highlighting the storm extent with a circle that fades out after 10 s
@@ -1078,49 +979,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
 
   useEffect(() => {
     const s = stateRef.current;
-    if (!windEnabled) {
-      windGridRef.current = null;
-      s.windScreenGrid = null;
-      s.windParticles = [];
-      return;
-    }
-    if (!s.map) return;
-    const b = s.map.getBounds();
-    const south = Math.max(-85, b.getSouth());
-    const north = Math.min(85, b.getNorth());
-    const west = b.getWest();
-    const east = b.getEast();
-    const COLS = 10, ROWS = 6;
-    const lats: string[] = [], lons: string[] = [];
-    for (let r = 0; r < ROWS; r++) {
-      const lat = south + (north - south) * r / (ROWS - 1);
-      for (let c = 0; c < COLS; c++) {
-        lats.push(lat.toFixed(3));
-        lons.push((west + (east - west) * c / (COLS - 1)).toFixed(3));
-      }
-    }
-    fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lats.join(',')}&longitude=${lons.join(',')}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=UTC`
-    )
-      .then(r => r.json())
-      .then(data => {
-        const arr = Array.isArray(data) ? data : [data];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const points = arr.map((item: any) => {
-          const speed = item?.current?.wind_speed_10m ?? 0;
-          const dir = item?.current?.wind_direction_10m ?? 0;
-          const rad = (dir * Math.PI) / 180;
-          return { u: -speed * Math.sin(rad), v: -speed * Math.cos(rad) };
-        });
-        windGridRef.current = { points, cols: COLS, rows: ROWS, south, north, west, east };
-        s.buildScreenGrid?.();
-      })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windEnabled]);
-
-  useEffect(() => {
-    const s = stateRef.current;
     if (!s.ready || strikes.length === 0) return;
 
     let scheduledTicks = 0;
@@ -1201,6 +1059,18 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           background: '#0a0a0f', zIndex: 9999,
         }}>
           <span style={{ color: '#888', fontSize: '0.95rem', letterSpacing: '0.05em' }}>Loading strikes…</span>
+        </div>
+      )}
+      {tooltip && (
+        <div
+          className="country-tooltip"
+          ref={el => {
+            tooltipDivRef.current = el;
+            if (el) placeTooltip(el, tooltipPosRef.current.x, tooltipPosRef.current.y);
+          }}
+        >
+          <span className="country-tooltip-name">{countryName(tooltip.cc)}</span>
+          <span className="country-tooltip-count">{tm('strikesToday', { count: tooltip.today })}</span>
         </div>
       )}
       {zoom !== null && (

@@ -39,7 +39,7 @@ export default function OpengraphImage() {
             display: 'flex',
           }}
         >
-          Real-time global lightning map & discharge tracker
+          Real-time global lightning map & strike tracker
         </div>
       </div>
     ),

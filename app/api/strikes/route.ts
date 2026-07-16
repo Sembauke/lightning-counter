@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, hasTimestampBurst, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, hasTimestampBurst, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -127,6 +127,12 @@ interface TrackedStorm {
   peakCount: number;
   peakRate: number;
   traveledKm: number;
+  // Travel is measured as displacement between 5-minute strides of the
+  // footprint center: per-pass hops are noise-dominated (a 50 km/h storm moves
+  // only ~0.4 km per 30 s pass, far less than window jitter), while over a
+  // stride real drift adds up and jitter averages out.
+  travelAnchor: { lat: number; lon: number } | null;
+  posBuf: Array<{ lat: number; lon: number }>;
   lastSeen: number;
   // Full-life strike accumulation for the replay: passes overlap, so only
   // strikes newer than lastStrikeTime get appended; keepEvery thins the
@@ -142,6 +148,19 @@ const trackedStorms: TrackedStorm[] = [];
 const STORM_MATCH_KM = 60;
 // Drop a storm after missing ~3 passes below the threshold
 const STORM_DROP_MS = 100_000;
+// No storm system moves faster than this — lifetime cap on distance traveled
+const STORM_MAX_KMH = 120;
+// Travel stride: passes per measurement, and the displacement band that counts
+// as real drift (≥3 km ≈ 36 km/h sustained; >12 km ≈ re-merge, not motion)
+const TRAVEL_STRIDE_PASSES = 10;
+const TRAVEL_MIN_KM = 3;
+const TRAVEL_MAX_KM = 12;
+
+function meanPos(points: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
+  let lat = 0, lon = 0;
+  for (const p of points) { lat += p.lat; lon += p.lon; }
+  return { lat: lat / points.length, lon: lon / points.length };
+}
 const STRIKE_SAMPLE_MAX = 4000;
 // Cap on a storm's accumulated replay strikes; halved (and thinned) on overflow
 const ALL_STRIKES_MAX = 24_000;
@@ -155,6 +174,17 @@ function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): numb
 
 function roundPt(m: { lat: number; lon: number; time: number }): StormStrike {
   return [Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time];
+}
+
+function footprintCenter(members: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const m of members) {
+    if (m.lat < minLat) minLat = m.lat;
+    if (m.lat > maxLat) maxLat = m.lat;
+    if (m.lon < minLon) minLon = m.lon;
+    if (m.lon > maxLon) maxLon = m.lon;
+  }
+  return { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
 }
 
 function sampleCell(members: Array<{ lat: number; lon: number; time: number }>): StormStrike[] {
@@ -218,11 +248,19 @@ setInterval(() => {
         }
 
         const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
+        const foot = footprintCenter(cell.members);
         if (best) {
-          // Count a hop as travel only when it looks like physical storm motion:
-          // sub-2km is window jitter, >15km per 30s pass (~180 km/h) is cluster
-          // growth or re-merging shifting the centroid, not the storm moving
-          if (bestKm >= 2 && bestKm <= 15) best.traveledKm += bestKm;
+          best.posBuf.push(foot);
+          if (best.posBuf.length >= TRAVEL_STRIDE_PASSES) {
+            // Smooth the stride endpoint over its last few passes
+            const cur = meanPos(best.posBuf.slice(-3));
+            if (best.travelAnchor) {
+              const hop = kmBetween(best.travelAnchor.lat, best.travelAnchor.lon, cur.lat, cur.lon);
+              if (hop >= TRAVEL_MIN_KM && hop <= TRAVEL_MAX_KM) best.traveledKm += hop;
+            }
+            best.travelAnchor = cur;
+            best.posBuf = [];
+          }
           best.lat = cell.lat;
           best.lon = cell.lon;
           best.city = city;
@@ -244,6 +282,7 @@ setInterval(() => {
             lat: cell.lat, lon: cell.lon, city,
             peakCount: cell.count, peakRate: cell.rate,
             traveledKm: 0,
+            travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
             lastSeen: nowMs,
             allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
           };
@@ -259,16 +298,21 @@ setInterval(() => {
     const records: BiggestStorm[] = [];
     for (const st of trackedStorms) {
       if (st.lastSeen !== nowMs) continue;
+      // Physical backstop: accumulated hops can never exceed what a real storm
+      // system could cover in this lifetime
+      const maxTravel = ((st.lastSeen - st.startTime) / 3_600_000) * STORM_MAX_KMH;
       records.push({
         code: st.cc, count: st.peakCount, rate: st.peakRate,
         lat: st.lat, lon: st.lon, city: st.city, date: currentDay,
         originLat: st.originLat, originLon: st.originLon, originCity: st.originCity,
         startTime: st.startTime, endTime: st.lastSeen, stormKey: st.key,
-        traveledKm: Math.round(st.traveledKm), totalCount: st.totalStrikes,
+        traveledKm: Math.round(Math.min(st.traveledKm, maxTravel)), totalCount: st.totalStrikes,
         strikes: st.allStrikes,
       });
     }
     upsertBiggestStorms(records);
+    upsertStormRecords(records);
+    upsertStorms(records);
 
     // Expire storms that fell below the threshold for several passes
     let i = trackedStorms.length;
@@ -285,7 +329,10 @@ setInterval(() => {
 }, 5_000);
 
 setInterval(() => {
-  try { pruneGridStrikes(); } catch (err) { console.error('[db] prune failed:', err); }
+  try {
+    pruneGridStrikes();
+    pruneStormStrikes();
+  } catch (err) { console.error('[db] prune failed:', err); }
 }, 60 * 60 * 1000);
 
 // ── SSE endpoint ───────────────────────────────────────────────────────

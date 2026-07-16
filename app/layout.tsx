@@ -4,7 +4,7 @@ import Navbar from './components/Navbar';
 import { SoundProvider } from './context/SoundContext';
 import { LocaleProvider } from './context/LocaleContext';
 import { HeatmapProvider } from './context/HeatmapContext';
-import { WindProvider } from './context/WindContext';
+import { TooltipProvider } from './context/TooltipContext';
 import { SITE_URL as BASE } from './lib/site';
 
 export const metadata: Metadata = {
@@ -14,9 +14,9 @@ export const metadata: Metadata = {
     template: '%s | Lightning Stats',
   },
   description:
-    'Watch lightning discharges happen live anywhere on Earth. Real-time data from Blitzortung.org with sound alerts, satellite imagery, and discharge statistics by country.',
+    'Watch lightning strikes happen live anywhere on Earth. Real-time data from Blitzortung.org with sound alerts, satellite imagery, and strike statistics by country.',
   keywords: [
-    'lightning tracker', 'real-time lightning map', 'live lightning discharges',
+    'lightning tracker', 'real-time lightning map', 'live lightning strikes',
     'blitzortung', 'storm tracker', 'weather map', 'lightning statistics',
     'thunder map', 'lightning counter', 'global lightning',
   ],
@@ -28,14 +28,14 @@ export const metadata: Metadata = {
     siteName: 'Lightning Stats',
     title: 'Lightning Stats — Real-Time Global Lightning Tracker',
     description:
-      'Watch lightning discharges happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
+      'Watch lightning strikes happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
     locale: 'en_US',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Lightning Stats — Real-Time Global Lightning Tracker',
     description:
-      'Watch lightning discharges happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
+      'Watch lightning strikes happen live anywhere on Earth. Real-time data, satellite view, and per-country statistics.',
   },
   robots: { index: true, follow: true },
   alternates: { canonical: BASE },
@@ -67,10 +67,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LocaleProvider>
           <SoundProvider>
             <HeatmapProvider>
-              <WindProvider>
+              <TooltipProvider>
                 <Navbar />
                 {children}
-              </WindProvider>
+              </TooltipProvider>
             </HeatmapProvider>
           </SoundProvider>
         </LocaleProvider>

@@ -29,9 +29,9 @@ export function generateMetadata({ params }: { params: { code: string } }): Meta
     return { title: 'Country Statistics', robots: { index: false } };
   }
 
-  const title = `Lightning in ${name} — Live Discharge Stats & History`;
+  const title = `Lightning in ${name} — Live Strike Stats & History`;
   const description =
-    `Live lightning activity in ${name}: today's discharge count, all-time daily record, ` +
+    `Live lightning activity in ${name}: today's strike count, all-time daily record, ` +
     `and day-by-day strike history from the Blitzortung.org detection network.`;
   const url = `${SITE_URL}/stats/${code}`;
 

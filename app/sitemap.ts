@@ -8,8 +8,10 @@ export const dynamic = 'force-dynamic';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const entries: MetadataRoute.Sitemap = [
-    { url: SITE_URL,            changeFrequency: 'always', priority: 1 },
-    { url: `${SITE_URL}/stats`, changeFrequency: 'always', priority: 0.8 },
+    { url: SITE_URL,              changeFrequency: 'always', priority: 1 },
+    { url: `${SITE_URL}/stats`,   changeFrequency: 'always', priority: 0.8 },
+    { url: `${SITE_URL}/records`, changeFrequency: 'always', priority: 0.7 },
+    { url: `${SITE_URL}/storms`,  changeFrequency: 'always', priority: 0.7 },
   ];
 
   try {

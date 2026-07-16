@@ -5,11 +5,11 @@ import { SITE_URL } from './lib/site';
 const FAQ: Array<{ q: string; a: string }> = [
   {
     q: 'How does the live lightning map work?',
-    a: 'The map shows lightning discharges detected by Blitzortung.org, a community network of thousands of volunteer-run receiver stations. Each station records the radio signal a discharge emits, and the network locates the strike from the tiny differences in arrival time. New strikes appear on the map within seconds.',
+    a: 'The map shows lightning strikes detected by Blitzortung.org, a community network of thousands of volunteer-run receiver stations. Each station records the radio signal a strike emits, and the network locates the strike from the tiny differences in arrival time. New strikes appear on the map within seconds.',
   },
   {
     q: 'How real-time is the data?',
-    a: 'Strikes typically appear one to a few seconds after they happen. The map always shows the last 30 minutes of activity, with the newest discharges drawn brightest and on top.',
+    a: 'Strikes typically appear one to a few seconds after they happen. The map always shows the last 30 minutes of activity, with the newest strikes drawn brightest and on top.',
   },
   {
     q: 'What do the dot colors mean?',
@@ -30,17 +30,17 @@ export default function Home() {
     <>
       <HomeClient />
       <section className="site-info">
-        <h1>Real-Time Global Lightning Map & Discharge Tracker</h1>
+        <h1>Real-Time Global Lightning Map & Strike Tracker</h1>
         <p>
-          Lightning Stats shows every lightning discharge on Earth as it happens, using live data
+          Lightning Stats shows every lightning strike on Earth as it happens, using live data
           from the <a href="https://www.blitzortung.org" target="_blank" rel="noreferrer">Blitzortung.org</a>{' '}
           community detection network. The map keeps a rolling 30-minute window: fresh strikes flash
           in bright yellow with an expanding ring, then fade toward red as they age.
         </p>
         <p>
           The map is drawn over live satellite imagery, and you can switch on a density heatmap
-          grid with per-cell strike counts, a wind-flow layer, and sound alerts that tick for
-          every discharge in view. The <Link href="/stats">discharge archive</Link> ranks live
+          grid with per-cell strike counts and sound alerts that tick for every strike in
+          view. The <Link href="/stats">strike archive</Link> ranks live
           totals by country and keeps daily counts, all-time records, and a browsable history
           for every country.
         </p>

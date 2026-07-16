@@ -11,8 +11,9 @@
     "heatmap": "Heatmap",
     "toggleHeatmap": "Toggle heatmap",
     "stormActivity": "Onweeractiviteit",
-    "wind": "Windlaag",
-    "toggleWind": "Windlaag in-/uitschakelen"
+    "records": "Records",
+    "storms": "Onweersbuien",
+    "countryTooltip": "Land-tooltip"
   },
   "stats": {
     "title": "Ontladingsarchief",
@@ -65,5 +66,23 @@
     "dirSW": "ZW",
     "dirW": "W",
     "dirNW": "NW"
+  },
+  "records": {
+    "title": "Onweersrecords",
+    "biggest": "Grootste onweersbui",
+    "longest": "Langstdurende bui",
+    "farthest": "Verst gereisd",
+    "fastest": "Snelst bewegend",
+    "dailyPeak": "Meeste ontladingen op één dag",
+    "noData": "Nog geen records — onweersbuien worden gevolgd."
+  },
+  "stormLog": {
+    "title": "Onweerslogboek",
+    "noStorms": "Geen onweersbuien gevolgd op deze dag.",
+    "searchPlaceholder": "Zoek land of stad…",
+    "stormsFound": "{count, plural, one {# bui} other {# buien}}"
+  },
+  "map": {
+    "strikesToday": "{count, plural, one {# inslag vandaag} other {# inslagen vandaag}}"
   }
 }
