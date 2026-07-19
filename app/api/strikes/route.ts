@@ -150,6 +150,9 @@ const STORM_MATCH_KM = 60;
 const STORM_DROP_MS = 100_000;
 // No storm system moves faster than this — lifetime cap on distance traveled
 const STORM_MAX_KMH = 120;
+// A storm enters the storm log only once its peak rate reaches this (strikes/min);
+// biggest-storm and record tables are exempt — they're superlatives, not a log
+const STORM_LOG_MIN_RATE = 150;
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >12 km ≈ re-merge, not motion)
 const TRAVEL_STRIDE_PASSES = 10;
@@ -312,7 +315,7 @@ setInterval(() => {
     }
     upsertBiggestStorms(records);
     upsertStormRecords(records);
-    upsertStorms(records);
+    upsertStorms(records.filter(r => r.rate >= STORM_LOG_MIN_RATE));
 
     // Expire storms that fell below the threshold for several passes
     let i = trackedStorms.length;
