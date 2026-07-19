@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
@@ -24,7 +24,6 @@ interface BiggestStorm {
 export default function CountryClient() {
   const params = useParams();
   const code = (params.code as string).toUpperCase();
-  const router = useRouter();
   const t = useTranslations('stats');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -125,10 +124,6 @@ export default function CountryClient() {
               }
             </tbody>
           </table>
-        </div>
-
-        <div className="detail-footer">
-          <button className="detail-close" onClick={() => router.push('/stats')}>← {t('back')}</button>
         </div>
       </div>
     </div>

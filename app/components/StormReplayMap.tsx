@@ -122,7 +122,9 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
       const lo = Math.floor(strikes.length * 0.1);
       const hi = Math.ceil(strikes.length * 0.9) - 1;
       const bounds = L.latLngBounds([lats[lo], lons[lo]], [lats[hi], lons[hi]]);
-      map.fitBounds(bounds, { animate: false });
+      // Pad the core so it doesn't touch the frame edges, and cap the zoom so
+      // compact storms don't fill the whole view with a handful of pixels.
+      map.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 8 });
       mapRef.current = map;
 
       // The view is static, so strikes can be projected to pixels once

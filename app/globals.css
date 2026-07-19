@@ -900,8 +900,9 @@ html, body {
 
 .storm-log-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.3rem 0.75rem;
   width: 100%;
   padding: 0.6rem 0.85rem;
   background: none;
@@ -917,32 +918,31 @@ html, body {
   align-items: center;
   gap: 0.45rem;
   flex-shrink: 0;
-  width: 150px;
   font-size: 0.8rem;
   color: rgba(255,220,0,0.8);
-  overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
+
+.storm-log-arrow { color: rgba(255,220,0,0.45); margin: 0 0.1rem; }
 
 .storm-log-name {
   font-size: 0.85rem;
   font-weight: 700;
   color: rgba(255,240,180,0.92);
-  flex-shrink: 0;
-  max-width: 34%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* Stats get their own line under country + name; chevron stays top right */
 .storm-log-stats {
+  order: 1;
+  width: 100%;
   font-size: 0.72rem;
   color: rgba(255,230,120,0.75);
   font-variant-numeric: tabular-nums;
-  margin-left: auto;
-  text-align: right;
 }
+.storm-log-head .storm-chevron { margin-left: auto; }
 
 .storm-log-row .bsc-map { margin: 0 0.85rem 0.85rem; }
 
@@ -953,10 +953,6 @@ html, body {
 }
 
 @media (max-width: 640px) {
-  .storm-log-head { flex-wrap: wrap; gap: 0.3rem 0.6rem; }
-  .storm-log-country { width: auto; }
-  .storm-log-name { max-width: 100%; }
-  .storm-log-stats { margin-left: 0; text-align: left; width: 100%; }
   .storm-log-datenav { width: 100%; }
 }
 
@@ -1032,33 +1028,6 @@ html, body {
 
 .detail-count { color: #ffe040; text-align: right; }
 
-.detail-footer {
-  flex-shrink: 0;
-  padding: 1rem 2rem;
-  border-top: 1px solid rgba(255,255,255,0.06);
-  max-width: 900px;
-  width: 100%;
-  align-self: center;
-  box-sizing: border-box;
-}
-
-.detail-close {
-  display: block;
-  width: 100%;
-  background: none;
-  border: 1px solid rgba(255,220,0,0.45);
-  border-radius: 6px;
-  color: #ffe040;
-  font-size: 0.9rem;
-  font-family: inherit;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 0.6rem 1rem;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.detail-close:hover { background: rgba(255,220,0,0.08); border-color: #ffe040; }
-
 @media (max-width: 640px) {
   .archive-detail {
     top: 96px;
@@ -1084,7 +1053,6 @@ html, body {
     width: 100%;
     box-sizing: border-box;
   }
-  .detail-footer { padding: 0.75rem; max-width: none; }
   .detail-body { padding: 0 0.75rem 0.5rem; align-items: stretch; }
 }
 

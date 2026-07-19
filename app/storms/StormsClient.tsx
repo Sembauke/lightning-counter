@@ -8,6 +8,9 @@ import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
 import type { StormLogRow, StormStrike } from '../lib/db';
 
+// The API adds originCode when a storm crossed a border since it started
+type StormRow = StormLogRow & { originCode?: string | null };
+
 const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { ssr: false });
 
 function todayUTC(): string {
@@ -21,7 +24,7 @@ export default function StormsClient() {
 
   const [date, setDate] = useState(todayUTC);
   const [search, setSearch] = useState('');
-  const [storms, setStorms] = useState<StormLogRow[]>([]);
+  const [storms, setStorms] = useState<StormRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ key: string; strikes: StormStrike[] } | null>(null);
@@ -31,7 +34,7 @@ export default function StormsClient() {
     setLoaded(false);
     const load = () => fetch(`/api/storms?date=${date}`)
       .then(r => r.json())
-      .then((rows: StormLogRow[]) => {
+      .then((rows: StormRow[]) => {
         if (cancelled) return;
         setStorms(rows);
         setLoaded(true);
@@ -114,11 +117,18 @@ export default function StormsClient() {
                 <div key={s.stormKey} className={`storm-log-row${open ? ' open' : ''}`}>
                   <button className="storm-log-head" onClick={() => setExpandedKey(open ? null : s.stormKey)}>
                     <span className="storm-log-country">
+                      {s.originCode && (
+                        <>
+                          <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
+                          {countryName(s.originCode)}
+                          <span className="storm-log-arrow">→</span>
+                        </>
+                      )}
                       <CountryFlag code={s.code} name={countryName(s.code)} />
                       {countryName(s.code)}
                     </span>
                     <span className="storm-log-name">
-                      ⚡ {s.originCity && s.city && s.originCity !== s.city
+                      {s.originCity && s.city && s.originCity !== s.city
                         ? ts('stormFromTo', { from: s.originCity, to: s.city })
                         : s.city
                           ? ts('stormNear', { city: s.city })

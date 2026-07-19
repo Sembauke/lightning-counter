@@ -33,7 +33,6 @@
     "minStrikes": "Min. rayos",
     "strikes": "Rayos",
     "noRecords": "No hay registros que coincidan con el filtro.",
-    "back": "Volver",
     "peakTooltip": "Mayor número de descargas registrado en un solo día",
     "biggestStorm": "Mayor tormenta registrada",
     "replay": "Reproducir"
