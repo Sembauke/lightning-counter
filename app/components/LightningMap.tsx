@@ -368,7 +368,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           'Tornado Warning': 4,
         };
         const sorted = [...features].sort((a, b) =>
-          (PRIORITY[a.properties?.event ?? ''] ?? 0) - (PRIORITY[b.properties?.event ?? ''] ?? 0));
+          (PRIORITY[(a.properties?.event as string) ?? ''] ?? 0) - (PRIORITY[(b.properties?.event as string) ?? ''] ?? 0));
 
         for (const f of sorted) {
           if (!f.geometry) continue;
