@@ -56,6 +56,7 @@
     "activeStorms": "{count, plural, one {# orage actif} other {# orages actifs}}",
     "strikesCount": "{count, plural, one {# impact} other {# impacts}}",
     "noCells": "Aucune cellule orageuse distincte pour le moment.",
+    "atSea": "Haute mer",
     "flyTo": "Voir sur la carte",
     "moving": "se déplace vers {dir}",
     "intensifying": "En intensification",

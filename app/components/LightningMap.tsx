@@ -155,6 +155,8 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   heatmapEnabledRef.current = heatmapEnabled;
   const { enabled: radarEnabled } = useRainRadar();
   const { enabled: stormRanksEnabled } = useStormRanks();
+  const stormRanksEnabledRef = useRef(stormRanksEnabled);
+  stormRanksEnabledRef.current = stormRanksEnabled;
   const { enabled: mapSearchEnabled } = useMapSearch();
   const [mapReady, setMapReady] = useState(false);
 
@@ -1085,9 +1087,9 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   useEffect(() => {
     const s = stateRef.current;
     if (!stormRanksEnabled) {
-      if (s.stormRankLabels) s.stormRankLabels.style.display = 'none';
+      s.stormRankCells = [];
+      if (s.stormRankLabels) s.stormRankLabels.innerHTML = '';
     } else {
-      if (s.stormRankLabels) s.stormRankLabels.style.display = '';
       s.reprojectRankLabels?.();
     }
   }, [stormRanksEnabled]);
@@ -1168,10 +1170,10 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   // div overlay at z=500, above the canvas layers (z=401/450) that beat Leaflet panes.
   useEffect(() => {
     const s = stateRef.current;
-    if (!s.ready) return;
+    if (!s.ready || !stormRanksEnabledRef.current) return;
     const STORM_WINDOW_MS = 5 * 60 * 1000;
     const cutoff = Date.now() - STORM_WINDOW_MS;
-    const recent = strikes.filter(sk => sk.time > cutoff && sk.cc);
+    const recent = strikes.filter(sk => sk.time > cutoff);
     const cells = detectStorms(recent, STORM_WINDOW_MS)
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);

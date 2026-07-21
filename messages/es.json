@@ -56,6 +56,7 @@
     "activeStorms": "{count, plural, one {# tormenta activa} other {# tormentas activas}}",
     "strikesCount": "{count, plural, one {# rayo} other {# rayos}}",
     "noCells": "No hay células de tormenta diferenciadas ahora mismo.",
+    "atSea": "Alta mar",
     "flyTo": "Ver en el mapa",
     "moving": "se desplaza hacia {dir}",
     "intensifying": "Intensificándose",

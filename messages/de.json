@@ -56,6 +56,7 @@
     "activeStorms": "{count, plural, one {# aktives Gewitter} other {# aktive Gewitter}}",
     "strikesCount": "{count, plural, one {# Einschlag} other {# Einschläge}}",
     "noCells": "Derzeit keine einzelnen Gewitterzellen.",
+    "atSea": "Offenes Meer",
     "flyTo": "Auf Karte zeigen",
     "moving": "zieht nach {dir}",
     "intensifying": "Nimmt zu",

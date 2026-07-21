@@ -56,6 +56,7 @@
     "activeStorms": "{count, plural, one {# active storm} other {# active storms}}",
     "strikesCount": "{count, plural, one {# strike} other {# strikes}}",
     "noCells": "No distinct storm cells right now.",
+    "atSea": "Open sea",
     "flyTo": "Show on map",
     "moving": "moving {dir}",
     "intensifying": "Intensifying",

@@ -11,6 +11,8 @@ import CountryFlag from './CountryFlag';
 const WINDOW_MS = 5 * 60 * 1000;
 const TOP_N = 15;
 
+const SEA = '--';
+
 interface StormEntry {
   cc: string;
   count: number;
@@ -59,24 +61,25 @@ export default function StormActivity() {
     const now = Date.now();
     const cutoff = now - WINDOW_MS;
     const counts: Record<string, number> = {};
+    let seaCount = 0;
     for (const s of strikes) {
-      if (s.time > cutoff && s.cc) {
-        counts[s.cc] = (counts[s.cc] ?? 0) + 1;
-      }
+      if (s.time <= cutoff) continue;
+      if (s.cc) counts[s.cc] = (counts[s.cc] ?? 0) + 1;
+      else seaCount++;
     }
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, TOP_N)
+    const list: StormEntry[] = Object.entries(counts)
       .map(([cc, count]) => ({ cc, count, rate: count / 5 }));
+    if (seaCount > 0) list.push({ cc: SEA, count: seaCount, rate: seaCount / 5 });
+    return list.sort((a, b) => b.count - a.count).slice(0, TOP_N);
   }, [strikes]);
 
   const cells = useMemo(() => {
     if (!expandedCc) return [];
     const cutoff = Date.now() - WINDOW_MS;
-    return detectStorms(
-      strikes.filter(s => s.cc === expandedCc && s.time > cutoff),
-      WINDOW_MS,
-    );
+    const subset = expandedCc === SEA
+      ? strikes.filter(s => !s.cc && s.time > cutoff)
+      : strikes.filter(s => s.cc === expandedCc && s.time > cutoff);
+    return detectStorms(subset, WINDOW_MS);
   }, [strikes, expandedCc]);
 
   function flyTo(lat: number, lon: number, radiusKm: number) {
@@ -109,21 +112,23 @@ export default function StormActivity() {
             </thead>
             <tbody>
               {storms.map(({ cc, count, rate }, i) => {
-                const peak = peakRates[cc];
+                const isSea = cc === SEA;
+                const peak = isSea ? undefined : peakRates[cc];
                 const isOpen = expandedCc === cc;
                 return (
                   <StormRow
                     key={cc}
                     rank={i + 1}
                     cc={cc}
-                    name={countryName(cc)}
+                    name={isSea ? t('atSea') : countryName(cc)}
+                    isSea={isSea}
                     count={count}
                     rate={rate}
                     peak={peak}
                     isOpen={isOpen}
                     onToggle={() => setExpandedCc(isOpen ? null : cc)}
                     cells={isOpen ? cells : null}
-                    cities={isOpen ? cities : null}
+                    cities={isOpen && !isSea ? cities : []}
                     onFlyTo={flyTo}
                   />
                 );
@@ -137,10 +142,11 @@ export default function StormActivity() {
   );
 }
 
-function StormRow({ rank, cc, name, count, rate, peak, isOpen, onToggle, cells, cities, onFlyTo }: {
+function StormRow({ rank, cc, name, isSea, count, rate, peak, isOpen, onToggle, cells, cities, onFlyTo }: {
   rank: number;
   cc: string;
   name: string;
+  isSea: boolean;
   count: number;
   rate: number;
   peak: number | undefined;
@@ -162,7 +168,7 @@ function StormRow({ rank, cc, name, count, rate, peak, isOpen, onToggle, cells, 
       >
         <td className="storm-col-rank storm-rank">{rank}</td>
         <td className="storm-col-country">
-          <CountryFlag code={cc} name={name} />
+          {isSea ? <span className="storm-sea-icon">🌊</span> : <CountryFlag code={cc} name={name} />}
           <span>{name}</span>
           <span className={`storm-chevron${isOpen ? ' open' : ''}`}>▾</span>
         </td>
@@ -190,7 +196,7 @@ function StormRow({ rank, cc, name, count, rate, peak, isOpen, onToggle, cells, 
                 <div className="storm-cells-empty">{t('noCells')}</div>
               ) : (
                 cells.map((cell, idx) => {
-                  const near = nearestCity(cities, cell.lat, cell.lon);
+                  const near = cities && cities.length > 0 ? nearestCity(cities, cell.lat, cell.lon) : null;
                   return (
                     <button
                       key={idx}
@@ -200,7 +206,7 @@ function StormRow({ rank, cc, name, count, rate, peak, isOpen, onToggle, cells, 
                     >
                       <span className="storm-cell-main">
                         <span className="storm-cell-name">
-                          ⚡ {near ? t('stormNear', { city: near.name }) : `${cell.lat.toFixed(1)}, ${cell.lon.toFixed(1)}`}
+                          ⚡ {near ? t('stormNear', { city: near.name }) : `${cell.lat.toFixed(2)}°, ${cell.lon.toFixed(2)}°`}
                         </span>
                         <span className="storm-cell-rate">
                           {fmtRate(cell.rate)}<span className="storm-rate-unit">/m</span>

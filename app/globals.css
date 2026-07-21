@@ -1182,6 +1182,8 @@ html, body {
   padding: 0.5rem 0.25rem;
 }
 
+.storm-sea-icon { font-size: 1rem; line-height: 1; flex-shrink: 0; }
+
 .storm-col-country {
   display: flex;
   align-items: center;
