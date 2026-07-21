@@ -166,7 +166,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const { enabled: tornadoEnabled } = useTornado();
   const [mapReady, setMapReady] = useState(false);
   const seenAlertIdsRef = useRef<Set<string>>(new Set());
-  const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; key: number }>>([]);
+  const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; lat: number; lon: number; key: number }>>([]);
 
   // Live strikes from SSE, pruned to the 30-min window
   const heatmapBufferRef = useRef<HeatPoint[]>([]);
@@ -1215,7 +1215,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       if (s.tornadoTooltip) s.tornadoTooltip.style.display = 'none';
     };
 
-    if (!tornadoEnabled) { clear(); seenAlertIdsRef.current.clear(); return; }
+    if (!tornadoEnabled) { clear(); seenAlertIdsRef.current.clear(); setAlertToasts([]); return; }
 
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       Notification.requestPermission().catch(() => {});
@@ -1245,15 +1245,25 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           }
           isFirstLoad = false;
         } else {
-          const newAlerts: Array<{ id: string; event: string; area: string }> = [];
+          const newAlerts: Array<{ id: string; event: string; area: string; lat: number; lon: number }> = [];
           for (const f of features) {
             const id = (f.properties?.id as string) ?? '';
             if (id && !seenAlertIdsRef.current.has(id)) {
               seenAlertIdsRef.current.add(id);
+              // Compute centroid from first polygon ring
+              let lat = 0, lon = 0, count = 0;
+              const coords: number[][] = f.geometry.type === 'Polygon'
+                ? (f.geometry.coordinates as number[][][])[0] ?? []
+                : f.geometry.type === 'MultiPolygon'
+                  ? ((f.geometry.coordinates as number[][][][])[0]?.[0] ?? [])
+                  : [];
+              for (const [lng, la] of coords) { lon += lng; lat += la; count++; }
               newAlerts.push({
                 id,
                 event: (f.properties?.event as string) ?? 'Alert',
                 area: ((f.properties?.areaDesc as string) ?? '').split(';')[0].trim(),
+                lat: count > 0 ? lat / count : 0,
+                lon: count > 0 ? lon / count : 0,
               });
             }
           }
@@ -1582,13 +1592,20 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           </label>
         </div>
       )}
-      {alertToasts.length > 0 && (
+      {tornadoEnabled && alertToasts.length > 0 && (
         <div className="alert-toasts">
           {alertToasts.map(toast => (
-            <div key={toast.key} className={`alert-toast alert-toast--${toast.event.toLowerCase().includes('tornado') ? 'tornado' : 'tstorm'}`}>
+            <div
+              key={toast.key}
+              className={`alert-toast alert-toast--${toast.event.toLowerCase().includes('tornado') ? 'tornado' : 'tstorm'}`}
+              onClick={() => {
+                if (toast.lat && toast.lon) stateRef.current.map?.flyTo([toast.lat, toast.lon], 8, { duration: 1.2 });
+              }}
+              style={{ cursor: 'pointer' }}
+            >
               <span className="alert-toast-event">{toast.event}</span>
               <span className="alert-toast-area">{toast.area}</span>
-              <button className="alert-toast-close" onClick={() => setAlertToasts(p => p.filter(t => t.key !== toast.key))}>×</button>
+              <button className="alert-toast-close" onClick={e => { e.stopPropagation(); setAlertToasts(p => p.filter(t => t.key !== toast.key)); }}>×</button>
             </div>
           ))}
         </div>
