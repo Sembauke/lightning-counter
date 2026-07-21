@@ -9,6 +9,9 @@ import { useSound } from '../context/SoundContext';
 import { useLocale, LOCALES, type Locale } from '../context/LocaleContext';
 import { useHeatmap } from '../context/HeatmapContext';
 import { useCountryTooltip } from '../context/TooltipContext';
+import { useRainRadar } from '../context/RainRadarContext';
+import { useStormRanks } from '../context/StormRanksContext';
+import { useMapSearch } from '../context/MapSearchContext';
 
 const StormActivity = dynamic(() => import('./StormActivity'), { ssr: false });
 
@@ -147,6 +150,9 @@ export default function Navbar() {
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
   const { enabled: tooltipEnabled, toggle: toggleTooltip } = useCountryTooltip();
+  const { enabled: radarEnabled, toggle: toggleRadar } = useRainRadar();
+  const { enabled: stormRanksEnabled, toggle: toggleStormRanks } = useStormRanks();
+  const { enabled: mapSearchEnabled, toggle: toggleMapSearch } = useMapSearch();
   const { locale, setLocale } = useLocale();
   const t = useTranslations('nav');
 
@@ -194,6 +200,21 @@ export default function Navbar() {
       <label className="settings-row">
         <span className="settings-row-label">{t('countryTooltip')}</span>
         <input type="checkbox" checked={tooltipEnabled} onChange={toggleTooltip} />
+        <span className="satellite-track"><span className="satellite-thumb" /></span>
+      </label>
+      <label className="settings-row">
+        <span className="settings-row-label">{t('rainRadar')}</span>
+        <input type="checkbox" checked={radarEnabled} onChange={toggleRadar} />
+        <span className="satellite-track"><span className="satellite-thumb" /></span>
+      </label>
+      <label className="settings-row">
+        <span className="settings-row-label">{t('stormRanks')}</span>
+        <input type="checkbox" checked={stormRanksEnabled} onChange={toggleStormRanks} />
+        <span className="satellite-track"><span className="satellite-thumb" /></span>
+      </label>
+      <label className="settings-row">
+        <span className="settings-row-label">{t('mapSearch')}</span>
+        <input type="checkbox" checked={mapSearchEnabled} onChange={toggleMapSearch} />
         <span className="satellite-track"><span className="satellite-thumb" /></span>
       </label>
     </div>

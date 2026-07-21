@@ -5,6 +5,9 @@ import { SoundProvider } from './context/SoundContext';
 import { LocaleProvider } from './context/LocaleContext';
 import { HeatmapProvider } from './context/HeatmapContext';
 import { TooltipProvider } from './context/TooltipContext';
+import { RainRadarProvider } from './context/RainRadarContext';
+import { StormRanksProvider } from './context/StormRanksContext';
+import { MapSearchProvider } from './context/MapSearchContext';
 import { SITE_URL as BASE } from './lib/site';
 
 export const metadata: Metadata = {
@@ -68,8 +71,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <SoundProvider>
             <HeatmapProvider>
               <TooltipProvider>
-                <Navbar />
-                {children}
+                <RainRadarProvider>
+                  <StormRanksProvider>
+                    <MapSearchProvider>
+                      <Navbar />
+                      {children}
+                    </MapSearchProvider>
+                  </StormRanksProvider>
+                </RainRadarProvider>
               </TooltipProvider>
             </HeatmapProvider>
           </SoundProvider>

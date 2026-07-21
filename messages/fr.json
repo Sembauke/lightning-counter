@@ -14,6 +14,9 @@
     "records": "Records",
     "storms": "Orages",
     "countryTooltip": "Info-bulle pays",
+    "rainRadar": "Radar pluie",
+    "stormRanks": "Classement orages",
+    "mapSearch": "Recherche de lieu",
     "tools": "Outils"
   },
   "stats": {

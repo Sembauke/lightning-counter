@@ -14,6 +14,9 @@
     "records": "Récords",
     "storms": "Tormentas",
     "countryTooltip": "Tooltip de país",
+    "rainRadar": "Radar de lluvia",
+    "stormRanks": "Ranking tormentas",
+    "mapSearch": "Buscar lugar",
     "tools": "Herramientas"
   },
   "stats": {

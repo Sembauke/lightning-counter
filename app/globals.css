@@ -1321,7 +1321,87 @@ html, body {
   letter-spacing: 0.03em;
 }
 
-/* Storm-extent highlight circle; lifetime matches the 10 s removal timer in LightningMap */
+/* Map location search */
+.map-search {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: min(340px, calc(100vw - 24px));
+}
+.map-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(6,6,14,0.88);
+  border: 1.5px solid rgba(255,220,0,0.4);
+  border-radius: 6px;
+  color: #ffe040;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.8rem;
+  padding: 7px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.map-search-input::placeholder { color: rgba(255,220,0,0.35); }
+.map-search-input:focus { border-color: rgba(255,220,0,0.75); }
+.map-search-results {
+  list-style: none;
+  margin: 3px 0 0;
+  padding: 0;
+  background: rgba(6,6,14,0.95);
+  border: 1.5px solid rgba(255,220,0,0.3);
+  border-radius: 6px;
+  overflow: hidden;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.map-search-result {
+  padding: 7px 12px;
+  font-size: 0.75rem;
+  color: rgba(255,220,0,0.85);
+  font-family: 'Courier New', Courier, monospace;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,220,0,0.08);
+  line-height: 1.35;
+}
+.map-search-result:last-child { border-bottom: none; }
+.map-search-result:hover { background: rgba(255,220,0,0.1); color: #ffe040; }
+
+.storm-rank-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6,6,14,0.9);
+  border: 1.5px solid rgba(255,220,0,0.75);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: 700;
+  color: #ffe040;
+  box-shadow: 0 0 8px rgba(255,220,0,0.4);
+  white-space: nowrap;
+  gap: 1px;
+}
+.storm-rank-num {
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+.storm-rank-trend[data-trend="up"]   { color: #4dff91; }
+.storm-rank-trend[data-trend="down"] { color: #ff6b6b; }
+.storm-rank-cc {
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+  line-height: 1.1;
+}
+.storm-rank-rate {
+  font-size: 0.55rem;
+  opacity: 0.7;
+  line-height: 1.1;
+}
+
 .storm-focus-circle {
   animation: storm-focus-fade 10s ease-in-out forwards;
 }

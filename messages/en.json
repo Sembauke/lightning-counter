@@ -14,6 +14,9 @@
     "records": "Records",
     "storms": "Storms",
     "countryTooltip": "Country tooltip",
+    "rainRadar": "Rain Radar",
+    "stormRanks": "Storm ranks",
+    "mapSearch": "Location search",
     "tools": "Tools"
   },
   "stats": {

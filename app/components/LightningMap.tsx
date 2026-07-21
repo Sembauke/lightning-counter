@@ -5,9 +5,13 @@ import { useTranslations } from 'next-intl';
 import 'leaflet/dist/leaflet.css';
 import type { Strike } from '../hooks/useBlitzortung';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
+import { detectStorms } from '../lib/stormClusters';
 import { ageColor } from '../lib/ageGradient';
 import { useHeatmap } from '../context/HeatmapContext';
 import { useCountryTooltip } from '../context/TooltipContext';
+import { useRainRadar } from '../context/RainRadarContext';
+import { useStormRanks } from '../context/StormRanksContext';
+import { useMapSearch } from '../context/MapSearchContext';
 import { useCountryName } from '../hooks/useCountryName';
 
 interface FlashRing {
@@ -65,6 +69,11 @@ interface MapState {
   heatCtx: CanvasRenderingContext2D | null;
   dpr: number;
   drawHeatmap: (() => void) | null;
+  stormRankLabels: HTMLDivElement | null;
+  stormRankCells: Array<{ lat: number; lon: number; rank: number; cc: string; rate: number; trend: 'up' | 'down' | 'steady'; drift: string | null }>;
+  reprojectRankLabels: (() => void) | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  radarLayer: any;
 }
 
 // Three stepped grid tiers, each with a fixed binZoom for geographic stability.
@@ -144,6 +153,10 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const { enabled: heatmapEnabled } = useHeatmap();
   const heatmapEnabledRef = useRef(heatmapEnabled);
   heatmapEnabledRef.current = heatmapEnabled;
+  const { enabled: radarEnabled } = useRainRadar();
+  const { enabled: stormRanksEnabled } = useStormRanks();
+  const { enabled: mapSearchEnabled } = useMapSearch();
+  const [mapReady, setMapReady] = useState(false);
 
   // Live strikes from SSE, pruned to the 30-min window
   const heatmapBufferRef = useRef<HeatPoint[]>([]);
@@ -265,6 +278,8 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     rings: [], liveDots: [], rafId: null, ready: false,
     heatCanvas: null, heatCtx: null,
     dpr: 1, drawHeatmap: null,
+    stormRankLabels: null, stormRankCells: [], reprojectRankLabels: null,
+    radarLayer: null,
   });
 
   useEffect(() => {
@@ -283,7 +298,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       const map = L.map(container, {
         center: savedView ? [savedView.lat, savedView.lng] : [20, 0],
         zoom: savedView ? savedView.zoom : 2,
-        minZoom: 2, maxZoom: 12,
+        minZoom: 2, maxZoom: 16,
         zoomControl: true, attributionControl: false,
         maxBounds: worldBounds, maxBoundsViscosity: 1.0,
       });
@@ -295,8 +310,11 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
         localStorage.setItem('mapView', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z }));
         setZoom(z);
         s.drawHeatmap?.();
+        s.reprojectRankLabels?.();
         scheduleFetchViewport();
       });
+
+      map.on('move', () => { s.reprojectRankLabels?.(); });
 
       map.on('dragend', () => { lastDragEndRef.current = Date.now(); });
 
@@ -305,10 +323,40 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       s.tileLayer = L.tileLayer(TILE_SAT.url, TILE_SAT.options).addTo(map);
       (map.getPanes().tilePane as HTMLElement).style.filter = TILE_DIM_FILTER;
 
+      map.createPane('radarPane');
+      (map.getPane('radarPane') as HTMLElement).style.zIndex = '210';
+      (map.getPane('radarPane') as HTMLElement).style.pointerEvents = 'none';
+
       map.createPane('labelsPane');
       (map.getPane('labelsPane') as HTMLElement).style.zIndex = '250';
       (map.getPane('labelsPane') as HTMLElement).style.pointerEvents = 'none';
       s.labelsLayer = L.tileLayer(TILE_LABELS_URL, { pane: 'labelsPane', maxZoom: 19, opacity: 0.75 }).addTo(map);
+
+      // Storm rank label overlay — a plain div sibling to the canvases at z=500,
+      // above the canvas overlays (z=401/450) which beat Leaflet's internal panes.
+      const rankDiv = document.createElement('div');
+      rankDiv.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:500;overflow:visible;';
+      container.appendChild(rankDiv);
+      s.stormRankLabels = rankDiv;
+
+      s.reprojectRankLabels = () => {
+        const div = s.stormRankLabels;
+        if (!div || !s.map) return;
+        div.innerHTML = '';
+        for (const cell of s.stormRankCells) {
+          const pt = s.map.latLngToContainerPoint([cell.lat, cell.lon]);
+          const el = document.createElement('div');
+          el.className = 'storm-rank-inner';
+          el.style.cssText = `position:absolute;left:${pt.x}px;top:${pt.y}px;transform:translate(-50%,-50%);`;
+          const trendIcon = cell.trend === 'up' ? '↑' : cell.trend === 'down' ? '↓' : '';
+          const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
+          const driftStr = cell.drift ?? '';
+          el.innerHTML = `<span class="storm-rank-num">#${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
+            + (cell.cc ? `<span class="storm-rank-cc">${cell.cc}${driftStr ? ` ${driftStr}` : ''}</span>` : '')
+            + `<span class="storm-rank-rate">${rateStr}</span>`;
+          div.appendChild(el);
+        }
+      };
 
       s.map = map;
 
@@ -701,6 +749,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       s.rafId = requestAnimationFrame(drawRings);
 
       s.ready = true;
+      setMapReady(true);
 
       // Always seed DB data on load
       fetchViewportRef.current?.();
@@ -977,6 +1026,72 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     s.drawHeatmap?.();
   }, [heatmapEnabled]);
 
+  // Rain radar overlay via RainViewer (free, no key required, ~10 min updates)
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s.ready) return;
+
+    if (!radarEnabled) {
+      if (s.radarLayer) { s.radarLayer.remove(); s.radarLayer = null; }
+      return;
+    }
+
+    let cancelled = false;
+    import('leaflet').then(async ({ default: L }) => {
+      if (cancelled || !s.map) return;
+      try {
+        const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+        const data = await res.json() as { host: string; radar: { past: Array<{ time: number; path: string }> } };
+        if (cancelled || !s.map) return;
+        const latest = data.radar.past[data.radar.past.length - 1];
+        if (!latest) return;
+        if (s.radarLayer) { s.radarLayer.remove(); s.radarLayer = null; }
+        const url = `${data.host}${latest.path}/256/{z}/{x}/{y}/4/1_1.png`;
+        s.radarLayer = L.tileLayer(url, {
+          opacity: 0.35,
+          maxNativeZoom: 6,
+          maxZoom: 16,
+          pane: 'radarPane',
+          attribution: 'Rain data © RainViewer',
+        }).addTo(s.map);
+      } catch { /* network errors are non-fatal */ }
+    });
+
+    // Refresh radar every 10 minutes
+    const timer = setInterval(() => {
+      if (!s.map || !s.ready) return;
+      import('leaflet').then(async ({ default: L }) => {
+        try {
+          const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+          const data = await res.json() as { host: string; radar: { past: Array<{ time: number; path: string }> } };
+          if (!s.map) return;
+          const latest = data.radar.past[data.radar.past.length - 1];
+          if (!latest) return;
+          if (s.radarLayer) { s.radarLayer.remove(); s.radarLayer = null; }
+          const url = `${data.host}${latest.path}/256/{z}/{x}/{y}/4/1_1.png`;
+          s.radarLayer = L.tileLayer(url, { opacity: 0.35, maxNativeZoom: 6, maxZoom: 16, pane: 'radarPane' }).addTo(s.map);
+        } catch { /* ignore */ }
+      });
+    }, 10 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      if (s.radarLayer) { s.radarLayer.remove(); s.radarLayer = null; }
+    };
+  }, [radarEnabled, mapReady]);
+
+  // Gate storm rank labels on the toggle
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!stormRanksEnabled) {
+      if (s.stormRankLabels) s.stormRankLabels.style.display = 'none';
+    } else {
+      if (s.stormRankLabels) s.stormRankLabels.style.display = '';
+      s.reprojectRankLabels?.();
+    }
+  }, [stormRanksEnabled]);
+
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready || strikes.length === 0) return;
@@ -1049,6 +1164,68 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     s.drawHeatmap?.();
   }, [strikes]);
 
+  // Rank labels — detect active storm cells and render numbered badges in a plain
+  // div overlay at z=500, above the canvas layers (z=401/450) that beat Leaflet panes.
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s.ready) return;
+    const STORM_WINDOW_MS = 5 * 60 * 1000;
+    const cutoff = Date.now() - STORM_WINDOW_MS;
+    const recent = strikes.filter(sk => sk.time > cutoff && sk.cc);
+    const cells = detectStorms(recent, STORM_WINDOW_MS)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20);
+
+    s.stormRankCells = cells.map((cell, i) => {
+      const ccCounts: Record<string, number> = {};
+      for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
+      const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0]?.toUpperCase() ?? '';
+      return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift };
+    });
+    s.reprojectRankLabels?.();
+  }, [strikes]);
+
+  // Location search
+  interface NominatimResult { place_id: number; display_name: string; lat: string; lon: string }
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) { setSearchResults([]); return; }
+    const id = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(q)}`, {
+          headers: { 'Accept-Language': 'en' },
+        });
+        const data: NominatimResult[] = await res.json();
+        setSearchResults(data);
+        setSearchOpen(true);
+      } catch { /* ignore */ }
+    }, 400);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setSearchOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [searchOpen]);
+
+  const flyToResult = (r: NominatimResult) => {
+    const map = stateRef.current.map;
+    if (!map) return;
+    map.flyTo([parseFloat(r.lat), parseFloat(r.lon)], 10, { duration: 1.2 });
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchOpen(false);
+  };
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', background: '#0a0a0f' }} />
@@ -1061,6 +1238,26 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           <span style={{ color: '#888', fontSize: '0.95rem', letterSpacing: '0.05em' }}>Loading strikes…</span>
         </div>
       )}
+      {mapSearchEnabled && <div className="map-search" ref={searchRef}>
+        <input
+          className="map-search-input"
+          type="text"
+          placeholder="Search location…"
+          value={searchQuery}
+          onChange={e => { setSearchQuery(e.target.value); if (e.target.value.trim().length >= 2) setSearchOpen(true); }}
+          onKeyDown={e => { if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); } }}
+        />
+        {searchOpen && searchResults.length > 0 && (
+          <ul className="map-search-results">
+            {searchResults.map(r => (
+              <li key={r.place_id} className="map-search-result" onMouseDown={() => flyToResult(r)}>
+                {r.display_name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>}
+
       {tooltip && (
         <div
           className="country-tooltip"
