@@ -18,8 +18,10 @@ function useNavCount() {
   const [display, setDisplay] = useState(0);
   const [connected, setConnected] = useState(false);
   const [viewers, setViewers] = useState(0);
+  const [strikeRate, setStrikeRate] = useState(0);
   const targetRef = useRef(0);
   const seededRef = useRef(false);
+  const rateBufRef = useRef<Array<{ total: number; ts: number }>>([]);
 
   useEffect(() => {
     let ws: WebSocket;
@@ -38,6 +40,17 @@ function useNavCount() {
             if (!seededRef.current) {
               seededRef.current = true;
               setDisplay(d.total);
+            }
+            // Rolling 30-second rate window
+            const now = Date.now();
+            const buf = rateBufRef.current;
+            buf.push({ total: d.total, ts: now });
+            // Drop samples older than 30 s
+            const cutoff = now - 30_000;
+            while (buf.length > 1 && buf[0].ts < cutoff) buf.shift();
+            if (buf.length >= 2) {
+              const spanSec = (buf[buf.length - 1].ts - buf[0].ts) / 1000;
+              if (spanSec > 0) setStrikeRate((buf[buf.length - 1].total - buf[0].total) / spanSec);
             }
           }
           if (typeof d.viewers === 'number') setViewers(d.viewers);
@@ -83,13 +96,13 @@ function useNavCount() {
     return () => clearInterval(id);
   }, []);
 
-  return { display, connected, viewers };
+  return { display, connected, viewers, strikeRate };
 }
 
-function StrikeCount({ display, viewers, t }: { display: number; connected: boolean; viewers: number; t: ReturnType<typeof useTranslations> }) {
+function StrikeCount({ display, viewers, strikeRate, t }: { display: number; connected: boolean; viewers: number; strikeRate: number; t: ReturnType<typeof useTranslations> }) {
   return (
     <>
-      <span className="navbar-count-main">
+      <span className="navbar-count-main" data-rate={strikeRate > 0 ? `${strikeRate.toFixed(1)}/s` : undefined}>
         <span className="navbar-count-num">
           {display.toLocaleString()}
         </span>
@@ -130,7 +143,7 @@ export default function Navbar() {
   }, []);
   const settings = usePopover();
   const tools = usePopover();
-  const { display, connected, viewers } = useNavCount();
+  const { display, connected, viewers, strikeRate } = useNavCount();
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
   const { enabled: tooltipEnabled, toggle: toggleTooltip } = useCountryTooltip();
@@ -237,7 +250,7 @@ export default function Navbar() {
         <div className="navbar-sep" aria-hidden="true" />
 
         <div className="navbar-count">
-          <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />
+          <StrikeCount display={display} connected={connected} viewers={viewers} strikeRate={strikeRate} t={t} />
         </div>
 
         <button
@@ -266,7 +279,7 @@ export default function Navbar() {
       </div>
 
       <div className="navbar-stats-bar">
-        <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />
+        <StrikeCount display={display} connected={connected} viewers={viewers} strikeRate={strikeRate} t={t} />
       </div>
 
       {stormOpen && path === '/' && <StormActivity />}

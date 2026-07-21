@@ -152,7 +152,29 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  position: relative;
+  cursor: default;
 }
+.navbar-count-main[data-rate]::after {
+  content: attr(data-rate) ' per second';
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  background: rgba(6,6,14,0.95);
+  border: 1px solid rgba(255,220,0,0.25);
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.72rem;
+  font-family: 'Courier New', Courier, monospace;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  color: #ffe040;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 3000;
+}
+.navbar-count-main[data-rate]:hover::after { opacity: 1; }
 
 .navbar-count-viewers {
   display: flex;
