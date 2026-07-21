@@ -8,6 +8,7 @@ import { TooltipProvider } from './context/TooltipContext';
 import { RainRadarProvider } from './context/RainRadarContext';
 import { StormRanksProvider } from './context/StormRanksContext';
 import { MapSearchProvider } from './context/MapSearchContext';
+import { TornadoProvider } from './context/TornadoContext';
 import { SITE_URL as BASE } from './lib/site';
 
 export const metadata: Metadata = {
@@ -74,8 +75,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <RainRadarProvider>
                   <StormRanksProvider>
                     <MapSearchProvider>
-                      <Navbar />
-                      {children}
+                      <TornadoProvider>
+                        <Navbar />
+                        {children}
+                      </TornadoProvider>
                     </MapSearchProvider>
                   </StormRanksProvider>
                 </RainRadarProvider>

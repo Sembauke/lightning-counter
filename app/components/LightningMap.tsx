@@ -12,6 +12,7 @@ import { useCountryTooltip } from '../context/TooltipContext';
 import { useRainRadar } from '../context/RainRadarContext';
 import { useStormRanks } from '../context/StormRanksContext';
 import { useMapSearch } from '../context/MapSearchContext';
+import { useTornado } from '../context/TornadoContext';
 import { useCountryName } from '../hooks/useCountryName';
 
 interface FlashRing {
@@ -74,6 +75,10 @@ interface MapState {
   reprojectRankLabels: (() => void) | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   radarLayer: any;
+  tornadoSvg: SVGSVGElement | null;
+  tornadoFeatures: Array<{ geometry: { type: string; coordinates: number[][][][] | number[][][] }; properties: Record<string, unknown> }> | null;
+  tornadoTooltip: HTMLDivElement | null;
+  reprojectTornado: (() => void) | null;
 }
 
 // Three stepped grid tiers, each with a fixed binZoom for geographic stability.
@@ -158,7 +163,10 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const stormRanksEnabledRef = useRef(stormRanksEnabled);
   stormRanksEnabledRef.current = stormRanksEnabled;
   const { enabled: mapSearchEnabled } = useMapSearch();
+  const { enabled: tornadoEnabled } = useTornado();
   const [mapReady, setMapReady] = useState(false);
+  const seenAlertIdsRef = useRef<Set<string>>(new Set());
+  const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; key: number }>>([]);
 
   // Live strikes from SSE, pruned to the 30-min window
   const heatmapBufferRef = useRef<HeatPoint[]>([]);
@@ -282,6 +290,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     dpr: 1, drawHeatmap: null,
     stormRankLabels: null, stormRankCells: [], reprojectRankLabels: null,
     radarLayer: null,
+    tornadoSvg: null, tornadoFeatures: null, tornadoTooltip: null, reprojectTornado: null,
   });
 
   useEffect(() => {
@@ -313,10 +322,11 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
         setZoom(z);
         s.drawHeatmap?.();
         s.reprojectRankLabels?.();
+        s.reprojectTornado?.();
         scheduleFetchViewport();
       });
 
-      map.on('move', () => { s.reprojectRankLabels?.(); });
+      map.on('move', () => { s.reprojectRankLabels?.(); s.reprojectTornado?.(); });
 
       map.on('dragend', () => { lastDragEndRef.current = Date.now(); });
 
@@ -328,6 +338,117 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       map.createPane('radarPane');
       (map.getPane('radarPane') as HTMLElement).style.zIndex = '210';
       (map.getPane('radarPane') as HTMLElement).style.pointerEvents = 'none';
+
+      // Tornado SVG overlay — above canvas layers (z=401/450) so warnings are always visible
+      const tornadoSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      tornadoSvg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:490;overflow:visible;display:none;';
+      container.appendChild(tornadoSvg);
+      s.tornadoSvg = tornadoSvg;
+
+      const tornadoTooltip = document.createElement('div');
+      tornadoTooltip.className = 'tornado-tooltip';
+      tornadoTooltip.style.cssText = 'position:absolute;display:none;z-index:491;pointer-events:none;';
+      container.appendChild(tornadoTooltip);
+      s.tornadoTooltip = tornadoTooltip;
+
+      s.reprojectTornado = () => {
+        const svg = s.tornadoSvg;
+        if (!svg || !s.map) return;
+        // Clear existing
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        const features = s.tornadoFeatures;
+        if (!features?.length) { svg.style.display = 'none'; return; }
+        svg.style.display = '';
+
+        const PRIORITY: Record<string, number> = {
+          'Severe Thunderstorm Watch': 0,
+          'Tornado Watch': 1,
+          'Severe Thunderstorm Warning': 2,
+          'Flash Flood Emergency': 3,
+          'Tornado Warning': 4,
+        };
+        const sorted = [...features].sort((a, b) =>
+          (PRIORITY[a.properties?.event ?? ''] ?? 0) - (PRIORITY[b.properties?.event ?? ''] ?? 0));
+
+        for (const f of sorted) {
+          if (!f.geometry) continue;
+          const evt = f.properties?.event ?? '';
+          type AlertStyle = { fill: string; stroke: string; width: string; dash?: string; cls: string };
+          const STYLES: Record<string, AlertStyle> = {
+            'Tornado Warning':            { fill: 'rgba(255,20,20,0.30)',  stroke: '#ff0000', width: '4',   cls: 'tornado-warning-path' },
+            'Tornado Watch':              { fill: 'rgba(255,220,0,0.12)',  stroke: '#ffdd00', width: '2.5', dash: '10 5', cls: 'tornado-watch-path' },
+            'Severe Thunderstorm Warning':{ fill: 'rgba(255,120,0,0.25)',  stroke: '#ff7700', width: '3.5', cls: 'tornado-tstorm-warn-path' },
+            'Severe Thunderstorm Watch':  { fill: 'rgba(255,180,0,0.10)',  stroke: '#ffb300', width: '2',   dash: '10 5', cls: 'tornado-tstorm-watch-path' },
+            'Flash Flood Emergency':      { fill: 'rgba(180,0,255,0.25)',  stroke: '#c000ff', width: '3.5', cls: 'tornado-flood-path' },
+          };
+          const style: AlertStyle = STYLES[evt] ?? { fill: 'rgba(255,255,0,0.10)', stroke: '#ffff00', width: '2', dash: '8 4', cls: 'tornado-other-path' };
+          const rings: number[][][] =
+            f.geometry.type === 'Polygon' ? (f.geometry.coordinates as number[][][]) :
+            f.geometry.type === 'MultiPolygon' ? (f.geometry.coordinates as number[][][][]).flat() : [];
+
+          for (const ring of rings) {
+            const pts = ring.map(([lon, lat]) => s.map.latLngToContainerPoint([lat, lon]));
+            if (pts.length < 3) continue;
+            const d = pts.map((p: { x: number; y: number }, i: number) =>
+              `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') + ' Z';
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            path.setAttribute('fill', style.fill);
+            path.setAttribute('stroke', style.stroke);
+            path.setAttribute('stroke-width', style.width);
+            path.setAttribute('stroke-linejoin', 'round');
+            if (style.dash) path.setAttribute('stroke-dasharray', style.dash);
+            path.setAttribute('class', style.cls);
+            path.style.cursor = 'default';
+
+            const tip = s.tornadoTooltip;
+            if (tip) {
+              const p = f.properties ?? {};
+              const area = (p.areaDesc as string) ?? '';
+              const exp = p.expires ? new Date(p.expires as string).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '?';
+              const certainty = (p.certainty as string) ?? '';
+              const sender = (p.senderName as string) ?? '';
+              const params = (p.parameters as Record<string, string[]>) ?? {};
+              const motionRaw = params.eventMotionDescription?.[0] ?? '';
+              const motionMatch = motionRaw.match(/(\d+)DEG\.\.\.(\d+)KT/);
+              const motion = motionMatch ? `${motionMatch[1]}° · ${Math.round(parseInt(motionMatch[2]) * 1.852)} km/h` : '';
+              const tornadoDetection = params.tornadoDetection?.[0] ?? '';
+              const hail = params.maxHailSize?.[0] ? parseFloat(params.maxHailSize[0]) : 0;
+              const windGust = params.windGust?.[0] ?? '';
+              const instrFull = (p.instruction as string) ?? '';
+              const instr = instrFull.split(/[.!]/)[0].trim();
+
+              path.addEventListener('mouseenter', () => {
+                const isTornadoEvent = ((p.event as string) ?? '').toLowerCase().includes('tornado');
+                const certaintyBadge = isTornadoEvent && tornadoDetection
+                  ? tornadoDetection === 'OBSERVED'
+                    ? `<span style="color:#ff4444;font-weight:700">● TORNADO OBSERVED</span><br>`
+                    : `<span style="color:#ffaa00">● ${tornadoDetection}</span><br>`
+                  : '';
+                const motionLine = motion ? `<span style="opacity:0.75">Moving ${motion}</span><br>` : '';
+                const hailLine = hail > 0 ? `<span style="opacity:0.75">Hail up to ${hail}&quot;</span><br>` : '';
+                const windLine = windGust ? `<span style="opacity:0.75">Wind gusts ${windGust}</span><br>` : '';
+                const instrLine = instr ? `<span style="color:#ffcccc;font-style:italic">${instr}</span><br>` : '';
+                tip.innerHTML = `<strong>${(p.event as string) ?? 'Alert'}</strong><br>`
+                  + certaintyBadge
+                  + `${area}<br>`
+                  + motionLine + hailLine + windLine
+                  + instrLine
+                  + `<span style="opacity:0.6">Expires ${exp} · ${sender}</span>`;
+                tip.style.display = 'block';
+              });
+              path.addEventListener('mousemove', (e: MouseEvent) => {
+                const rect = container.getBoundingClientRect();
+                tip.style.left = `${e.clientX - rect.left + 12}px`;
+                tip.style.top = `${e.clientY - rect.top - 8}px`;
+              });
+              path.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+            }
+            svg.appendChild(path);
+          }
+        }
+      };
 
       map.createPane('labelsPane');
       (map.getPane('labelsPane') as HTMLElement).style.zIndex = '250';
@@ -1083,6 +1204,80 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     };
   }, [radarEnabled, mapReady]);
 
+  // Tornado warnings — NWS free API, US only, SVG overlay above canvas layers
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s.ready) return;
+
+    const clear = () => {
+      s.tornadoFeatures = null;
+      if (s.tornadoSvg) { s.tornadoSvg.style.display = 'none'; while (s.tornadoSvg.firstChild) s.tornadoSvg.removeChild(s.tornadoSvg.firstChild); }
+      if (s.tornadoTooltip) s.tornadoTooltip.style.display = 'none';
+    };
+
+    if (!tornadoEnabled) { clear(); seenAlertIdsRef.current.clear(); return; }
+
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
+    let cancelled = false;
+    let isFirstLoad = seenAlertIdsRef.current.size === 0;
+
+    const load = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(
+          'https://api.weather.gov/alerts/active?event=Tornado%20Warning,Tornado%20Watch,Severe%20Thunderstorm%20Warning,Severe%20Thunderstorm%20Watch,Flash%20Flood%20Emergency&status=actual',
+          { headers: { Accept: 'application/geo+json' } },
+        );
+        const geojson = await res.json() as { features: typeof s.tornadoFeatures };
+        if (cancelled) return;
+        const features = (geojson.features ?? []).filter(f => f?.geometry);
+        s.tornadoFeatures = features;
+        s.reprojectTornado?.();
+
+        if (isFirstLoad) {
+          // Seed seen IDs silently on first load
+          for (const f of features) {
+            const id = (f.properties?.id as string) ?? '';
+            if (id) seenAlertIdsRef.current.add(id);
+          }
+          isFirstLoad = false;
+        } else {
+          const newAlerts: Array<{ id: string; event: string; area: string }> = [];
+          for (const f of features) {
+            const id = (f.properties?.id as string) ?? '';
+            if (id && !seenAlertIdsRef.current.has(id)) {
+              seenAlertIdsRef.current.add(id);
+              newAlerts.push({
+                id,
+                event: (f.properties?.event as string) ?? 'Alert',
+                area: ((f.properties?.areaDesc as string) ?? '').split(';')[0].trim(),
+              });
+            }
+          }
+          if (newAlerts.length > 0) {
+            setAlertToasts(prev => [
+              ...prev,
+              ...newAlerts.map(a => ({ ...a, key: Date.now() + Math.random() })),
+            ]);
+            // Browser notification
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              for (const a of newAlerts) {
+                new Notification(`⚠ ${a.event}`, { body: a.area, tag: a.id });
+              }
+            }
+          }
+        }
+      } catch { /* non-fatal */ }
+    };
+
+    load();
+    const timer = setInterval(load, 3 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(timer); clear(); };
+  }, [tornadoEnabled, mapReady]);
+
   // Gate storm rank labels on the toggle
   useEffect(() => {
     const s = stateRef.current;
@@ -1218,6 +1413,14 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [searchOpen]);
+
+  useEffect(() => {
+    if (alertToasts.length === 0) return;
+    const timer = setTimeout(() => {
+      setAlertToasts(prev => prev.slice(1));
+    }, 12_000);
+    return () => clearTimeout(timer);
+  }, [alertToasts]);
 
   const flyToResult = (r: NominatimResult) => {
     const map = stateRef.current.map;
@@ -1377,6 +1580,17 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
             />
             <span>{Math.round(gridOpacity * 100)}%</span>
           </label>
+        </div>
+      )}
+      {alertToasts.length > 0 && (
+        <div className="alert-toasts">
+          {alertToasts.map(toast => (
+            <div key={toast.key} className={`alert-toast alert-toast--${toast.event.toLowerCase().includes('tornado') ? 'tornado' : 'tstorm'}`}>
+              <span className="alert-toast-event">{toast.event}</span>
+              <span className="alert-toast-area">{toast.area}</span>
+              <button className="alert-toast-close" onClick={() => setAlertToasts(p => p.filter(t => t.key !== toast.key))}>×</button>
+            </div>
+          ))}
         </div>
       )}
     </div>
