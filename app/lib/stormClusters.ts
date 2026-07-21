@@ -2,7 +2,7 @@
 // record tracker server-side): groups a country's recent strikes into spatial
 // clusters and derives per-storm stats (rate, trend, drift direction).
 
-export interface StrikePoint { lat: number; lon: number; time: number }
+export interface StrikePoint { lat: number; lon: number; time: number; cc?: string | null | undefined }
 
 export interface StormCell {
   lat: number;

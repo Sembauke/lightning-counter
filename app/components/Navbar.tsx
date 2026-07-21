@@ -194,25 +194,12 @@ export default function Navbar() {
           <span className="site-title">Lightning Stats</span>
         </Link>
 
+        <div className="navbar-sep" aria-hidden="true" />
+
         {/* Desktop page links — the mobile drawer covers navigation on phones */}
-        <Link
-          href="/stats"
-          className={`settings-btn navbar-page-link${path === '/stats' ? ' active' : ''}`}
-        >
-          {t('archive')}
-        </Link>
-        <Link
-          href="/storms"
-          className={`settings-btn navbar-page-link${path === '/storms' ? ' active' : ''}`}
-        >
-          {t('storms')}
-        </Link>
-        <Link
-          href="/records"
-          className={`settings-btn navbar-page-link${path === '/records' ? ' active' : ''}`}
-        >
-          {t('records')}
-        </Link>
+        <Link href="/stats"    className={`navbar-page-link${path === '/stats'    ? ' active' : ''}`}>{t('archive')}</Link>
+        <Link href="/storms"   className={`navbar-page-link${path === '/storms'   ? ' active' : ''}`}>{t('storms')}</Link>
+        <Link href="/records"  className={`navbar-page-link${path === '/records'  ? ' active' : ''}`}>{t('records')}</Link>
 
         <div className="navbar-sep" aria-hidden="true" />
 
@@ -222,7 +209,7 @@ export default function Navbar() {
             className={`settings-btn${tools.open ? ' active' : ''}`}
             onClick={() => tools.setOpen(o => !o)}
           >
-            Tools ▾
+            {t('tools')} ▾
           </button>
           {tools.open && (
             <div className="settings-popover">
@@ -231,14 +218,14 @@ export default function Navbar() {
           )}
         </div>
 
-        {/* Desktop ⚙ settings popover */}
+        {/* Desktop settings popover */}
         <div className="settings-btn-wrap" ref={settings.ref}>
           <button
             className={`settings-btn${settings.open ? ' active' : ''}`}
             onClick={() => settings.setOpen(o => !o)}
             aria-label={t('settings')}
           >
-            ⚙ {t('settings')}
+            {t('settings')}
           </button>
           {settings.open && (
             <div className="settings-popover">
@@ -246,6 +233,8 @@ export default function Navbar() {
             </div>
           )}
         </div>
+
+        <div className="navbar-sep" aria-hidden="true" />
 
         <div className="navbar-count">
           <StrikeCount display={display} connected={connected} viewers={viewers} t={t} />

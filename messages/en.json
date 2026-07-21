@@ -13,7 +13,8 @@
     "stormActivity": "Storm Activity",
     "records": "Records",
     "storms": "Storms",
-    "countryTooltip": "Country tooltip"
+    "countryTooltip": "Country tooltip",
+    "tools": "Tools"
   },
   "stats": {
     "title": "Strike Archive",

@@ -13,7 +13,8 @@
     "stormActivity": "Gewitteraktivität",
     "records": "Rekorde",
     "storms": "Gewitter",
-    "countryTooltip": "Länder-Tooltip"
+    "countryTooltip": "Länder-Tooltip",
+    "tools": "Werkzeuge"
   },
   "stats": {
     "title": "Blitzarchiv",

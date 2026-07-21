@@ -23,11 +23,11 @@ html, body {
   z-index: 2000;
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 1rem;
   padding: 0 1.25rem;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(255, 220, 0, 0.15);
+  background: rgba(6, 6, 14, 0.92);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 220, 0, 0.12);
 }
 
 .navbar-brand {
@@ -1353,34 +1353,62 @@ html, body {
 
 .navbar-sep {
   width: 1px;
-  height: 20px;
-  background: rgba(255,255,255,0.12);
+  height: 16px;
+  background: rgba(255,220,0,0.18);
   flex-shrink: 0;
+}
+
+.navbar-page-link {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: rgba(255,220,0,0.55);
+  padding: 0.25rem 0;
+  border: none;
+  background: none;
+  position: relative;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.navbar-page-link:hover { color: rgba(255,220,0,0.85); }
+.navbar-page-link.active {
+  color: #ffe040;
+  text-shadow: 0 0 10px rgba(255,220,0,0.45);
+}
+.navbar-page-link.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #ffe040;
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgba(255,220,0,0.55);
 }
 
 .settings-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 8px;
-  color: rgba(255,220,0,0.8);
+  gap: 0.35rem;
+  background: none;
+  border: none;
+  color: rgba(255,220,0,0.55);
   font-family: 'Courier New', Courier, monospace;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 0.4rem 1rem;
+  padding: 0.25rem 0;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  transition: color 0.15s;
+  flex-shrink: 0;
 }
 .settings-btn:hover,
-.settings-btn.active {
-  color: #ffe040;
-  border-color: rgba(255,220,0,0.45);
-  background: rgba(255,220,0,0.08);
-}
+.settings-btn.active { color: #ffe040; }
 
 @keyframes popover-in {
   from { opacity: 0; transform: translateY(-6px) scale(0.97); }

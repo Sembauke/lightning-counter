@@ -13,7 +13,8 @@
     "stormActivity": "Actividad Tormentas",
     "records": "Récords",
     "storms": "Tormentas",
-    "countryTooltip": "Tooltip de país"
+    "countryTooltip": "Tooltip de país",
+    "tools": "Herramientas"
   },
   "stats": {
     "title": "Archivo de rayos",

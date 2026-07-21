@@ -13,7 +13,8 @@
     "stormActivity": "Onweeractiviteit",
     "records": "Records",
     "storms": "Onweersbuien",
-    "countryTooltip": "Land-tooltip"
+    "countryTooltip": "Land-tooltip",
+    "tools": "Tools"
   },
   "stats": {
     "title": "Ontladingsarchief",

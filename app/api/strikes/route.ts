@@ -234,65 +234,75 @@ setInterval(() => {
     for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
     upsertCountryPeakRates(rates);
 
-    // Match detected cells to tracked storms, spawning new tracks as needed
+    // Detect storm cells across ALL countries so storms that cross borders are
+    // tracked as one continuous system rather than split into two.
+    const allRecentStrikes = recentStrikes.filter(s => s.time > cutoff5m && s.cc);
     const matched = new Set<TrackedStorm>();
-    for (const [cc, strikes] of Object.entries(byCountry)) {
-      for (const cell of detectStorms(strikes, WINDOW_MS)) {
-        const sample = sampleCell(cell.members);
-        // A backlog flush can masquerade as a huge storm — never track those
-        if (hasTimestampBurst(sample)) continue;
+    for (const cell of detectStorms(allRecentStrikes, WINDOW_MS)) {
+      const sample = sampleCell(cell.members);
+      // A backlog flush can masquerade as a huge storm — never track those
+      if (hasTimestampBurst(sample)) continue;
 
-        let best: TrackedStorm | null = null;
-        let bestKm = STORM_MATCH_KM;
-        for (const st of trackedStorms) {
-          if (st.cc !== cc || matched.has(st)) continue;
-          const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
-          if (km <= bestKm) { bestKm = km; best = st; }
-        }
+      // Derive the cell's country from whichever cc is most common in its members
+      const ccCounts: Record<string, number> = {};
+      for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
+      const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!cc) continue;
 
-        const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
-        const foot = footprintCenter(cell.members);
-        if (best) {
-          best.posBuf.push(foot);
-          if (best.posBuf.length >= TRAVEL_STRIDE_PASSES) {
-            // Smooth the stride endpoint over its last few passes
-            const cur = meanPos(best.posBuf.slice(-3));
-            if (best.travelAnchor) {
-              const hop = kmBetween(best.travelAnchor.lat, best.travelAnchor.lon, cur.lat, cur.lon);
-              if (hop >= TRAVEL_MIN_KM && hop <= TRAVEL_MAX_KM) best.traveledKm += hop;
-            }
-            best.travelAnchor = cur;
-            best.posBuf = [];
+      // Among all tracked storms within range, pick the biggest (by peak count)
+      // so that when two storms converge into one cell, the smaller merges into
+      // the bigger rather than the bigger being silently dropped.
+      let best: TrackedStorm | null = null;
+      for (const st of trackedStorms) {
+        if (matched.has(st)) continue;
+        const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
+        if (km > STORM_MATCH_KM) continue;
+        if (!best || st.peakCount > best.peakCount) best = st;
+      }
+
+      const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
+      const foot = footprintCenter(cell.members);
+      if (best) {
+        best.cc = cc; // update country as the storm moves across borders
+        best.posBuf.push(foot);
+        if (best.posBuf.length >= TRAVEL_STRIDE_PASSES) {
+          // Smooth the stride endpoint over its last few passes
+          const cur = meanPos(best.posBuf.slice(-3));
+          if (best.travelAnchor) {
+            const hop = kmBetween(best.travelAnchor.lat, best.travelAnchor.lon, cur.lat, cur.lon);
+            if (hop >= TRAVEL_MIN_KM && hop <= TRAVEL_MAX_KM) best.traveledKm += hop;
           }
-          best.lat = cell.lat;
-          best.lon = cell.lon;
-          best.city = city;
-          best.lastSeen = nowMs;
-          if (cell.count > best.peakCount) {
-            best.peakCount = cell.count;
-            best.peakRate = cell.rate;
-          }
-          accumulateStrikes(best, cell.members);
-          matched.add(best);
-        } else {
-          let firstStrike = Infinity;
-          for (const m of cell.members) if (m.time < firstStrike) firstStrike = m.time;
-          const fresh: TrackedStorm = {
-            key: `${cc}:${nowMs}:${stormSeq++}`,
-            cc,
-            originLat: cell.lat, originLon: cell.lon, originCity: city,
-            startTime: firstStrike,
-            lat: cell.lat, lon: cell.lon, city,
-            peakCount: cell.count, peakRate: cell.rate,
-            traveledKm: 0,
-            travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
-            lastSeen: nowMs,
-            allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
-          };
-          accumulateStrikes(fresh, cell.members);
-          trackedStorms.push(fresh);
-          matched.add(fresh);
+          best.travelAnchor = cur;
+          best.posBuf = [];
         }
+        best.lat = cell.lat;
+        best.lon = cell.lon;
+        best.city = city;
+        best.lastSeen = nowMs;
+        if (cell.count > best.peakCount) {
+          best.peakCount = cell.count;
+          best.peakRate = cell.rate;
+        }
+        accumulateStrikes(best, cell.members);
+        matched.add(best);
+      } else {
+        let firstStrike = Infinity;
+        for (const m of cell.members) if (m.time < firstStrike) firstStrike = m.time;
+        const fresh: TrackedStorm = {
+          key: `${cc}:${nowMs}:${stormSeq++}`,
+          cc,
+          originLat: cell.lat, originLon: cell.lon, originCity: city,
+          startTime: firstStrike,
+          lat: cell.lat, lon: cell.lon, city,
+          peakCount: cell.count, peakRate: cell.rate,
+          traveledKm: 0,
+          travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
+          lastSeen: nowMs,
+          allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
+        };
+        accumulateStrikes(fresh, cell.members);
+        trackedStorms.push(fresh);
+        matched.add(fresh);
       }
     }
 
