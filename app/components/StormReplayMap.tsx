@@ -107,42 +107,64 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
 
       const map = L.map(containerRef.current, {
         zoomControl: false, attributionControl: false,
-        dragging: false, scrollWheelZoom: false, doubleClickZoom: false,
-        boxZoom: false, keyboard: false, touchZoom: false,
+        dragging: true, scrollWheelZoom: true, doubleClickZoom: false,
+        boxZoom: false, keyboard: false, touchZoom: true,
+        minZoom: 4, maxZoom: 12,
       });
       L.tileLayer(TILE_SAT.url, TILE_SAT.options).addTo(map);
       L.tileLayer(TILE_LABELS_URL, { maxZoom: 19, opacity: 0.75 }).addTo(map);
       (map.getPanes().tilePane as HTMLElement).style.filter = TILE_DIM_FILTER;
 
-      // Fit the dense core of the storm (10th–90th percentile) — chained storm
-      // complexes and outlier strikes would otherwise zoom the view way out.
-      // Strikes outside the core still draw, just off-center.
-      const lats = strikes.map(s => s[0]).sort((a, b) => a - b);
-      const lons = strikes.map(s => s[1]).sort((a, b) => a - b);
-      const lo = Math.floor(strikes.length * 0.1);
-      const hi = Math.ceil(strikes.length * 0.9) - 1;
-      const bounds = L.latLngBounds([lats[lo], lons[lo]], [lats[hi], lons[hi]]);
-      // Pad the core so it doesn't touch the frame edges, and cap the zoom so
-      // compact storms don't fill the whole view with a handful of pixels.
-      map.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 8 });
+      // Fit the full extent of all strikes — the zoom cap prevents over-zooming
+      // on compact storms, so we no longer need percentile trimming (which was
+      // cutting off the trailing end of traveling storms).
+      const lats = strikes.map(s => s[0]);
+      const lons = strikes.map(s => s[1]);
+      const bounds = L.latLngBounds(
+        [Math.min(...lats), Math.min(...lons)],
+        [Math.max(...lats), Math.max(...lons)],
+      );
+      // 20% padding keeps strikes away from the frame edge; zoom cap stops
+      // single-cell storms from zooming in to street level.
+      map.fitBounds(bounds.pad(0.2), { animate: false, maxZoom: 8 });
       mapRef.current = map;
 
-      // The view is static, so strikes can be projected to pixels once
-      const size = map.getSize();
-      const cnv = canvasRef.current;
-      if (cnv) {
+      const resizeCanvas = () => {
+        const size = map.getSize();
+        const cnv = canvasRef.current;
+        if (!cnv) return;
         const dpr = window.devicePixelRatio || 1;
         cnv.width = size.x * dpr;
         cnv.height = size.y * dpr;
         cnv.style.width = `${size.x}px`;
         cnv.style.height = `${size.y}px`;
-      }
-      projectedRef.current = strikes
-        .map(([lat, lon, time]) => {
-          const p = map.latLngToContainerPoint([lat, lon]);
-          return { x: p.x, y: p.y, time };
-        })
-        .sort((a, b) => a.time - b.time);
+      };
+
+      const reprojectStrikes = () => {
+        projectedRef.current = strikes
+          .map(([lat, lon, time]) => {
+            const p = map.latLngToContainerPoint([lat, lon]);
+            return { x: p.x, y: p.y, time };
+          })
+          .sort((a, b) => a.time - b.time);
+      };
+
+      resizeCanvas();
+      reprojectStrikes();
+
+      // Zoom: resize canvas + re-project + redraw
+      map.on('zoomstart', () => {
+        const cnv = canvasRef.current;
+        if (!cnv) return;
+        const ctx = cnv.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, cnv.width, cnv.height);
+      });
+      map.on('zoomend', () => { resizeCanvas(); reprojectStrikes(); draw(maxTime, performance.now()); });
+
+      // Drag: only re-project (canvas size doesn't change); if replay is running
+      // the next animation frame picks up the new positions automatically.
+      map.on('move', () => { reprojectStrikes(); draw(maxTime, performance.now()); });
+
       draw(maxTime, performance.now());
     });
 

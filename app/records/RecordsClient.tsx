@@ -4,13 +4,11 @@ import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
-import { fmt, fmtRate, fmtClock, fmtDuration } from '../lib/format';
+import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
 import type { GlobalStormRecord, StormRecordCategory } from '../lib/db';
 
 const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { ssr: false });
-
-interface DailyPeak { code: string; count: number; date: string }
 
 const CATEGORY_ORDER: StormRecordCategory[] = ['biggest', 'longest', 'farthest', 'fastest'];
 
@@ -19,15 +17,13 @@ export default function RecordsClient() {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
   const [storms, setStorms] = useState<GlobalStormRecord[]>([]);
-  const [dailyPeak, setDailyPeak] = useState<DailyPeak | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     fetch('/api/records')
       .then(r => r.json())
-      .then((data: { storms: GlobalStormRecord[]; dailyPeak: DailyPeak | null }) => {
+      .then((data: { storms: GlobalStormRecord[] }) => {
         setStorms(data.storms);
-        setDailyPeak(data.dailyPeak);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -55,7 +51,7 @@ export default function RecordsClient() {
       </div>
 
       <div className="records-body">
-        {!loaded ? null : storms.length === 0 && !dailyPeak ? (
+        {!loaded ? null : storms.length === 0 ? (
           <div className="archive-empty">{t('noData')}</div>
         ) : (
           <div className="records-grid">
@@ -64,14 +60,16 @@ export default function RecordsClient() {
               if (!rec) return null;
               return (
                 <div key={cat} className="rec-card">
-                  <span className="bsc-title">{t(cat)}</span>
+                  <div className="rec-header">
+                    <span className="bsc-title">{t(cat)}</span>
+                    <span className="rec-highlight">{highlight(rec)}</span>
+                  </div>
                   <span className="rec-country">
                     <CountryFlag code={rec.code} name={countryName(rec.code)} />
                     {countryName(rec.code)}
-                    <span className="rec-highlight">{highlight(rec)}</span>
                   </span>
                   <span className="bsc-name">
-                    ⚡ {rec.originCity && rec.city && rec.originCity !== rec.city
+                    {rec.originCity && rec.city && rec.originCity !== rec.city
                       ? ts('stormFromTo', { from: rec.originCity, to: rec.city })
                       : rec.city
                         ? ts('stormNear', { city: rec.city })
@@ -81,31 +79,20 @@ export default function RecordsClient() {
                     {ts('strikesCount', { count: rec.totalCount ?? rec.count })}
                     {' · '}
                     {ts('peakRate', { rate: fmtRate(rec.rate) })}
-                    {' · '}
-                    {rec.date}
-                    {rec.startTime && rec.endTime && (
-                      <> · {fmtClock(rec.startTime)} – {fmtClock(rec.endTime)}</>
-                    )}
                     {rec.traveledKm != null && rec.traveledKm >= 5 && (
                       <> · {ts('traveled', { km: Math.round(rec.traveledKm) })}</>
+                    )}
+                  </span>
+                  <span className="bsc-meta">
+                    {rec.date}
+                    {rec.startTime && rec.endTime && (
+                      <> · {fmtClock(rec.startTime)} – {fmtClock(rec.endTime)} · {fmtDuration(rec.endTime - rec.startTime)}</>
                     )}
                   </span>
                   {rec.strikes && rec.strikes.length > 0 && <StormReplayMap strikes={rec.strikes} />}
                 </div>
               );
             })}
-
-            {dailyPeak && (
-              <div className="rec-card">
-                <span className="bsc-title">{t('dailyPeak')}</span>
-                <span className="rec-country">
-                  <CountryFlag code={dailyPeak.code} name={countryName(dailyPeak.code)} />
-                  {countryName(dailyPeak.code)}
-                  <span className="rec-highlight">{fmt(dailyPeak.count)}</span>
-                </span>
-                <span className="bsc-meta">{dailyPeak.date}</span>
-              </div>
-            )}
           </div>
         )}
       </div>
