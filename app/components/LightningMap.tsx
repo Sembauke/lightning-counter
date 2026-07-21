@@ -372,7 +372,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
 
         for (const f of sorted) {
           if (!f.geometry) continue;
-          const evt = f.properties?.event ?? '';
+          const evt = (f.properties?.event as string) ?? '';
           type AlertStyle = { fill: string; stroke: string; width: string; dash?: string; cls: string };
           const STYLES: Record<string, AlertStyle> = {
             'Tornado Warning':            { fill: 'rgba(255,20,20,0.30)',  stroke: '#ff0000', width: '4',   cls: 'tornado-warning-path' },
