@@ -234,9 +234,9 @@ setInterval(() => {
     for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
     upsertCountryPeakRates(rates);
 
-    // Detect storm cells across ALL countries so storms that cross borders are
-    // tracked as one continuous system rather than split into two.
-    const allRecentStrikes = recentStrikes.filter(s => s.time > cutoff5m && s.cc);
+    // Detect storm cells across ALL countries (including sea strikes) so storms
+    // that cross borders or move offshore are tracked as one continuous system.
+    const allRecentStrikes = recentStrikes.filter(s => s.time > cutoff5m);
     const matched = new Set<TrackedStorm>();
     for (const cell of detectStorms(allRecentStrikes, WINDOW_MS)) {
       const sample = sampleCell(cell.members);
@@ -246,8 +246,20 @@ setInterval(() => {
       // Derive the cell's country from whichever cc is most common in its members
       const ccCounts: Record<string, number> = {};
       for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
-      const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
-      if (!cc) continue;
+      let cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+
+      // If no land strikes in this cluster, try to inherit cc from a nearby tracked
+      // storm — this keeps offshore-drifting storms alive in the log.
+      if (!cc) {
+        let nearestSt: TrackedStorm | null = null;
+        let nearestKm = Infinity;
+        for (const st of trackedStorms) {
+          const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
+          if (km < STORM_MATCH_KM && km < nearestKm) { nearestKm = km; nearestSt = st; }
+        }
+        if (nearestSt) cc = nearestSt.cc;
+        else continue; // brand-new storm entirely at sea — skip
+      }
 
       // Among all tracked storms within range, pick the biggest (by peak count)
       // so that when two storms converge into one cell, the smaller merges into
