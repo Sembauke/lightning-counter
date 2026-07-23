@@ -14,6 +14,8 @@ export interface StormCell {
   trend: 'up' | 'down' | 'steady';
   /** 8-point compass direction the storm is drifting toward, or null if stationary */
   drift: 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW' | null;
+  /** how many independent BFS clusters were agglomerated into this cell (1 = single cell) */
+  mergedFrom: number;
   /** the strikes that make up this storm */
   members: StrikePoint[];
 }
@@ -32,9 +34,13 @@ const MERGE_KM = 75;
 // by that much just from where strikes happen to fall within the 5-minute window.
 const DRIFT_MIN_DEG = 0.06;
 // A cell must have at least this many strikes to be treated as "occupied" in the BFS.
-// Without this, a handful of scattered strikes can chain two separate storm systems
-// into one cluster before the agglomerative distance check runs.
-const MIN_CELL_STRIKES = 4;
+// Without this, scattered background strikes between two storm systems create a
+// chain of adjacent cells that the BFS fuses into one cluster before the
+// agglomerative distance check has a chance to separate them.
+// Threshold is chosen to be just above the observed inter-storm background
+// density (~9 strikes/cell/5 min) while keeping legitimate storm-edge cells
+// (~10+ strikes for any storm that meets MIN_RATE_PER_MIN).
+const MIN_CELL_STRIKES = 10;
 
 const NEIGHBORS = [-1, 0, 1];
 
@@ -74,11 +80,12 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
     clusters.push(cluster);
   }
 
-  // Agglomerative merge: storms less than MERGE_KM apart are one storm
+  // Agglomerative merge: storms less than MERGE_KM apart are one storm.
+  // Track how many original BFS clusters were combined (mergedFrom).
   const groups = clusters.map(strikes => {
     let lat = 0, lon = 0;
     for (const s of strikes) { lat += s.lat; lon += s.lon; }
-    return { strikes, lat: lat / strikes.length, lon: lon / strikes.length };
+    return { strikes, lat: lat / strikes.length, lon: lon / strikes.length, mergedFrom: 1 };
   });
   let merged = true;
   while (merged) {
@@ -92,7 +99,7 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
           const all = a.strikes.concat(b.strikes);
           let lat = 0, lon = 0;
           for (const s of all) { lat += s.lat; lon += s.lon; }
-          groups[i] = { strikes: all, lat: lat / all.length, lon: lon / all.length };
+          groups[i] = { strikes: all, lat: lat / all.length, lon: lon / all.length, mergedFrom: a.mergedFrom + b.mergedFrom };
           groups.splice(j, 1);
           merged = true;
           break outer;
@@ -104,11 +111,10 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
   const halfCutoff = Date.now() - windowMs / 2;
   const minStrikes = MIN_RATE_PER_MIN * (windowMs / 60_000);
   return groups
-    .map(g => g.strikes)
-    .filter(c => c.length >= minStrikes)
-    .sort((a, b) => b.length - a.length)
+    .filter(g => g.strikes.length >= minStrikes)
+    .sort((a, b) => b.strikes.length - a.strikes.length)
     .slice(0, MAX_STORMS)
-    .map(cluster => {
+    .map(({ strikes: cluster, mergedFrom }) => {
       let latSum = 0, lonSum = 0;
       let oldN = 0, oldLat = 0, oldLon = 0;
       let newN = 0, newLat = 0, newLon = 0;
@@ -153,6 +159,7 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
         radiusKm: Math.max(10, Math.sqrt(maxD2)),
         trend,
         drift,
+        mergedFrom,
         members: cluster,
       };
     });

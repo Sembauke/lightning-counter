@@ -71,7 +71,7 @@ interface MapState {
   dpr: number;
   drawHeatmap: (() => void) | null;
   stormRankLabels: HTMLDivElement | null;
-  stormRankCells: Array<{ lat: number; lon: number; rank: number; cc: string; rate: number; trend: 'up' | 'down' | 'steady'; drift: string | null }>;
+  stormRankCells: Array<{ lat: number; lon: number; rank: number; cc: string; rate: number; trend: 'up' | 'down' | 'steady'; drift: string | null; mergedFrom: number }>;
   reprojectRankLabels: (() => void) | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   radarLayer: any;
@@ -474,7 +474,8 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           const trendIcon = cell.trend === 'up' ? '↑' : cell.trend === 'down' ? '↓' : '';
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
           const driftStr = cell.drift ?? '';
-          el.innerHTML = `<span class="storm-rank-num">#${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
+          const mergeIcon = cell.mergedFrom > 1 ? '⚡'.repeat(Math.min(cell.mergedFrom, 3)) : '⚡';
+          el.innerHTML = `<span class="storm-rank-num">${mergeIcon} #${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
             + (cell.cc ? `<span class="storm-rank-cc">${cell.cc}${driftStr ? ` ${driftStr}` : ''}</span>` : '')
             + `<span class="storm-rank-rate">${rateStr}</span>`;
           div.appendChild(el);
@@ -1387,7 +1388,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       const ccCounts: Record<string, number> = {};
       for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
       const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0]?.toUpperCase() ?? '';
-      return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift };
+      return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift, mergedFrom: cell.mergedFrom };
     });
     s.reprojectRankLabels?.();
   }, [strikes]);

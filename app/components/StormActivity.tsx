@@ -206,7 +206,7 @@ function StormRow({ rank, cc, name, isSea, count, rate, peak, isOpen, onToggle, 
                     >
                       <span className="storm-cell-main">
                         <span className="storm-cell-name">
-                          ⚡ {near ? t('stormNear', { city: near.name }) : `${cell.lat.toFixed(2)}°, ${cell.lon.toFixed(2)}°`}
+                          {'⚡'.repeat(Math.min(cell.mergedFrom, 3))} {near ? t('stormNear', { city: near.name }) : `${cell.lat.toFixed(2)}°, ${cell.lon.toFixed(2)}°`}
                         </span>
                         <span className="storm-cell-rate">
                           {fmtRate(cell.rate)}<span className="storm-rate-unit">/m</span>
