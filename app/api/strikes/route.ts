@@ -143,26 +143,28 @@ interface TrackedStorm {
   keepEvery: number;
   appendSeq: number;
 }
-const trackedStorms: TrackedStorm[] = (() => {
-  try {
-    const saved = loadTrackedStorms() as TrackedStorm[];
-    const cutoff = Date.now() - 60 * 60 * 1000;
-    return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
-  } catch { return []; }
-})();
 // Maximum match window — a cell within this distance of a tracked storm's last
 // centroid is a candidate. The effective window is further capped by velocity:
 // a storm last seen 5 min ago can't be 60 km away at any realistic speed.
 const STORM_MATCH_KM = 60;
 // Minimum match window regardless of elapsed time (absorbs centroid jitter)
 const STORM_MATCH_MIN_KM = 15;
-// Keep a storm alive for 60 min after it drops below the detection threshold
-const STORM_DROP_MS = 60 * 60 * 1000;
+// Keep a storm alive for 6 hours after it drops below the detection threshold.
+// Storm systems can reorganise or stall for hours before redeveloping; a shorter
+// window creates spurious new-storm entries for what is really one continuous event.
+const STORM_DROP_MS = 6 * 60 * 60 * 1000;
 // No storm system moves faster than this — lifetime cap on distance traveled
 const STORM_MAX_KMH = 120;
 // A storm enters the storm log only once its peak rate reaches this (strikes/min);
 // biggest-storm and record tables are exempt — they're superlatives, not a log
 const STORM_LOG_MIN_RATE = 50;
+const trackedStorms: TrackedStorm[] = (() => {
+  try {
+    const saved = loadTrackedStorms() as TrackedStorm[];
+    const cutoff = Date.now() - STORM_DROP_MS;
+    return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
+  } catch { return []; }
+})();
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
 const TRAVEL_STRIDE_PASSES = 10;
