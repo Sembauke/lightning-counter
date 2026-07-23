@@ -403,6 +403,19 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
 }
 
 /** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
+export function saveTrackedStorms(storms: unknown[]): void {
+  const db = getDb();
+  db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)')
+    .run('trackedStorms', JSON.stringify(storms));
+}
+
+export function loadTrackedStorms(): unknown[] {
+  const db = getDb();
+  const row = db.prepare('SELECT value FROM counters WHERE key = ?').get('trackedStorms') as { value: string } | undefined;
+  if (!row) return [];
+  try { return JSON.parse(row.value) as unknown[]; } catch { return []; }
+}
+
 export function pruneStormStrikes(): void {
   const db = getDb();
   const now = Date.now();

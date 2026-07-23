@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, hasTimestampBurst, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -143,9 +143,19 @@ interface TrackedStorm {
   keepEvery: number;
   appendSeq: number;
 }
-const trackedStorms: TrackedStorm[] = [];
-// A cell within this distance of a tracked storm's last centroid is the same storm
+const trackedStorms: TrackedStorm[] = (() => {
+  try {
+    const saved = loadTrackedStorms() as TrackedStorm[];
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
+  } catch { return []; }
+})();
+// Maximum match window — a cell within this distance of a tracked storm's last
+// centroid is a candidate. The effective window is further capped by velocity:
+// a storm last seen 5 min ago can't be 60 km away at any realistic speed.
 const STORM_MATCH_KM = 60;
+// Minimum match window regardless of elapsed time (absorbs centroid jitter)
+const STORM_MATCH_MIN_KM = 15;
 // Keep a storm alive for 60 min after it drops below the detection threshold
 const STORM_DROP_MS = 60 * 60 * 1000;
 // No storm system moves faster than this — lifetime cap on distance traveled
@@ -201,7 +211,7 @@ function sampleCell(members: Array<{ lat: number; lon: number; time: number }>):
 function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>): void {
   let newest = st.lastStrikeTime;
   for (const m of members) {
-    if (m.time <= st.lastStrikeTime) continue;
+    if (m.time < st.lastStrikeTime) continue;
     st.totalStrikes++;
     if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
     if (m.time > newest) newest = m.time;
@@ -251,6 +261,13 @@ setInterval(() => {
       for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
       let cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
 
+      // Velocity-capped match window: a storm can only move STORM_MAX_KMH km/h,
+      // so shrink the search radius based on how long ago it was last seen.
+      const matchWindow = (st: TrackedStorm) => {
+        const elapsedHours = (nowMs - st.lastSeen) / 3_600_000;
+        return Math.min(STORM_MATCH_KM, Math.max(STORM_MATCH_MIN_KM, elapsedHours * STORM_MAX_KMH));
+      };
+
       // If no land strikes in this cluster, try to inherit cc from a nearby tracked
       // storm — this keeps offshore-drifting storms alive in the log.
       if (!cc) {
@@ -258,7 +275,7 @@ setInterval(() => {
         let nearestKm = Infinity;
         for (const st of trackedStorms) {
           const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
-          if (km < STORM_MATCH_KM && km < nearestKm) { nearestKm = km; nearestSt = st; }
+          if (km < matchWindow(st) && km < nearestKm) { nearestKm = km; nearestSt = st; }
         }
         if (nearestSt) cc = nearestSt.cc;
         else continue; // brand-new storm entirely at sea — skip
@@ -271,7 +288,7 @@ setInterval(() => {
       for (const st of trackedStorms) {
         if (matched.has(st)) continue;
         const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
-        if (km > STORM_MATCH_KM) continue;
+        if (km > matchWindow(st)) continue;
         if (!best || st.peakCount > best.peakCount) best = st;
       }
 
@@ -345,6 +362,9 @@ setInterval(() => {
     while (i--) {
       if (nowMs - trackedStorms[i].lastSeen > STORM_DROP_MS) trackedStorms.splice(i, 1);
     }
+
+    // Persist in-flight storm state so a server restart doesn't wipe live storms
+    saveTrackedStorms(trackedStorms);
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 

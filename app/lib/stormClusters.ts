@@ -26,7 +26,7 @@ const CELL_DEG = 0.25;
 const MIN_RATE_PER_MIN = 15;
 const MAX_STORMS = 8;
 // Clusters with centroids closer than this are the same storm
-const MERGE_KM = 100;
+const MERGE_KM = 75;
 // Centroid must move ~3 km between window halves to count as drifting
 const DRIFT_MIN_DEG = 0.03;
 
