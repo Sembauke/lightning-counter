@@ -117,15 +117,27 @@ export default function StormsClient() {
                 <div key={s.stormKey} className={`storm-log-row${open ? ' open' : ''}`}>
                   <button className="storm-log-head" onClick={() => setExpandedKey(open ? null : s.stormKey)}>
                     <span className="storm-log-country">
-                      {s.originCode && (
-                        <>
-                          <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
-                          {countryName(s.originCode)}
-                          <span className="storm-log-arrow">→</span>
-                        </>
-                      )}
-                      <CountryFlag code={s.code} name={countryName(s.code)} />
-                      {countryName(s.code)}
+                      {s.countryPath && s.countryPath.length > 1
+                        ? s.countryPath.map((cc, i) => (
+                            <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                              {i > 0 && <span className="storm-log-arrow">→</span>}
+                              <CountryFlag code={cc} name={countryName(cc)} />
+                              {countryName(cc)}
+                            </span>
+                          ))
+                        : (
+                          <>
+                            {s.originCode && s.originCode !== s.code && (
+                              <>
+                                <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
+                                {countryName(s.originCode)}
+                                <span className="storm-log-arrow">→</span>
+                              </>
+                            )}
+                            <CountryFlag code={s.code} name={countryName(s.code)} />
+                            {countryName(s.code)}
+                          </>
+                        )}
                     </span>
                     <span className="storm-log-name">
                       {s.originCity && s.city && s.originCity !== s.city

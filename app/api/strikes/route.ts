@@ -142,6 +142,8 @@ interface TrackedStorm {
   totalStrikes: number;
   keepEvery: number;
   appendSeq: number;
+  // Ordered list of every country code the storm has passed through
+  countryCodes: string[];
 }
 // Maximum match window — a cell within this distance of a tracked storm's last
 // centroid is a candidate. The effective window is further capped by velocity:
@@ -297,7 +299,10 @@ setInterval(() => {
       const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
       const foot = footprintCenter(cell.members);
       if (best) {
-        best.cc = cc; // update country as the storm moves across borders
+        if (cc !== best.cc) {
+          best.cc = cc;
+          if (!best.countryCodes.includes(cc)) best.countryCodes.push(cc);
+        }
         best.posBuf.push(foot);
         if (best.posBuf.length >= TRAVEL_STRIDE_PASSES) {
           // Smooth the stride endpoint over its last few passes
@@ -331,6 +336,7 @@ setInterval(() => {
           travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
           lastSeen: nowMs,
           allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
+          countryCodes: [cc],
         };
         accumulateStrikes(fresh, cell.members);
         trackedStorms.push(fresh);
@@ -353,6 +359,7 @@ setInterval(() => {
         startTime: st.startTime, endTime: st.lastSeen, stormKey: st.key,
         traveledKm: Math.round(Math.min(st.traveledKm, maxTravel)), totalCount: st.totalStrikes,
         strikes: st.allStrikes,
+        countryPath: st.countryCodes.length > 1 ? st.countryCodes : null,
       });
     }
     upsertBiggestStorms(records);

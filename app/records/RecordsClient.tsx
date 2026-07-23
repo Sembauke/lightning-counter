@@ -65,8 +65,15 @@ export default function RecordsClient() {
                     <span className="rec-highlight">{highlight(rec)}</span>
                   </div>
                   <span className="rec-country">
-                    <CountryFlag code={rec.code} name={countryName(rec.code)} />
-                    {countryName(rec.code)}
+                    {rec.countryPath && rec.countryPath.length > 1
+                      ? rec.countryPath.map((cc, i) => (
+                          <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                            {i > 0 && <span className="storm-log-arrow">→</span>}
+                            <CountryFlag code={cc} name={countryName(cc)} />
+                            {countryName(cc)}
+                          </span>
+                        ))
+                      : (<><CountryFlag code={rec.code} name={countryName(rec.code)} />{countryName(rec.code)}</>)}
                   </span>
                   <span className="bsc-name">
                     {rec.originCity && rec.city && rec.originCity !== rec.city

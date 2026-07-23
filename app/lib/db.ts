@@ -57,7 +57,8 @@ function getDb(): Database.Database {
       end_time INTEGER,
       traveled_km REAL,
       total_count INTEGER,
-      strikes TEXT
+      strikes TEXT,
+      country_path TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_storms_date_count ON storms(date, count DESC);
     CREATE INDEX IF NOT EXISTS idx_storms_code_date ON storms(code, date);
@@ -79,7 +80,8 @@ function getDb(): Database.Database {
       storm_key TEXT,
       traveled_km REAL,
       total_count INTEGER,
-      strikes TEXT
+      strikes TEXT,
+      country_path TEXT
     );
     CREATE TABLE IF NOT EXISTS country_biggest_storms (
       code TEXT PRIMARY KEY,
@@ -110,6 +112,9 @@ function getDb(): Database.Database {
   `);
   // Migrations for databases created before the replay / storm-tracking features
   const migrations = [
+    'ALTER TABLE storms ADD COLUMN country_path TEXT',
+    'ALTER TABLE storm_records ADD COLUMN country_path TEXT',
+    'ALTER TABLE country_biggest_storms ADD COLUMN country_path TEXT',
     'ALTER TABLE country_biggest_storms ADD COLUMN strikes TEXT',
     'ALTER TABLE country_biggest_storms ADD COLUMN origin_lat REAL',
     'ALTER TABLE country_biggest_storms ADD COLUMN origin_lon REAL',
@@ -224,6 +229,7 @@ export interface BiggestStorm {
   traveledKm: number | null;  // cumulative centroid path length
   totalCount: number | null;  // strikes over the storm's whole tracked life
   strikes: StormStrike[] | null;
+  countryPath: string[] | null; // ordered country codes the storm passed through
 }
 
 export function getBiggestStorm(code: string): BiggestStorm | null {
@@ -232,13 +238,15 @@ export function getBiggestStorm(code: string): BiggestStorm | null {
     SELECT code, count, rate, lat, lon, city, date,
            origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
            start_time AS startTime, end_time AS endTime, storm_key AS stormKey,
-           traveled_km AS traveledKm, total_count AS totalCount, strikes
+           traveled_km AS traveledKm, total_count AS totalCount, strikes, country_path AS countryPath
     FROM country_biggest_storms WHERE code = ?
-  `).get(code) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
+  `).get(code) as (Omit<BiggestStorm, 'strikes' | 'countryPath'> & { strikes: string | null; countryPath: string | null }) | undefined;
   if (!row) return null;
   let strikes: StormStrike[] | null = null;
   try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt — treat as absent */ }
-  return { ...row, strikes };
+  let countryPath: string[] | null = null;
+  try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
+  return { ...row, strikes, countryPath };
 }
 
 export function upsertBiggestStorms(storms: BiggestStorm[]): void {
@@ -248,8 +256,8 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
     INSERT INTO country_biggest_storms
       (code, count, rate, lat, lon, city, date,
        origin_lat, origin_lon, origin_city, start_time, end_time, storm_key,
-       traveled_km, total_count, strikes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       traveled_km, total_count, strikes, country_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET
       count = excluded.count, rate = excluded.rate, lat = excluded.lat,
       lon = excluded.lon, city = excluded.city, date = excluded.date,
@@ -257,7 +265,7 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
       origin_city = excluded.origin_city, start_time = excluded.start_time,
       end_time = excluded.end_time, storm_key = excluded.storm_key,
       traveled_km = excluded.traveled_km, total_count = excluded.total_count,
-      strikes = excluded.strikes
+      strikes = excluded.strikes, country_path = excluded.country_path
     WHERE excluded.count > count
       -- the record-holding storm keeps updating its own row while it lives
       -- (path end point, end time, growing peak)
@@ -270,7 +278,8 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
     for (const s of storms) {
       stmt.run(s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
         s.originLat, s.originLon, s.originCity, s.startTime, s.endTime, s.stormKey,
-        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null);
+        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null,
+        s.countryPath ? JSON.stringify(s.countryPath) : null);
     }
   })();
 }
@@ -301,13 +310,16 @@ export function getStormRecords(): GlobalStormRecord[] {
     SELECT category, code, count, rate, lat, lon, city, date,
            origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
            start_time AS startTime, end_time AS endTime, storm_key AS stormKey,
-           traveled_km AS traveledKm, total_count AS totalCount, strikes
+           traveled_km AS traveledKm, total_count AS totalCount, strikes,
+           country_path AS countryPath
     FROM storm_records
-  `).all() as Array<Omit<GlobalStormRecord, 'strikes'> & { strikes: string | null }>;
+  `).all() as Array<Omit<GlobalStormRecord, 'strikes' | 'countryPath'> & { strikes: string | null; countryPath: string | null }>;
   return rows.map(row => {
     let strikes: StormStrike[] | null = null;
     try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt */ }
-    return { ...row, strikes };
+    let countryPath: string[] | null = null;
+    try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
+    return { ...row, strikes, countryPath };
   });
 }
 
@@ -320,8 +332,8 @@ export function upsertStormRecords(candidates: BiggestStorm[]): void {
     INSERT OR REPLACE INTO storm_records
       (category, code, count, rate, lat, lon, city, date,
        origin_lat, origin_lon, origin_city, start_time, end_time, storm_key,
-       traveled_km, total_count, strikes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       traveled_km, total_count, strikes, country_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   db.transaction(() => {
@@ -343,7 +355,8 @@ export function upsertStormRecords(candidates: BiggestStorm[]): void {
         stmt.run(category, holder.code, holder.count, holder.rate, holder.lat, holder.lon,
           holder.city, holder.date, holder.originLat, holder.originLon, holder.originCity,
           holder.startTime, holder.endTime, holder.stormKey, holder.traveledKm,
-          holder.totalCount, holder.strikes ? JSON.stringify(holder.strikes) : null);
+          holder.totalCount, holder.strikes ? JSON.stringify(holder.strikes) : null,
+          holder.countryPath ? JSON.stringify(holder.countryPath) : null);
       }
     }
   })();
@@ -361,15 +374,16 @@ export function upsertStorms(storms: BiggestStorm[]): void {
     INSERT OR REPLACE INTO storms
       (storm_key, code, count, rate, lat, lon, city, date,
        origin_lat, origin_lon, origin_city, start_time, end_time,
-       traveled_km, total_count, strikes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       traveled_km, total_count, strikes, country_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   db.transaction(() => {
     for (const s of storms) {
       if (!s.stormKey) continue;
       stmt.run(s.stormKey, s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
         s.originLat, s.originLon, s.originCity, s.startTime, s.endTime,
-        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null);
+        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null,
+        s.countryPath ? JSON.stringify(s.countryPath) : null);
     }
   })();
 }
@@ -380,7 +394,8 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
     SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
            origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
            start_time AS startTime, end_time AS endTime,
-           traveled_km AS traveledKm, total_count AS totalCount
+           traveled_km AS traveledKm, total_count AS totalCount,
+           country_path AS countryPath
     FROM storms WHERE date = ?`;
   return (code
     ? db.prepare(`${base} AND code = ? ORDER BY count DESC`).all(date, code)
@@ -393,13 +408,16 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
     SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
            origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
            start_time AS startTime, end_time AS endTime,
-           traveled_km AS traveledKm, total_count AS totalCount, strikes
+           traveled_km AS traveledKm, total_count AS totalCount, strikes,
+           country_path AS countryPath
     FROM storms WHERE storm_key = ?
-  `).get(stormKey) as (Omit<BiggestStorm, 'strikes'> & { strikes: string | null }) | undefined;
+  `).get(stormKey) as (Omit<BiggestStorm, 'strikes' | 'countryPath'> & { strikes: string | null; countryPath: string | null }) | undefined;
   if (!row) return null;
   let strikes: StormStrike[] | null = null;
   try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt */ }
-  return { ...row, strikes };
+  let countryPath: string[] | null = null;
+  try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
+  return { ...row, strikes, countryPath };
 }
 
 /** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
