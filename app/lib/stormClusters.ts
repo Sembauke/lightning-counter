@@ -22,8 +22,8 @@ export type CityTuple = [name: string, lat: number, lon: number];
 
 // ~0.25° ≈ 25 km cells; adjacent active cells merge into one storm
 const CELL_DEG = 0.25;
-// A cluster only counts as a storm at 10+ strikes per minute
-const MIN_RATE_PER_MIN = 10;
+// A cluster only counts as a storm at 15+ strikes per minute
+const MIN_RATE_PER_MIN = 15;
 const MAX_STORMS = 8;
 // Clusters with centroids closer than this are the same storm
 const MERGE_KM = 100;

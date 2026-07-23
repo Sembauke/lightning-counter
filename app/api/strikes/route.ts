@@ -146,8 +146,8 @@ interface TrackedStorm {
 const trackedStorms: TrackedStorm[] = [];
 // A cell within this distance of a tracked storm's last centroid is the same storm
 const STORM_MATCH_KM = 60;
-// Drop a storm after missing ~10 passes below the threshold (~5 min)
-const STORM_DROP_MS = 300_000;
+// Keep a storm alive for 60 min after it drops below the detection threshold
+const STORM_DROP_MS = 60 * 60 * 1000;
 // No storm system moves faster than this — lifetime cap on distance traveled
 const STORM_MAX_KMH = 120;
 // A storm enters the storm log only once its peak rate reaches this (strikes/min);
