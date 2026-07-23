@@ -146,18 +146,18 @@ interface TrackedStorm {
 const trackedStorms: TrackedStorm[] = [];
 // A cell within this distance of a tracked storm's last centroid is the same storm
 const STORM_MATCH_KM = 60;
-// Drop a storm after missing ~3 passes below the threshold
-const STORM_DROP_MS = 100_000;
+// Drop a storm after missing ~10 passes below the threshold (~5 min)
+const STORM_DROP_MS = 300_000;
 // No storm system moves faster than this — lifetime cap on distance traveled
 const STORM_MAX_KMH = 120;
 // A storm enters the storm log only once its peak rate reaches this (strikes/min);
 // biggest-storm and record tables are exempt — they're superlatives, not a log
-const STORM_LOG_MIN_RATE = 150;
+const STORM_LOG_MIN_RATE = 50;
 // Travel stride: passes per measurement, and the displacement band that counts
-// as real drift (≥3 km ≈ 36 km/h sustained; >12 km ≈ re-merge, not motion)
+// as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
 const TRAVEL_STRIDE_PASSES = 10;
 const TRAVEL_MIN_KM = 3;
-const TRAVEL_MAX_KM = 12;
+const TRAVEL_MAX_KM = 20;
 
 function meanPos(points: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
   let lat = 0, lon = 0;
@@ -208,6 +208,9 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   }
   st.lastStrikeTime = newest;
   if (st.allStrikes.length > ALL_STRIKES_MAX) {
+    // Thin to a uniform temporal spread: sort by time, keep every other,
+    // preserving even density across the storm's full life.
+    st.allStrikes.sort((a, b) => a[2] - b[2]);
     st.allStrikes = st.allStrikes.filter((_, i) => i % 2 === 0);
     st.keepEvery *= 2;
   }
@@ -298,13 +301,11 @@ setInterval(() => {
         accumulateStrikes(best, cell.members);
         matched.add(best);
       } else {
-        let firstStrike = Infinity;
-        for (const m of cell.members) if (m.time < firstStrike) firstStrike = m.time;
         const fresh: TrackedStorm = {
           key: `${cc}:${nowMs}:${stormSeq++}`,
           cc,
           originLat: cell.lat, originLon: cell.lon, originCity: city,
-          startTime: firstStrike,
+          startTime: nowMs,
           lat: cell.lat, lon: cell.lon, city,
           peakCount: cell.count, peakRate: cell.rate,
           traveledKm: 0,

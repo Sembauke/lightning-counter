@@ -61,6 +61,7 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_storms_date_count ON storms(date, count DESC);
     CREATE INDEX IF NOT EXISTS idx_storms_code_date ON storms(code, date);
+    CREATE INDEX IF NOT EXISTS idx_storms_start_time ON storms(start_time);
     CREATE TABLE IF NOT EXISTS storm_records (
       category TEXT PRIMARY KEY,
       code TEXT NOT NULL,
@@ -404,8 +405,13 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
 /** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
 export function pruneStormStrikes(): void {
   const db = getDb();
+  const now = Date.now();
+  // Drop replay strike blobs after 7 days — metadata row stays for the log
   db.prepare('UPDATE storms SET strikes = NULL WHERE strikes IS NOT NULL AND end_time < ?')
-    .run(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    .run(now - 7 * 24 * 60 * 60 * 1000);
+  // Drop storm rows entirely after 90 days
+  db.prepare('DELETE FROM storms WHERE end_time < ?')
+    .run(now - 90 * 24 * 60 * 60 * 1000);
 }
 
 export function getTopDailyPeak(): { code: string; count: number; date: string } | null {
