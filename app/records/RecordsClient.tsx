@@ -10,7 +10,7 @@ import type { GlobalStormRecord, StormRecordCategory } from '../lib/db';
 
 const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { ssr: false });
 
-const CATEGORY_ORDER: StormRecordCategory[] = ['biggest', 'longest', 'farthest', 'fastest'];
+const CATEGORY_ORDER: StormRecordCategory[] = ['biggest', 'longest', 'farthest'];
 
 export default function RecordsClient() {
   const t = useTranslations('records');
@@ -36,11 +36,7 @@ export default function RecordsClient() {
       case 'biggest': return ts('peakRate', { rate: fmtRate(rec.rate) });
       case 'longest': return rec.startTime != null && rec.endTime != null ? fmtDuration(rec.endTime - rec.startTime) : '';
       case 'farthest': return ts('traveled', { km: Math.round(rec.traveledKm ?? 0) });
-      case 'fastest': {
-        if (rec.traveledKm == null || rec.startTime == null || rec.endTime == null) return '';
-        const kmh = rec.traveledKm / ((rec.endTime - rec.startTime) / 3_600_000);
-        return `${Math.round(kmh)} km/h`;
-      }
+      default: return '';
     }
   }
 

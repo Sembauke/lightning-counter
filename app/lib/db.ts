@@ -285,7 +285,7 @@ export function upsertBiggestStorms(storms: BiggestStorm[]): void {
 }
 
 // ── Global storm hall of fame ───────────────────────────────────────────
-export type StormRecordCategory = 'biggest' | 'longest' | 'farthest' | 'fastest';
+export type StormRecordCategory = 'biggest' | 'longest' | 'farthest';
 
 export interface GlobalStormRecord extends BiggestStorm {
   category: StormRecordCategory;
@@ -295,13 +295,6 @@ const RECORD_METRICS: Record<StormRecordCategory, (s: BiggestStorm) => number | 
   biggest: s => s.count,
   longest: s => (s.startTime != null && s.endTime != null ? s.endTime - s.startTime : null),
   farthest: s => (s.traveledKm != null && s.traveledKm >= 5 ? s.traveledKm : null),
-  // km/h over the storm's life; short or barely-moving storms aren't eligible
-  fastest: s => {
-    if (s.traveledKm == null || s.startTime == null || s.endTime == null) return null;
-    const hours = (s.endTime - s.startTime) / 3_600_000;
-    if (s.traveledKm < 20 || hours < 1 / 6) return null;
-    return s.traveledKm / hours;
-  },
 };
 
 export function getStormRecords(): GlobalStormRecord[] {
