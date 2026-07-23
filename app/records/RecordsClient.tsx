@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
@@ -106,7 +107,7 @@ export default function RecordsClient() {
               <div className="daily-best-title">{t('dailyBest')}</div>
               <div className="daily-best-list">
                 {dailyBest.map(s => (
-                  <div key={s.stormKey} className="daily-best-row">
+                  <Link key={s.stormKey} href={`/storms/${encodeURIComponent(s.stormKey)}`} className="daily-best-row">
                     <span className="daily-best-date">{s.date}</span>
                     <span className="daily-best-country">
                       {s.countryPath && s.countryPath.length > 1
@@ -134,7 +135,7 @@ export default function RecordsClient() {
                         <> · {ts('traveled', { km: Math.round(s.traveledKm) })}</>
                       )}
                     </span>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </div>

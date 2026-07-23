@@ -886,8 +886,11 @@ html, body {
   border-bottom: 1px solid rgba(255,255,255,0.05);
   font-size: 0.8rem;
   transition: background 0.15s;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
 }
-.daily-best-row:hover { background: rgba(255,255,255,0.03); }
+.daily-best-row:hover { background: rgba(255,255,255,0.04); }
 .daily-best-date { color: #666; font-family: 'Courier New', monospace; font-size: 0.75rem; }
 .daily-best-country { display: flex; align-items: center; gap: 0.2rem; flex-wrap: wrap; }
 .daily-best-name { color: #ccc; }
@@ -895,6 +898,64 @@ html, body {
 @media (max-width: 640px) {
   .daily-best-row { grid-template-columns: 5rem auto 1fr; }
   .daily-best-stats { display: none; }
+}
+
+/* ── Storm detail page ── */
+.storm-detail-back {
+  font-size: 0.78rem;
+  color: #888;
+  text-decoration: none;
+  letter-spacing: 0.04em;
+}
+.storm-detail-back:hover { color: #ccc; }
+.storm-detail-body {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.storm-detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.storm-detail-country {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: #aaa;
+}
+.storm-detail-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #ffe566;
+  margin: 0;
+  line-height: 1.2;
+}
+.storm-detail-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: #aaa;
+}
+.storm-detail-sep { color: #444; }
+.storm-detail-date { color: #666; font-family: 'Courier New', monospace; }
+.storm-detail-map { border-radius: 8px; overflow: hidden; }
+.storm-detail-no-replay {
+  text-align: center;
+  color: #555;
+  font-size: 0.85rem;
+  padding: 3rem 0;
+}
+@media (max-width: 640px) {
+  .storm-detail-body { padding: 1rem 0.75rem 3rem; }
+  .storm-detail-name { font-size: 1.1rem; }
 }
 
 /* ── Country hover tooltip ── */
