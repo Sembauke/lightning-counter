@@ -6,7 +6,7 @@ import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
-import type { GlobalStormRecord, StormRecordCategory } from '../lib/db';
+import type { GlobalStormRecord, StormRecordCategory, StormLogRow } from '../lib/db';
 
 const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { ssr: false });
 
@@ -17,13 +17,15 @@ export default function RecordsClient() {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
   const [storms, setStorms] = useState<GlobalStormRecord[]>([]);
+  const [dailyBest, setDailyBest] = useState<StormLogRow[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     fetch('/api/records')
       .then(r => r.json())
-      .then((data: { storms: GlobalStormRecord[] }) => {
+      .then((data: { storms: GlobalStormRecord[]; dailyBest: StormLogRow[] }) => {
         setStorms(data.storms);
+        setDailyBest(data.dailyBest ?? []);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -50,6 +52,7 @@ export default function RecordsClient() {
         {!loaded ? null : storms.length === 0 ? (
           <div className="archive-empty">{t('noData')}</div>
         ) : (
+          <>
           <div className="records-grid">
             {CATEGORY_ORDER.map(cat => {
               const rec = byCategory.get(cat);
@@ -97,6 +100,46 @@ export default function RecordsClient() {
               );
             })}
           </div>
+
+          {dailyBest.length > 0 && (
+            <div className="daily-best-section">
+              <div className="daily-best-title">{t('dailyBest')}</div>
+              <div className="daily-best-list">
+                {dailyBest.map(s => (
+                  <div key={s.stormKey} className="daily-best-row">
+                    <span className="daily-best-date">{s.date}</span>
+                    <span className="daily-best-country">
+                      {s.countryPath && s.countryPath.length > 1
+                        ? s.countryPath.map((cc, i) => (
+                            <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                              {i > 0 && <span className="storm-log-arrow">→</span>}
+                              <CountryFlag code={cc} name={countryName(cc)} />
+                            </span>
+                          ))
+                        : <CountryFlag code={s.code} name={countryName(s.code)} />}
+                    </span>
+                    <span className="daily-best-name">
+                      {s.originCity && s.city && s.originCity !== s.city
+                        ? ts('stormFromTo', { from: s.originCity, to: s.city })
+                        : s.city
+                          ? ts('stormNear', { city: s.city })
+                          : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`}
+                    </span>
+                    <span className="daily-best-stats">
+                      {ts('peakRate', { rate: fmtRate(s.rate) })}
+                      {s.startTime != null && s.endTime != null && (
+                        <> · {fmtClock(s.startTime)} – {fmtClock(s.endTime)}</>
+                      )}
+                      {s.traveledKm != null && s.traveledKm >= 5 && (
+                        <> · {ts('traveled', { km: Math.round(s.traveledKm) })}</>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          </>
         )}
       </div>
     </div>

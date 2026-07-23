@@ -859,6 +859,44 @@ html, body {
   .records-body { padding: 0.75rem 0.75rem 2rem; }
 }
 
+/* ── Daily best storms ── */
+.daily-best-section {
+  margin-top: 2rem;
+}
+.daily-best-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #888;
+  padding: 0 0.25rem 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  margin-bottom: 0.25rem;
+}
+.daily-best-list {
+  display: flex;
+  flex-direction: column;
+}
+.daily-best-row {
+  display: grid;
+  grid-template-columns: 6rem auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 0.8rem;
+  transition: background 0.15s;
+}
+.daily-best-row:hover { background: rgba(255,255,255,0.03); }
+.daily-best-date { color: #666; font-family: 'Courier New', monospace; font-size: 0.75rem; }
+.daily-best-country { display: flex; align-items: center; gap: 0.2rem; flex-wrap: wrap; }
+.daily-best-name { color: #ccc; }
+.daily-best-stats { color: #888; font-size: 0.75rem; text-align: right; white-space: nowrap; }
+@media (max-width: 640px) {
+  .daily-best-row { grid-template-columns: 5rem auto 1fr; }
+  .daily-best-stats { display: none; }
+}
+
 /* ── Country hover tooltip ── */
 .country-tooltip {
   position: absolute;

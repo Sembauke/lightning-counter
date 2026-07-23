@@ -78,7 +78,8 @@
     "longest": "Langstdurende bui",
     "farthest": "Verst gereisd",
     "dailyPeak": "Meeste ontladingen op één dag",
-    "noData": "Nog geen records — onweersbuien worden gevolgd."
+    "noData": "Nog geen records — onweersbuien worden gevolgd.",
+    "dailyBest": "Best storm per day"
   },
   "stormLog": {
     "title": "Onweerslogboek",

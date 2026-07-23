@@ -395,6 +395,22 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
     : db.prepare(`${base} ORDER BY count DESC`).all(date)) as StormLogRow[];
 }
 
+/** Best storm per calendar date, ordered newest-first, for the records page timeline */
+export function getBiggestStormPerDay(): StormLogRow[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime,
+           traveled_km AS traveledKm, total_count AS totalCount,
+           country_path AS countryPath
+    FROM storms
+    WHERE (date, count) IN (SELECT date, MAX(count) FROM storms GROUP BY date)
+    ORDER BY date DESC
+  `).all() as StormLogRow[];
+  return rows;
+}
+
 export function getStormByKey(stormKey: string): BiggestStorm | null {
   const db = getDb();
   const row = db.prepare(`

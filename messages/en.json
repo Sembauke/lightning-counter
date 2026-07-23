@@ -78,7 +78,8 @@
     "longest": "Longest-lived storm",
     "farthest": "Farthest traveled",
     "dailyPeak": "Most strikes in one day",
-    "noData": "No records yet — storms are being tracked."
+    "noData": "No records yet — storms are being tracked.",
+    "dailyBest": "Best storm per day"
   },
   "stormLog": {
     "title": "Storm Log",
