@@ -37,10 +37,74 @@ const A3_TO_A2: Record<string, string> = {
   ZWE:'ZW',
 };
 
+// Ray-casting point-in-polygon test.
+// poly is an array of [lon, lat] vertices.
+function pip(lat: number, lon: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// Simplified border polygons for micro-states omitted by country-reverse-geocoding.
+// Vertices are [lon, lat] pairs. Good enough for lightning-strike attribution.
+const MICRO_STATES: Array<{ code: string; poly: [number, number][] }> = [
+  {
+    // Andorra — nestled in the Pyrenees between France and Spain
+    code: 'AD',
+    poly: [
+      [1.420, 42.465], [1.465, 42.433], [1.545, 42.429], [1.660, 42.450],
+      [1.742, 42.450], [1.787, 42.507], [1.740, 42.581], [1.718, 42.613],
+      [1.660, 42.641], [1.609, 42.656], [1.508, 42.656], [1.418, 42.640],
+      [1.408, 42.560],
+    ],
+  },
+  {
+    // Monaco — tiny city-state on the French Riviera
+    code: 'MC',
+    poly: [
+      [7.376, 43.724], [7.440, 43.724], [7.440, 43.752], [7.376, 43.752],
+    ],
+  },
+  {
+    // San Marino — enclave within central Italy
+    code: 'SM',
+    poly: [
+      [12.393, 43.893], [12.467, 43.893], [12.516, 43.942], [12.516, 43.988],
+      [12.452, 43.992], [12.406, 43.960], [12.393, 43.920],
+    ],
+  },
+  {
+    // Liechtenstein — narrow strip between Switzerland and Austria
+    code: 'LI',
+    poly: [
+      [9.471, 47.058], [9.576, 47.058], [9.636, 47.119], [9.622, 47.270],
+      [9.545, 47.270], [9.471, 47.220],
+    ],
+  },
+  {
+    // Vatican City — enclave within Rome
+    code: 'VA',
+    poly: [
+      [12.435, 41.895], [12.465, 41.895], [12.465, 41.910], [12.435, 41.910],
+    ],
+  },
+];
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _crg: any = null;
 
 export function getCountryCode(lat: number, lon: number): string | null {
+  // Check micro-states first — the library's simplified polygons omit them entirely.
+  for (const { code, poly } of MICRO_STATES) {
+    if (pip(lat, lon, poly)) return code;
+  }
+
   if (!_crg) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     _crg = require('country-reverse-geocoding').country_reverse_geocoding();

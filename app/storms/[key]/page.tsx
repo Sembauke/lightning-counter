@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getStormByKey } from '../../lib/db';
+import { getStormByKey, getStormRecords } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
 
@@ -29,5 +29,6 @@ export default async function StormDetailPage({ params }: Props) {
   const { key } = await params;
   const storm = getStormByKey(decodeURIComponent(key));
   if (!storm) notFound();
-  return <StormDetailClient storm={storm} />;
+  const records = getStormRecords();
+  return <StormDetailClient storm={storm} records={records} />;
 }

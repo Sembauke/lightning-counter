@@ -27,8 +27,14 @@ const MIN_RATE_PER_MIN = 15;
 const MAX_STORMS = 8;
 // Clusters with centroids closer than this are the same storm
 const MERGE_KM = 75;
-// Centroid must move ~3 km between window halves to count as drifting
-const DRIFT_MIN_DEG = 0.03;
+// Centroid must move ~6 km between window halves to count as drifting.
+// 0.03° (~3 km) was too sensitive — a large stationary cell's centroid wobbles
+// by that much just from where strikes happen to fall within the 5-minute window.
+const DRIFT_MIN_DEG = 0.06;
+// A cell must have at least this many strikes to be treated as "occupied" in the BFS.
+// Without this, a handful of scattered strikes can chain two separate storm systems
+// into one cluster before the agglomerative distance check runs.
+const MIN_CELL_STRIKES = 4;
 
 const NEIGHBORS = [-1, 0, 1];
 
@@ -41,11 +47,13 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
     else cells.set(key, [s]);
   }
 
-  // BFS-merge adjacent occupied cells into clusters
+  // BFS-merge adjacent occupied cells into clusters.
+  // Only cells with >= MIN_CELL_STRIKES participate; this prevents a handful of
+  // scattered strikes from bridging two separate storm systems via cell adjacency.
   const visited = new Set<string>();
   const clusters: StrikePoint[][] = [];
-  for (const start of cells.keys()) {
-    if (visited.has(start)) continue;
+  for (const [start, startPts] of cells) {
+    if (startPts.length < MIN_CELL_STRIKES || visited.has(start)) continue;
     visited.add(start);
     const cluster: StrikePoint[] = [];
     const queue = [start];
@@ -56,7 +64,8 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
       for (const di of NEIGHBORS) for (const dj of NEIGHBORS) {
         if (di === 0 && dj === 0) continue;
         const nk = `${ci + di}:${cj + dj}`;
-        if (cells.has(nk) && !visited.has(nk)) {
+        const nPts = cells.get(nk);
+        if (nPts && nPts.length >= MIN_CELL_STRIKES && !visited.has(nk)) {
           visited.add(nk);
           queue.push(nk);
         }

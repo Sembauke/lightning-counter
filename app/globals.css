@@ -958,6 +958,181 @@ html, body {
   .storm-detail-name { font-size: 1.1rem; }
 }
 
+/* ── Storm detail — extended ── */
+.storm-detail-date-line {
+  font-size: 0.78rem;
+  color: #666;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.03em;
+}
+.storm-record-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.storm-record-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+}
+.storm-record-badge--biggest  { background: rgba(255,107,53,0.18); color: #ff6b35; border: 1px solid rgba(255,107,53,0.4); }
+.storm-record-badge--longest  { background: rgba(100,200,255,0.12); color: #64c8ff; border: 1px solid rgba(100,200,255,0.35); }
+.storm-record-badge--farthest { background: rgba(150,255,150,0.12); color: #80e880; border: 1px solid rgba(150,255,150,0.3); }
+
+.storm-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+.storm-kpi {
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.storm-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #ffe566;
+  line-height: 1;
+}
+.storm-kpi-unit {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: #888;
+  margin-left: 0.1rem;
+}
+.storm-kpi-label {
+  font-size: 0.7rem;
+  color: #666;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.storm-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.storm-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #555;
+  border-bottom: 1px solid #1e1e1e;
+  padding-bottom: 0.4rem;
+}
+
+.storm-timeline-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: #666;
+}
+.storm-timeline-peak-label {
+  color: #ff8c5a;
+  font-weight: 600;
+  text-align: center;
+}
+.timeline-chart {
+  width: 100%;
+  height: 100px;
+  display: block;
+}
+
+.storm-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+@media (max-width: 640px) {
+  .storm-two-col { grid-template-columns: 1fr; }
+  .storm-kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  .storm-kpi-value { font-size: 1.2rem; }
+}
+
+.storm-info-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.storm-info-row {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid #191919;
+  font-size: 0.82rem;
+}
+.storm-info-row:last-child { border-bottom: none; }
+.storm-info-label {
+  color: #555;
+  width: 7.5rem;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+}
+.storm-info-value { color: #bbb; }
+.storm-info-value--peak { color: #ff8c5a; font-weight: 600; }
+
+.storm-countries-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.storm-country-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #ccc;
+}
+.storm-country-arrow { color: #444; }
+
+.storm-compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.storm-compare-row {
+  display: grid;
+  grid-template-columns: 11rem 1fr 2.5rem;
+  align-items: center;
+  gap: 0.75rem;
+}
+.storm-compare-label {
+  font-size: 0.78rem;
+  color: #777;
+}
+.storm-compare-track {
+  background: #1a1a1a;
+  border-radius: 3px;
+  height: 8px;
+  overflow: hidden;
+}
+.storm-compare-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.storm-compare-pct {
+  font-size: 0.75rem;
+  color: #888;
+  text-align: right;
+  font-family: 'Courier New', monospace;
+}
+@media (max-width: 640px) {
+  .storm-compare-row { grid-template-columns: 8rem 1fr 2rem; }
+  .storm-compare-label { font-size: 0.72rem; }
+}
+
 /* ── Country hover tooltip ── */
 .country-tooltip {
   position: absolute;

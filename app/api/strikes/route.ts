@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, enrichStormCountryPaths, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -167,6 +167,11 @@ const trackedStorms: TrackedStorm[] = (() => {
     return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
   } catch { return []; }
 })();
+// Retroactively fill in countries that were missing from historical storm paths
+// (runs once in the background so it doesn't delay the first request).
+setImmediate(() => {
+  try { enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
+});
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
 const TRAVEL_STRIDE_PASSES = 10;
@@ -299,10 +304,13 @@ setInterval(() => {
       const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
       const foot = footprintCenter(cell.members);
       if (best) {
-        if (cc !== best.cc) {
-          best.cc = cc;
-          if (!best.countryCodes.includes(cc)) best.countryCodes.push(cc);
+        // Add every country present in this cluster (not just the dominant one).
+        // A storm straddling SI/HR will have cc='SI' but HR strikes should still
+        // appear in the path.
+        for (const c of Object.keys(ccCounts)) {
+          if (!best.countryCodes.includes(c)) best.countryCodes.push(c);
         }
+        if (cc !== best.cc) best.cc = cc;
         best.posBuf.push(foot);
         if (best.posBuf.length >= TRAVEL_STRIDE_PASSES) {
           // Smooth the stride endpoint over its last few passes
@@ -336,7 +344,7 @@ setInterval(() => {
           travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
           lastSeen: nowMs,
           allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
-          countryCodes: [cc],
+          countryCodes: Object.keys(ccCounts),
         };
         accumulateStrikes(fresh, cell.members);
         trackedStorms.push(fresh);

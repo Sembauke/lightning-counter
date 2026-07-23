@@ -381,6 +381,11 @@ export function upsertStorms(storms: BiggestStorm[]): void {
   })();
 }
 
+function parseCountryPath(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as string[]; } catch { return null; }
+}
+
 export function getStormsForDate(date: string, code?: string): StormLogRow[] {
   const db = getDb();
   const base = `
@@ -390,9 +395,10 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
            traveled_km AS traveledKm, total_count AS totalCount,
            country_path AS countryPath
     FROM storms WHERE date = ?`;
-  return (code
+  const rows = (code
     ? db.prepare(`${base} AND code = ? ORDER BY count DESC`).all(date, code)
-    : db.prepare(`${base} ORDER BY count DESC`).all(date)) as StormLogRow[];
+    : db.prepare(`${base} ORDER BY count DESC`).all(date)) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
+  return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
 /** Best storm per calendar date, ordered newest-first, for the records page timeline */
@@ -407,8 +413,8 @@ export function getBiggestStormPerDay(): StormLogRow[] {
     FROM storms
     WHERE (date, count) IN (SELECT date, MAX(count) FROM storms GROUP BY date)
     ORDER BY date DESC
-  `).all() as StormLogRow[];
-  return rows;
+  `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
+  return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
 export function getStormByKey(stormKey: string): BiggestStorm | null {
@@ -446,12 +452,68 @@ export function loadTrackedStorms(): unknown[] {
 export function pruneStormStrikes(): void {
   const db = getDb();
   const now = Date.now();
-  // Drop replay strike blobs after 7 days — metadata row stays for the log
-  db.prepare('UPDATE storms SET strikes = NULL WHERE strikes IS NOT NULL AND end_time < ?')
-    .run(now - 7 * 24 * 60 * 60 * 1000);
-  // Drop storm rows entirely after 90 days
-  db.prepare('DELETE FROM storms WHERE end_time < ?')
-    .run(now - 90 * 24 * 60 * 60 * 1000);
+  const cutoff7d = now - 7 * 24 * 60 * 60 * 1000;
+  const cutoff90d = now - 90 * 24 * 60 * 60 * 1000;
+
+  // Preserve strikes forever for the best storm on each date and for any storm
+  // that is a current global record holder. All other blobs drop after 7 days.
+  db.prepare(`
+    UPDATE storms SET strikes = NULL
+    WHERE strikes IS NOT NULL
+      AND end_time < ?
+      AND (date, count) NOT IN (SELECT date, MAX(count) FROM storms GROUP BY date)
+      AND (storm_key IS NULL OR storm_key NOT IN (
+            SELECT storm_key FROM storm_records WHERE storm_key IS NOT NULL
+          ))
+  `).run(cutoff7d);
+
+  // Drop non-notable storm rows after 90 days.
+  db.prepare(`
+    DELETE FROM storms
+    WHERE end_time < ?
+      AND (date, count) NOT IN (SELECT date, MAX(count) FROM storms GROUP BY date)
+      AND (storm_key IS NULL OR storm_key NOT IN (
+            SELECT storm_key FROM storm_records WHERE storm_key IS NOT NULL
+          ))
+  `).run(cutoff90d);
+}
+
+/**
+ * Retroactively fill in missing countries for recent storms by sampling stored
+ * strike coordinates. Pass getCountryCode from geoCountry to avoid a circular
+ * import between db ↔ geoCountry.
+ */
+export function enrichStormCountryPaths(
+  lookupCC: (lat: number, lon: number) => string | null,
+  limitDays = 30,
+): void {
+  const db = getDb();
+  const cutoff = Date.now() - limitDays * 24 * 60 * 60 * 1000;
+  const rows = db.prepare(`
+    SELECT storm_key, country_path, strikes
+    FROM storms
+    WHERE strikes IS NOT NULL AND end_time > ?
+    ORDER BY end_time DESC
+    LIMIT 300
+  `).all(cutoff) as Array<{ storm_key: string; country_path: string | null; strikes: string }>;
+
+  const update = db.prepare('UPDATE storms SET country_path = ? WHERE storm_key = ?');
+
+  for (const row of rows) {
+    try {
+      const strikes = JSON.parse(row.strikes) as StormStrike[];
+      // Keep existing path order; only append genuinely new countries
+      const existing: string[] = row.country_path ? JSON.parse(row.country_path) : [];
+      const seen = new Set(existing);
+      let changed = false;
+      // Sample every 8th strike for efficiency (~12% of points)
+      for (let i = 0; i < strikes.length; i += 8) {
+        const cc = lookupCC(strikes[i][0], strikes[i][1]);
+        if (cc && !seen.has(cc)) { existing.push(cc); seen.add(cc); changed = true; }
+      }
+      if (changed) update.run(JSON.stringify(existing), row.storm_key);
+    } catch { /* skip corrupt rows */ }
+  }
 }
 
 export function getTopDailyPeak(): { code: string; count: number; date: string } | null {
