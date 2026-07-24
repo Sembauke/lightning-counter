@@ -457,6 +457,35 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
 }
 
 /** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
+/**
+ * One-time repair: remove data tainted by the old 6-hour storm-drop window.
+ * Storms with duration > 6 h almost certainly spliced two separate events.
+ * Global records are cleared entirely so they rebuild from clean storms.
+ */
+export function repairTaintedStormData(): void {
+  const db = getDb();
+  const sixHoursMs = 6 * 60 * 60 * 1000;
+
+  // Delete log rows whose tracked duration exceeds 6 hours — these are the
+  // ones most likely to be two storms merged by the old 6-hour re-match window.
+  db.prepare(`
+    DELETE FROM storms
+    WHERE start_time IS NOT NULL
+      AND end_time IS NOT NULL
+      AND (end_time - start_time) > ?
+  `).run(sixHoursMs);
+
+  // Wipe global records entirely — they'll be rebuilt from clean incoming data.
+  db.prepare('DELETE FROM storm_records').run();
+
+  // Remove country-biggest entries whose referenced storm was just deleted.
+  db.prepare(`
+    DELETE FROM country_biggest_storms
+    WHERE storm_key IS NOT NULL
+      AND storm_key NOT IN (SELECT storm_key FROM storms WHERE storm_key IS NOT NULL)
+  `).run();
+}
+
 export function saveTrackedStorms(storms: unknown[]): void {
   const db = getDb();
   db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)')

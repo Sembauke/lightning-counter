@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, enrichStormCountryPaths, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, enrichStormCountryPaths, repairTaintedStormData, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -151,10 +151,11 @@ interface TrackedStorm {
 const STORM_MATCH_KM = 60;
 // Minimum match window regardless of elapsed time (absorbs centroid jitter)
 const STORM_MATCH_MIN_KM = 15;
-// Keep a storm alive for 6 hours after it drops below the detection threshold.
-// Storm systems can reorganise or stall for hours before redeveloping; a shorter
-// window creates spurious new-storm entries for what is really one continuous event.
-const STORM_DROP_MS = 6 * 60 * 60 * 1000;
+// Keep a storm alive for 1 hour after it drops below the detection threshold.
+// Beyond that, a re-appearing cell in the same area is a new storm, not a
+// continuation — the 6-hour window was causing unrelated evening storms to
+// inherit morning storm identities, inflating counts and durations.
+const STORM_DROP_MS = 1 * 60 * 60 * 1000;
 // No storm system moves faster than this — lifetime cap on distance traveled
 const STORM_MAX_KMH = 120;
 // A storm enters the storm log only once its peak rate reaches this (strikes/min);
@@ -167,9 +168,10 @@ const trackedStorms: TrackedStorm[] = (() => {
     return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
   } catch { return []; }
 })();
-// Retroactively fill in countries that were missing from historical storm paths
-// (runs once in the background so it doesn't delay the first request).
+// One-time data repair: remove storms tainted by the old 6-hour re-match window,
+// then backfill country paths for the clean survivors.
 setImmediate(() => {
+  try { repairTaintedStormData(); } catch { /* non-fatal */ }
   try { enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
 });
 // Travel stride: passes per measurement, and the displacement band that counts
