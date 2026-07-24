@@ -1,4 +1,7 @@
-FROM node:20-alpine AS base
+# syntax=docker/dockerfile:1
+# deps and builder run on the host CPU (no QEMU) via BUILDPLATFORM.
+# Only the final runner image is cross-compiled, which is trivial.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS base
 
 FROM base AS deps
 RUN apk add --no-cache libc6-compat python3 make g++
@@ -13,7 +16,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM base AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
