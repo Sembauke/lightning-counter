@@ -49,6 +49,19 @@ export default function StormsClient() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ key: string; strikes: StormStrike[] } | null>(null);
   const [flashKeys, setFlashKeys] = useState<Set<string>>(new Set());
+  const [pinnedKeys, setPinnedKeys] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('pinnedStorms') ?? '[]')); } catch { return new Set(); }
+  });
+
+  function togglePin(key: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setPinnedKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      localStorage.setItem('pinnedStorms', JSON.stringify([...next]));
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -62,9 +75,10 @@ export default function StormsClient() {
         if (!isFirstLoad) {
           setStorms(prev => {
             const changed = new Set<string>();
-            const prevMap = new Map(prev.map(p => [p.stormKey, p.count]));
+            const prevMap = new Map(prev.map(p => [p.stormKey, p.totalCount ?? p.count]));
             for (const row of rows) {
-              if (prevMap.has(row.stormKey) && prevMap.get(row.stormKey) !== row.count)
+              const prev = prevMap.get(row.stormKey);
+              if (prev != null && prev !== (row.totalCount ?? row.count))
                 changed.add(row.stormKey);
             }
             if (changed.size > 0) {
@@ -84,7 +98,7 @@ export default function StormsClient() {
 
     setLoaded(false);
     setStorms([]);
-    load(true);
+    load(true);  // first load shows loading state; subsequent polls are silent
 
     if (!isToday) return () => { cancelled = true; };
     const timer = setInterval(() => { if (!document.hidden) load(false); }, 5_000);
@@ -113,16 +127,26 @@ export default function StormsClient() {
   };
 
   const filtered = useMemo(() => {
+    const now = Date.now();
+    const isLiveFn = (s: StormRow) =>
+      date === todayUTC() && s.endTime != null && now - s.endTime < 10 * 60 * 1000;
+
     const q = search.trim().toLowerCase();
-    if (!q) return storms;
-    return storms.filter(s =>
-      countryName(s.code).toLowerCase().includes(q)
-      || s.code.toLowerCase().includes(q)
-      || (s.city ?? '').toLowerCase().includes(q)
-      || (s.originCity ?? '').toLowerCase().includes(q)
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storms, search]);
+    const base = q
+      ? storms.filter(s =>
+          countryName(s.code).toLowerCase().includes(q)
+          || s.code.toLowerCase().includes(q)
+          || (s.city ?? '').toLowerCase().includes(q)
+          || (s.originCity ?? '').toLowerCase().includes(q)
+        )
+      : storms;
+
+    const pinned = base.filter(s => pinnedKeys.has(s.stormKey));
+    const rest = base.filter(s => !pinnedKeys.has(s.stormKey));
+    const live = rest.filter(isLiveFn).sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+    const dead = rest.filter(s => !isLiveFn(s));
+    return [...pinned, ...live, ...dead];
+  }, [storms, search, date, pinnedKeys]);
 
   return (
     <div className="archive-page">
@@ -156,72 +180,83 @@ export default function StormsClient() {
             {filtered.map(s => {
               const open = expandedKey === s.stormKey;
               const isLive = date === todayUTC() && s.endTime != null && Date.now() - s.endTime < 10 * 60 * 1000;
+              const isPinned = pinnedKeys.has(s.stormKey);
               return (
-                <div key={s.stormKey} className={`storm-log-row${open ? ' open' : ''}${flashKeys.has(s.stormKey) ? ' flash' : ''}`}>
-                  <button className="storm-log-head" onClick={() => setExpandedKey(open ? null : s.stormKey)}>
-                    {/* Row 1: country path + badges */}
-                    <div className="storm-log-top">
-                      <span className="storm-log-country">
-                        {s.countryPath && s.countryPath.length > 1
-                          ? s.countryPath.map((cc, i) => (
-                              <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                                {i > 0 && <span className="storm-log-arrow">→</span>}
-                                <CountryFlag code={cc} name={countryName(cc)} />
-                                {countryName(cc)}
-                              </span>
-                            ))
-                          : (
-                            <>
-                              {s.originCode && s.originCode !== s.code && (
-                                <>
-                                  <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
-                                  {countryName(s.originCode)}
-                                  <span className="storm-log-arrow">→</span>
-                                </>
-                              )}
-                              <CountryFlag code={s.code} name={countryName(s.code)} />
-                              {countryName(s.code)}
-                            </>
-                          )}
-                      </span>
-                      <span className="storm-log-badges">
-                        {isLive && (
-                          <Link href={`/?lat=${s.lat}&lon=${s.lon}`} className="storm-live-tag" onClick={e => e.stopPropagation()}>LIVE</Link>
-                        )}
-                        {s.rank != null && (
-                          <span className="storm-log-rank" style={rankStyle(s.rank)}>{ordinal(s.rank)} biggest</span>
-                        )}
-                        <span className={`storm-chevron${open ? ' open' : ''}`}>▾</span>
-                      </span>
-                    </div>
-                    {/* Row 2: storm name */}
-                    <span className="storm-log-name">
-                      {s.originCity && s.city && s.originCity !== s.city
-                        ? ts('stormFromTo', { from: s.originCity, to: s.city })
-                        : s.city
-                          ? ts('stormNear', { city: s.city })
-                          : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`}
-                    </span>
-                    {/* Row 3: stats */}
-                    <div className="storm-log-stats">
-                      <span>{ts('strikesCount', { count: s.totalCount ?? s.count })}</span>
-                      <span>{ts('peakRate', { rate: fmtRate(s.rate) })}</span>
-                      {s.startTime != null && s.endTime != null && (
-                        <>
-                          <span>{fmtDuration(s.endTime - s.startTime)}</span>
-                          <span>{fmtClock(s.startTime)} – {fmtClock(s.endTime)}</span>
-                        </>
-                      )}
-                      {s.traveledKm != null && s.traveledKm >= 5 && (
-                        <span>{ts('traveled', { km: Math.round(s.traveledKm) })}</span>
-                      )}
-                    </div>
+                <div key={s.stormKey} className={`storm-log-row${open ? ' open' : ''}${flashKeys.has(s.stormKey) ? ' flash' : ''}${isPinned ? ' pinned' : ''}`}>
+                  <button
+                    className="storm-pin-btn"
+                    onClick={e => togglePin(s.stormKey, e)}
+                    title={isPinned ? 'Unpin storm' : 'Pin storm to top'}
+                    aria-label={isPinned ? 'Unpin storm' : 'Pin storm to top'}
+                  >
+                    {isPinned ? '📌' : '📍'}
                   </button>
-                  {open && (
-                    detail?.key === s.stormKey
-                      ? <StormReplayMap strikes={detail.strikes} />
-                      : <div className="storm-log-loading">…</div>
-                  )}
+                  <div className="storm-log-body">
+                    <button className="storm-log-head" onClick={() => setExpandedKey(open ? null : s.stormKey)}>
+                      {/* Row 1: country path + badges */}
+                      <div className="storm-log-top">
+                        <span className="storm-log-country">
+                          {s.countryPath && s.countryPath.length > 1
+                            ? s.countryPath.map((cc, i) => (
+                                <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                                  {i > 0 && <span className="storm-log-arrow">→</span>}
+                                  <CountryFlag code={cc} name={countryName(cc)} />
+                                  {countryName(cc)}
+                                </span>
+                              ))
+                            : (
+                              <>
+                                {s.originCode && s.originCode !== s.code && (
+                                  <>
+                                    <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
+                                    {countryName(s.originCode)}
+                                    <span className="storm-log-arrow">→</span>
+                                  </>
+                                )}
+                                <CountryFlag code={s.code} name={countryName(s.code)} />
+                                {countryName(s.code)}
+                              </>
+                            )}
+                        </span>
+                        <span className="storm-log-badges">
+                          {isLive && (
+                            <Link href={`/?lat=${s.lat}&lon=${s.lon}`} className="storm-live-tag" onClick={e => e.stopPropagation()}>LIVE</Link>
+                          )}
+                          {s.rank != null && (
+                            <span className="storm-log-rank" style={rankStyle(s.rank)}>{ordinal(s.rank)} biggest</span>
+                          )}
+                          <span className={`storm-chevron${open ? ' open' : ''}`}>▾</span>
+                        </span>
+                      </div>
+                      {/* Row 2: storm name */}
+                      <span className="storm-log-name">
+                        {s.originCity && s.city && s.originCity !== s.city
+                          ? ts('stormFromTo', { from: s.originCity, to: s.city })
+                          : s.city
+                            ? ts('stormNear', { city: s.city })
+                            : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`}
+                      </span>
+                      {/* Row 3: stats */}
+                      <div className="storm-log-stats">
+                        <span>{ts('strikesCount', { count: s.totalCount ?? s.count })}</span>
+                        <span>{ts('peakRate', { rate: fmtRate(s.rate) })}</span>
+                        {s.startTime != null && s.endTime != null && (
+                          <>
+                            <span>{fmtDuration(s.endTime - s.startTime)}</span>
+                            <span>{fmtClock(s.startTime)} – {fmtClock(s.endTime)}</span>
+                          </>
+                        )}
+                        {s.traveledKm != null && s.traveledKm >= 5 && (
+                          <span>{ts('traveled', { km: Math.round(s.traveledKm) })}</span>
+                        )}
+                      </div>
+                    </button>
+                    {open && (
+                      detail?.key === s.stormKey
+                        ? <StormReplayMap strikes={detail.strikes} />
+                        : <div className="storm-log-loading">…</div>
+                    )}
+                  </div>
                 </div>
               );
             })}

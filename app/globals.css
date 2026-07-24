@@ -1205,13 +1205,46 @@ html, body {
 }
 
 .storm-log-row {
+  position: relative;
   background: rgba(255,220,0,0.04);
   border: 1px solid rgba(255,220,0,0.14);
   border-radius: 8px;
   overflow: hidden;
   transition: background 0.4s, border-color 0.4s;
+  display: flex;
+  align-items: stretch;
 }
 .storm-log-row.open { border-color: rgba(255,220,0,0.3); }
+.storm-log-row.pinned {
+  border-color: rgba(255,180,0,0.5);
+  background: rgba(255,180,0,0.07);
+}
+.storm-pin-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  background: none;
+  border: none;
+  border-right: 1px solid rgba(255,220,0,0.1);
+  cursor: pointer;
+  font-size: 0.95rem;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+  padding: 0;
+}
+.storm-log-row:hover .storm-pin-btn,
+.storm-log-row.pinned .storm-pin-btn { opacity: 1; }
+.storm-log-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.storm-log-body .storm-log-head {
+  width: 100%;
+}
 .storm-log-row.flash {
   animation: row-flash 0.9s ease-out forwards;
 }
@@ -1225,7 +1258,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  width: 100%;
+  min-width: 0;
   padding: 0.75rem 1rem;
   background: none;
   border: none;
