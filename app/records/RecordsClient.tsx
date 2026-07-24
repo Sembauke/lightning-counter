@@ -58,8 +58,9 @@ export default function RecordsClient() {
             {CATEGORY_ORDER.map(cat => {
               const rec = byCategory.get(cat);
               if (!rec) return null;
-              return (
-                <div key={cat} className="rec-card">
+              const cardClass = `rec-card${rec.stormKey ? ' rec-card--link' : ''}`;
+              const cardContents = (
+                <>
                   <div className="rec-header">
                     <span className="bsc-title">{t(cat)}</span>
                     <span className="rec-highlight">{highlight(rec)}</span>
@@ -97,8 +98,11 @@ export default function RecordsClient() {
                     )}
                   </span>
                   {rec.strikes && rec.strikes.length > 0 && <StormReplayMap strikes={rec.strikes} />}
-                </div>
+                </>
               );
+              return rec.stormKey
+                ? <Link key={cat} href={`/storms/${encodeURIComponent(rec.stormKey)}`} className={cardClass}>{cardContents}</Link>
+                : <div key={cat} className={cardClass}>{cardContents}</div>;
             })}
           </div>
 

@@ -828,6 +828,14 @@ html, body {
   background: rgba(255,220,0,0.05);
   border: 1px solid rgba(255,220,0,0.18);
   border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rec-card--link { cursor: pointer; }
+.rec-card--link:hover {
+  background: rgba(255,220,0,0.1);
+  border-color: rgba(255,220,0,0.35);
 }
 
 .rec-header {
@@ -979,6 +987,7 @@ html, body {
   padding: 0.2rem 0.6rem;
   border-radius: 4px;
 }
+.storm-record-badge--rank     { background: rgba(255,255,255,0.06); color: #aaa; border: 1px solid rgba(255,255,255,0.12); }
 .storm-record-badge--biggest  { background: rgba(255,107,53,0.18); color: #ff6b35; border: 1px solid rgba(255,107,53,0.4); }
 .storm-record-badge--longest  { background: rgba(100,200,255,0.12); color: #64c8ff; border: 1px solid rgba(100,200,255,0.35); }
 .storm-record-badge--farthest { background: rgba(150,255,150,0.12); color: #80e880; border: 1px solid rgba(150,255,150,0.3); }
@@ -1200,54 +1209,102 @@ html, body {
   border: 1px solid rgba(255,220,0,0.14);
   border-radius: 8px;
   overflow: hidden;
+  transition: background 0.4s, border-color 0.4s;
 }
 .storm-log-row.open { border-color: rgba(255,220,0,0.3); }
+.storm-log-row.flash {
+  animation: row-flash 0.9s ease-out forwards;
+}
+@keyframes row-flash {
+  0%   { background: rgba(255,220,0,0.22); border-color: rgba(255,220,0,0.7); }
+  60%  { background: rgba(255,220,0,0.10); border-color: rgba(255,220,0,0.35); }
+  100% { background: rgba(255,220,0,0.04); border-color: rgba(255,220,0,0.14); }
+}
 
 .storm-log-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem 0.75rem;
+  flex-direction: column;
+  gap: 0.3rem;
   width: 100%;
-  padding: 0.6rem 0.85rem;
+  padding: 0.75rem 1rem;
   background: none;
   border: none;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
 }
-.storm-log-head:hover { background: rgba(255,220,0,0.05); }
+.storm-log-head:hover { background: rgba(255,220,0,0.04); }
+
+.storm-log-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.storm-log-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
 
 .storm-log-country {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  flex-shrink: 0;
-  font-size: 0.8rem;
-  color: rgba(255,220,0,0.8);
-  white-space: nowrap;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: rgba(255,220,0,0.7);
 }
 
-.storm-log-arrow { color: rgba(255,220,0,0.45); margin: 0 0.1rem; }
+.storm-log-arrow { color: rgba(255,220,0,0.4); }
 
 .storm-log-name {
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 700;
-  color: rgba(255,240,180,0.92);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  color: rgba(255,240,180,0.95);
+  line-height: 1.25;
 }
 
-/* Stats get their own line under country + name; chevron stays top right */
 .storm-log-stats {
-  order: 1;
-  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.6rem;
   font-size: 0.72rem;
-  color: rgba(255,230,120,0.75);
+  color: rgba(255,220,120,0.6);
   font-variant-numeric: tabular-nums;
 }
-.storm-log-head .storm-chevron { margin-left: auto; }
+.storm-live-tag {
+  display: inline-block;
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(255, 50, 50, 0.18);
+  color: #ff5555;
+  border: 1px solid rgba(255, 50, 50, 0.4);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+.storm-live-tag:hover { background: rgba(255, 50, 50, 0.3); }
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.storm-log-rank {
+  display: inline-block;
+  margin-right: 0.45rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.07);
+  color: #999;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+.storm-log-badges .storm-chevron { color: rgba(255,220,0,0.4); font-size: 0.85rem; }
 
 .storm-log-row .bsc-map { margin: 0 0.85rem 0.85rem; }
 

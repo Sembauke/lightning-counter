@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
@@ -102,11 +102,31 @@ function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; 
   );
 }
 
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
+}
+
+function rankStyle(rank: number): React.CSSProperties {
+  const t = Math.pow(Math.max(0, 1 - (rank - 1) / 99), 0.5);
+  const hue = Math.round(50 - t * 20);
+  const sat = Math.round(30 + t * 70);
+  const light = Math.round(40 + t * 35);
+  return {
+    color: `hsl(${hue}, ${sat}%, ${light}%)`,
+    background: `hsla(${hue}, ${sat}%, ${light}%, ${0.1 + t * 0.35})`,
+    borderColor: `hsla(${hue}, ${sat}%, ${light}%, ${0.25 + t * 0.65})`,
+    fontWeight: t > 0.7 ? 700 : undefined,
+  };
+}
+
 export default function StormDetailClient({
-  storm, records,
+  storm, records, rank,
 }: {
   storm: BiggestStorm;
   records: GlobalStormRecord[];
+  rank: number;
 }) {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -170,19 +190,20 @@ export default function StormDetailClient({
           </span>
           <h1 className="storm-detail-name">{name}</h1>
           <div className="storm-detail-date-line">{storm.date}</div>
-          {heldRecords.length > 0 && (
-            <div className="storm-record-badges">
-              {heldRecords.map(r => (
-                <span key={r.category} className={`storm-record-badge storm-record-badge--${r.category}`}>
-                  {r.category === 'biggest'
-                    ? 'Global Record — Biggest'
-                    : r.category === 'longest'
-                      ? 'Global Record — Longest'
-                      : 'Global Record — Farthest'}
-                </span>
-              ))}
-            </div>
-          )}
+          <div className="storm-record-badges">
+            <span className="storm-record-badge storm-record-badge--rank" style={rankStyle(rank)}>
+              {ordinal(rank)} biggest storm
+            </span>
+            {heldRecords.map(r => (
+              <span key={r.category} className={`storm-record-badge storm-record-badge--${r.category}`}>
+                {r.category === 'biggest'
+                  ? 'Global Record — Biggest'
+                  : r.category === 'longest'
+                    ? 'Global Record — Longest'
+                    : 'Global Record — Farthest'}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* ── KPI grid ── */}

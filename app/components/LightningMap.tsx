@@ -875,6 +875,15 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       s.ready = true;
       setMapReady(true);
 
+      // Fly to ?lat=X&lon=Y if navigated here from the storm log's LIVE badge
+      const urlParams = new URLSearchParams(window.location.search);
+      const flyLat = parseFloat(urlParams.get('lat') ?? '');
+      const flyLon = parseFloat(urlParams.get('lon') ?? '');
+      if (!isNaN(flyLat) && !isNaN(flyLon)) {
+        map.setView([flyLat, flyLon], 9, { animate: false });
+        history.replaceState(null, '', window.location.pathname);
+      }
+
       // Always seed DB data on load
       fetchViewportRef.current?.();
     });
@@ -1315,7 +1324,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
 
       newPoints.push({ lat: strike.lat, lon: strike.lon, time: strike.time, nx, ny });
 
-      if (!strike.id.startsWith('hist-')) {
+      if (!strike.id.startsWith('hist-') && !document.hidden) {
         const zoom = s.map.getZoom();
         // Stagger ring starts across the batch window so pulses stay continuous
         s.rings.push({ nx, ny, startTime: performance.now() + Math.random() * 700, zoomed: zoom >= 11 });

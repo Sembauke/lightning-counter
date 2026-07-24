@@ -1,4 +1,4 @@
-import { getStormsForDate, getStormByKey } from '../../lib/db';
+import { getStormsForDate, getStormByKey, getStormRanks } from '../../lib/db';
 import { getCountryCode } from '../../lib/geoCountry';
 
 export const dynamic = 'force-dynamic';
@@ -16,12 +16,15 @@ export async function GET(req: Request) {
     return Response.json({ error: 'invalid date' }, { status: 400 });
   }
   // Cross-border storms get their origin country resolved so the UI can show both flags
-  const rows = getStormsForDate(date, code).map(s => {
+  const base = getStormsForDate(date, code);
+  const ranks = getStormRanks(base.map(s => s.stormKey));
+  const rows = base.map(s => {
     let originCode: string | null = null;
     if (s.originLat != null && s.originLon != null) {
       try { originCode = getCountryCode(s.originLat, s.originLon); } catch { /* non-fatal */ }
     }
-    return originCode && originCode !== s.code ? { ...s, originCode } : s;
+    const withOrigin = originCode && originCode !== s.code ? { ...s, originCode } : s;
+    return { ...withOrigin, rank: ranks[s.stormKey] ?? null };
   });
   return Response.json(rows);
 }

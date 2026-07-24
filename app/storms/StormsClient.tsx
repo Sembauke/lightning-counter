@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
@@ -9,7 +10,27 @@ import CountryFlag from '../components/CountryFlag';
 import type { StormLogRow, StormStrike } from '../lib/db';
 
 // The API adds originCode when a storm crossed a border since it started
-type StormRow = StormLogRow & { originCode?: string | null };
+type StormRow = StormLogRow & { originCode?: string | null; rank?: number | null };
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
+}
+
+function rankStyle(rank: number): React.CSSProperties {
+  const t = Math.pow(Math.max(0, 1 - (rank - 1) / 99), 0.5);
+  // #1 = blazing gold (50°), fades through orange-red to grey
+  const hue = Math.round(50 - t * 20);   // 50° gold → 30° orange
+  const sat = Math.round(30 + t * 70);   // 30% muted → 100% vivid
+  const light = Math.round(40 + t * 35); // 40% dim → 75% bright
+  return {
+    color: `hsl(${hue}, ${sat}%, ${light}%)`,
+    background: `hsla(${hue}, ${sat}%, ${light}%, ${0.1 + t * 0.35})`,
+    borderColor: `hsla(${hue}, ${sat}%, ${light}%, ${0.25 + t * 0.65})`,
+    fontWeight: t > 0.7 ? 700 : undefined,
+  };
+}
 
 const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { ssr: false });
 
@@ -21,32 +42,53 @@ export default function StormsClient() {
   const t = useTranslations('stormLog');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
-
   const [date, setDate] = useState(todayUTC);
   const [search, setSearch] = useState('');
   const [storms, setStorms] = useState<StormRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ key: string; strikes: StormStrike[] } | null>(null);
+  const [flashKeys, setFlashKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
-    setLoaded(false);
-    const load = () => fetch(`/api/storms?date=${date}`)
-      .then(r => r.json())
-      .then((rows: StormRow[]) => {
+    const isToday = date === todayUTC();
+
+    async function load(isFirstLoad: boolean) {
+      if (cancelled) return;
+      try {
+        const rows: StormRow[] = await fetch(`/api/storms?date=${date}`).then(r => r.json());
         if (cancelled) return;
-        setStorms(rows);
+        if (!isFirstLoad) {
+          setStorms(prev => {
+            const changed = new Set<string>();
+            const prevMap = new Map(prev.map(p => [p.stormKey, p.count]));
+            for (const row of rows) {
+              if (prevMap.has(row.stormKey) && prevMap.get(row.stormKey) !== row.count)
+                changed.add(row.stormKey);
+            }
+            if (changed.size > 0) {
+              setFlashKeys(changed);
+              setTimeout(() => setFlashKeys(new Set()), 1000);
+            }
+            return rows;
+          });
+        } else {
+          setStorms(rows);
+        }
         setLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setLoaded(true); });
-    load();
-    // Today's storms are still growing — keep the list fresh
-    const timer = date === todayUTC() ? setInterval(load, 30_000) : null;
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-    };
+      } catch {
+        if (!cancelled) setLoaded(true);
+      }
+    }
+
+    setLoaded(false);
+    setStorms([]);
+    load(true);
+
+    if (!isToday) return () => { cancelled = true; };
+    const timer = setInterval(() => { if (!document.hidden) load(false); }, 5_000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, [date]);
 
   useEffect(() => {
@@ -113,32 +155,46 @@ export default function StormsClient() {
           <div className="storm-log-list">
             {filtered.map(s => {
               const open = expandedKey === s.stormKey;
+              const isLive = date === todayUTC() && s.endTime != null && Date.now() - s.endTime < 10 * 60 * 1000;
               return (
-                <div key={s.stormKey} className={`storm-log-row${open ? ' open' : ''}`}>
+                <div key={s.stormKey} className={`storm-log-row${open ? ' open' : ''}${flashKeys.has(s.stormKey) ? ' flash' : ''}`}>
                   <button className="storm-log-head" onClick={() => setExpandedKey(open ? null : s.stormKey)}>
-                    <span className="storm-log-country">
-                      {s.countryPath && s.countryPath.length > 1
-                        ? s.countryPath.map((cc, i) => (
-                            <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                              {i > 0 && <span className="storm-log-arrow">→</span>}
-                              <CountryFlag code={cc} name={countryName(cc)} />
-                              {countryName(cc)}
-                            </span>
-                          ))
-                        : (
-                          <>
-                            {s.originCode && s.originCode !== s.code && (
-                              <>
-                                <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
-                                {countryName(s.originCode)}
-                                <span className="storm-log-arrow">→</span>
-                              </>
-                            )}
-                            <CountryFlag code={s.code} name={countryName(s.code)} />
-                            {countryName(s.code)}
-                          </>
+                    {/* Row 1: country path + badges */}
+                    <div className="storm-log-top">
+                      <span className="storm-log-country">
+                        {s.countryPath && s.countryPath.length > 1
+                          ? s.countryPath.map((cc, i) => (
+                              <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                                {i > 0 && <span className="storm-log-arrow">→</span>}
+                                <CountryFlag code={cc} name={countryName(cc)} />
+                                {countryName(cc)}
+                              </span>
+                            ))
+                          : (
+                            <>
+                              {s.originCode && s.originCode !== s.code && (
+                                <>
+                                  <CountryFlag code={s.originCode} name={countryName(s.originCode)} />
+                                  {countryName(s.originCode)}
+                                  <span className="storm-log-arrow">→</span>
+                                </>
+                              )}
+                              <CountryFlag code={s.code} name={countryName(s.code)} />
+                              {countryName(s.code)}
+                            </>
+                          )}
+                      </span>
+                      <span className="storm-log-badges">
+                        {isLive && (
+                          <Link href={`/?lat=${s.lat}&lon=${s.lon}`} className="storm-live-tag" onClick={e => e.stopPropagation()}>LIVE</Link>
                         )}
-                    </span>
+                        {s.rank != null && (
+                          <span className="storm-log-rank" style={rankStyle(s.rank)}>{ordinal(s.rank)} biggest</span>
+                        )}
+                        <span className={`storm-chevron${open ? ' open' : ''}`}>▾</span>
+                      </span>
+                    </div>
+                    {/* Row 2: storm name */}
                     <span className="storm-log-name">
                       {s.originCity && s.city && s.originCity !== s.city
                         ? ts('stormFromTo', { from: s.originCity, to: s.city })
@@ -146,18 +202,20 @@ export default function StormsClient() {
                           ? ts('stormNear', { city: s.city })
                           : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`}
                     </span>
-                    <span className="storm-log-stats">
-                      {ts('strikesCount', { count: s.totalCount ?? s.count })}
-                      {' · '}
-                      {ts('peakRate', { rate: fmtRate(s.rate) })}
+                    {/* Row 3: stats */}
+                    <div className="storm-log-stats">
+                      <span>{ts('strikesCount', { count: s.totalCount ?? s.count })}</span>
+                      <span>{ts('peakRate', { rate: fmtRate(s.rate) })}</span>
                       {s.startTime != null && s.endTime != null && (
-                        <> · {fmtDuration(s.endTime - s.startTime)} · {fmtClock(s.startTime)} – {fmtClock(s.endTime)}</>
+                        <>
+                          <span>{fmtDuration(s.endTime - s.startTime)}</span>
+                          <span>{fmtClock(s.startTime)} – {fmtClock(s.endTime)}</span>
+                        </>
                       )}
                       {s.traveledKm != null && s.traveledKm >= 5 && (
-                        <> · {ts('traveled', { km: Math.round(s.traveledKm) })}</>
+                        <span>{ts('traveled', { km: Math.round(s.traveledKm) })}</span>
                       )}
-                    </span>
-                    <span className={`storm-chevron${open ? ' open' : ''}`}>▾</span>
+                    </div>
                   </button>
                   {open && (
                     detail?.key === s.stormKey

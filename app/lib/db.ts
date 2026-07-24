@@ -396,8 +396,8 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
            country_path AS countryPath
     FROM storms WHERE date = ?`;
   const rows = (code
-    ? db.prepare(`${base} AND code = ? ORDER BY count DESC`).all(date, code)
-    : db.prepare(`${base} ORDER BY count DESC`).all(date)) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
+    ? db.prepare(`${base} AND code = ? ORDER BY end_time DESC, start_time DESC`).all(date, code)
+    : db.prepare(`${base} ORDER BY end_time DESC, start_time DESC`).all(date)) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
@@ -435,6 +435,27 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
   return { ...row, strikes, countryPath };
 }
 
+/** 1-based rank of this storm by peak count across all logged storms */
+export function getStormRank(count: number): number {
+  const db = getDb();
+  const row = db.prepare('SELECT COUNT(*) AS n FROM storms WHERE count > ?').get(count) as { n: number };
+  return row.n + 1;
+}
+
+/** Global rank for each of the given storm keys (single query via window function) */
+export function getStormRanks(stormKeys: string[]): Record<string, number> {
+  if (stormKeys.length === 0) return {};
+  const db = getDb();
+  const placeholders = stormKeys.map(() => '?').join(',');
+  const rows = db.prepare(`
+    WITH ranked AS (
+      SELECT storm_key, ROW_NUMBER() OVER (ORDER BY count DESC) AS rank FROM storms
+    )
+    SELECT storm_key AS stormKey, rank FROM ranked WHERE storm_key IN (${placeholders})
+  `).all(...stormKeys) as Array<{ stormKey: string; rank: number }>;
+  return Object.fromEntries(rows.map(r => [r.stormKey, r.rank]));
+}
+
 /** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
 export function saveTrackedStorms(storms: unknown[]): void {
   const db = getDb();
@@ -453,7 +474,6 @@ export function pruneStormStrikes(): void {
   const db = getDb();
   const now = Date.now();
   const cutoff7d = now - 7 * 24 * 60 * 60 * 1000;
-  const cutoff90d = now - 90 * 24 * 60 * 60 * 1000;
 
   // Preserve strikes forever for the best storm on each date and for any storm
   // that is a current global record holder. All other blobs drop after 7 days.
@@ -467,15 +487,8 @@ export function pruneStormStrikes(): void {
           ))
   `).run(cutoff7d);
 
-  // Drop non-notable storm rows after 90 days.
-  db.prepare(`
-    DELETE FROM storms
-    WHERE end_time < ?
-      AND (date, count) NOT IN (SELECT date, MAX(count) FROM storms GROUP BY date)
-      AND (storm_key IS NULL OR storm_key NOT IN (
-            SELECT storm_key FROM storm_records WHERE storm_key IS NOT NULL
-          ))
-  `).run(cutoff90d);
+  // Storm rows are kept forever so global rankings stay stable.
+  // Only the strikes blob is expensive — that's already nulled above after 7 days.
 }
 
 /**

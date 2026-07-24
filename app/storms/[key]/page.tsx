@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getStormByKey, getStormRecords } from '../../lib/db';
+import { getStormByKey, getStormRecords, getStormRank } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
 
@@ -30,5 +30,6 @@ export default async function StormDetailPage({ params }: Props) {
   const storm = getStormByKey(decodeURIComponent(key));
   if (!storm) notFound();
   const records = getStormRecords();
-  return <StormDetailClient storm={storm} records={records} />;
+  const rank = getStormRank(storm.count);
+  return <StormDetailClient storm={storm} records={records} rank={rank} />;
 }
