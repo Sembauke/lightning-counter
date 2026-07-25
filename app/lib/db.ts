@@ -464,6 +464,11 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
  */
 export function repairTaintedStormData(): void {
   const db = getDb();
+
+  // Only run once — flag stored in the counters table.
+  const done = db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v1_done') as { value: string } | undefined;
+  if (done) return;
+
   const sixHoursMs = 6 * 60 * 60 * 1000;
 
   // Delete log rows whose tracked duration exceeds 6 hours — these are the
@@ -484,6 +489,8 @@ export function repairTaintedStormData(): void {
     WHERE storm_key IS NOT NULL
       AND storm_key NOT IN (SELECT storm_key FROM storms WHERE storm_key IS NOT NULL)
   `).run();
+
+  db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v1_done', '1');
 }
 
 export function saveTrackedStorms(storms: unknown[]): void {
