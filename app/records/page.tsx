@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import RecordsClient from './RecordsClient';
 import { SITE_URL } from '../lib/site';
-import { getStormRecords, getBiggestStormPerDay } from '../lib/db';
+import { getStormRecords, getBiggestStormPerDay, getTop100Storms } from '../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,5 +21,6 @@ export const metadata: Metadata = {
 export default function RecordsPage() {
   const storms = getStormRecords();
   const dailyBest = getBiggestStormPerDay();
-  return <RecordsClient storms={storms} dailyBest={dailyBest} />;
+  const top100 = getTop100Storms();
+  return <RecordsClient storms={storms} dailyBest={dailyBest} top100={top100} />;
 }

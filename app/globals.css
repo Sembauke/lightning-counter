@@ -868,44 +868,99 @@ html, body {
 }
 
 /* ── Daily best storms ── */
-.daily-best-section {
-  margin-top: 2rem;
-}
-.daily-best-title {
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #888;
-  padding: 0 0.25rem 0.75rem;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+/* ── Unified storm table (daily best / all-time) ─────────────────────── */
+.storm-table-section { margin-top: 2rem; }
+
+.storm-table-header {
+  display: flex;
+  align-items: center;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
   margin-bottom: 0.25rem;
 }
-.daily-best-list {
-  display: flex;
-  flex-direction: column;
+
+.storm-table-select {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  color: #ddd;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: inherit;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
 }
-.daily-best-row {
+.storm-table-select:hover { border-color: rgba(255,220,0,0.4); }
+.storm-table-select:focus { border-color: rgba(255,220,0,0.6); }
+
+.storm-table { display: flex; flex-direction: column; }
+
+.storm-table-row {
   display: grid;
-  grid-template-columns: 6rem auto 1fr auto;
+  grid-template-columns: 6rem auto 1fr;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.55rem 0.25rem;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-  font-size: 0.8rem;
-  transition: background 0.15s;
+  gap: 0.85rem;
+  padding: 0.65rem 0.3rem;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
   text-decoration: none;
   color: inherit;
-  cursor: pointer;
+  transition: background 0.15s;
 }
-.daily-best-row:hover { background: rgba(255,255,255,0.04); }
-.daily-best-date { color: #666; font-family: 'Courier New', monospace; font-size: 0.75rem; }
-.daily-best-country { display: flex; align-items: center; gap: 0.2rem; flex-wrap: wrap; }
-.daily-best-name { color: #ccc; }
-.daily-best-stats { color: #888; font-size: 0.75rem; text-align: right; white-space: nowrap; }
+.storm-table-row:hover { background: rgba(255,255,255,0.05); }
+
+.storm-table-row.has-rank {
+  grid-template-columns: 2.5rem 6rem auto 1fr;
+}
+
+.storm-table-rank {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: #666;
+  text-align: right;
+}
+
+.storm-table-date {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: #888;
+  white-space: nowrap;
+}
+
+.storm-table-flags {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+
+.storm-table-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.storm-table-name {
+  font-size: 0.9rem;
+  color: #e0e0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.storm-table-stats {
+  font-size: 0.78rem;
+  color: #999;
+}
+
 @media (max-width: 640px) {
-  .daily-best-row { grid-template-columns: 5rem auto 1fr; }
-  .daily-best-stats { display: none; }
+  .storm-table-row { grid-template-columns: auto 1fr; }
+  .storm-table-row.has-rank { grid-template-columns: 2rem auto 1fr; }
+  .storm-table-date { display: none; }
 }
 
 /* ── Storm detail page ── */

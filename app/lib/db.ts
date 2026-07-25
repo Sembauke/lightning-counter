@@ -424,6 +424,23 @@ export function getBiggestStormPerDay(): StormLogRow[] {
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
+/** Top 100 storms of all time by total accumulated strikes */
+export function getTop100Storms(): StormLogRow[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime,
+           traveled_km AS traveledKm, total_count AS totalCount,
+           country_path AS countryPath
+    FROM storms
+    WHERE COALESCE(total_count, count) >= 5000
+    ORDER BY COALESCE(total_count, count) DESC
+    LIMIT 100
+  `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
+  return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
+}
+
 export function getStormByKey(stormKey: string): BiggestStorm | null {
   const db = getDb();
   const row = db.prepare(`
