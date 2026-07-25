@@ -42,7 +42,13 @@ export default function StormsClient() {
   const t = useTranslations('stormLog');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
-  const [date, setDate] = useState(todayUTC);
+  const [date, setDate] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stormLogDate');
+      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) && saved <= todayUTC()) return saved;
+    } catch {}
+    return todayUTC();
+  });
   const [search, setSearch] = useState('');
   const [storms, setStorms] = useState<StormRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -129,12 +135,17 @@ export default function StormsClient() {
     return () => { cancelled = true; };
   }, [expandedKey]);
 
+  function changeDate(next: string) {
+    setDate(next);
+    try { localStorage.setItem('stormLogDate', next); } catch {}
+    setExpandedKey(null);
+  }
+
   const shiftDate = (days: number) => {
     const d = new Date(`${date}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + days);
     const next = d.toISOString().slice(0, 10);
-    if (next <= todayUTC()) setDate(next);
-    setExpandedKey(null);
+    if (next <= todayUTC()) changeDate(next);
   };
 
   const filtered = useMemo(() => {
@@ -170,7 +181,7 @@ export default function StormsClient() {
             className="detail-input"
             value={date}
             max={todayUTC()}
-            onChange={e => { if (e.target.value) { setDate(e.target.value); setExpandedKey(null); } }}
+            onChange={e => { if (e.target.value) changeDate(e.target.value); }}
           />
           <button className="storm-log-daybtn" onClick={() => shiftDate(1)} disabled={date >= todayUTC()} aria-label="›">›</button>
         </div>
