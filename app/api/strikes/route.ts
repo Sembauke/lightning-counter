@@ -358,43 +358,64 @@ setInterval(() => {
       }
     }
 
-    // Merge any two tracked storms (active within the last hour) whose centroids
-    // are within MERGE_KM of each other. Runs until no overlapping pairs remain.
-    // This consolidates identities that were assigned when cells were far apart
-    // but have since converged into the same area.
+    // Consolidate tracker identities within TRACKER_MERGE_KM of each other.
+    //
+    // Two phases:
+    // 1. Matched pairs: both identities were assigned live clusters this pass but
+    //    are close enough to be the same system. Absorb the smaller into the bigger
+    //    and remove the smaller from `matched` so it won't be written back to the DB.
+    // 2. Unmatched strays: an old identity that didn't get a cluster this pass but
+    //    is still within range of a matched winner — fold it in and delete from DB.
+    function absorbInto(big: TrackedStorm, small: TrackedStorm) {
+      if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
+      if (small.startTime < big.startTime) {
+        big.startTime = small.startTime;
+        big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
+      }
+      big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
+      big.totalStrikes += small.totalStrikes;
+      for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
+      for (const s of small.allStrikes) big.allStrikes.push(s);
+      if (big.allStrikes.length > ALL_STRIKES_MAX) {
+        big.allStrikes.sort((a, b) => a[2] - b[2]);
+        big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);
+        big.keepEvery *= 2;
+      }
+    }
+
+    // Phase 1: merge matched pairs — avoids the cycle where removing one matched
+    // storm from memory causes its cluster to spawn a fresh identity next pass.
     {
       let anyMerged = true;
       while (anyMerged) {
         anyMerged = false;
-        outer: for (let i = 0; i < trackedStorms.length; i++) {
-          const a = trackedStorms[i];
-          if (nowMs - a.lastSeen > STORM_DROP_MS) continue;
-          for (let j = i + 1; j < trackedStorms.length; j++) {
-            const b = trackedStorms[j];
-            if (nowMs - b.lastSeen > STORM_DROP_MS) continue;
+        const matchedArr = Array.from(matched);
+        outer: for (let i = 0; i < matchedArr.length; i++) {
+          for (let j = i + 1; j < matchedArr.length; j++) {
+            const a = matchedArr[i], b = matchedArr[j];
             if (kmBetween(a.lat, a.lon, b.lat, b.lon) >= TRACKER_MERGE_KM) continue;
             const big = a.peakCount >= b.peakCount ? a : b;
             const small = a.peakCount >= b.peakCount ? b : a;
-            if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
-            if (small.startTime < big.startTime) {
-              big.startTime = small.startTime;
-              big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
-            }
-            big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
-            big.totalStrikes += small.totalStrikes;
-            for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
-            for (const s of small.allStrikes) big.allStrikes.push(s);
-            if (big.allStrikes.length > ALL_STRIKES_MAX) {
-              big.allStrikes.sort((a, b) => a[2] - b[2]);
-              big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);
-              big.keepEvery *= 2;
-            }
+            absorbInto(big, small);
+            matched.delete(small);
             trackedStorms.splice(trackedStorms.indexOf(small), 1);
             if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
             anyMerged = true;
             break outer;
           }
         }
+      }
+    }
+
+    // Phase 2: fold unmatched strays into nearby matched winners.
+    for (const st of [...trackedStorms]) {
+      if (matched.has(st) || nowMs - st.lastSeen > STORM_DROP_MS) continue;
+      for (const m of matched) {
+        if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= TRACKER_MERGE_KM) continue;
+        absorbInto(m, st);
+        trackedStorms.splice(trackedStorms.indexOf(st), 1);
+        if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
+        break;
       }
     }
 
