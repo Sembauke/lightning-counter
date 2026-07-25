@@ -63,6 +63,7 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_storms_date_count ON storms(date, count DESC);
     CREATE INDEX IF NOT EXISTS idx_storms_code_date ON storms(code, date);
     CREATE INDEX IF NOT EXISTS idx_storms_start_time ON storms(start_time);
+    CREATE INDEX IF NOT EXISTS idx_storms_count ON storms(count DESC);
     CREATE TABLE IF NOT EXISTS storm_records (
       category TEXT PRIMARY KEY,
       code TEXT NOT NULL,
@@ -405,13 +406,19 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
 export function getBiggestStormPerDay(): StormLogRow[] {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
-           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
-           start_time AS startTime, end_time AS endTime,
-           traveled_km AS traveledKm, total_count AS totalCount,
-           country_path AS countryPath
-    FROM storms
-    WHERE (date, count) IN (SELECT date, MAX(count) FROM storms GROUP BY date)
+    SELECT stormKey, code, count, rate, lat, lon, city, date,
+           originLat, originLon, originCity, startTime, endTime,
+           traveledKm, totalCount, countryPath
+    FROM (
+      SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+             origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+             start_time AS startTime, end_time AS endTime,
+             traveled_km AS traveledKm, total_count AS totalCount,
+             country_path AS countryPath,
+             ROW_NUMBER() OVER (PARTITION BY date ORDER BY count DESC) AS rn
+      FROM storms
+    )
+    WHERE rn = 1
     ORDER BY date DESC
   `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
@@ -456,13 +463,6 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
   return Object.fromEntries(rows.map(r => [r.stormKey, r.rank]));
 }
 
-/** Strike samples are heavy — keep them 7 days; storm metadata stays forever */
-/**
- * One-time repair: remove data tainted by the old 6-hour storm-drop window.
- * Storms with duration > 6 h almost certainly spliced two separate events.
- * Global records are cleared entirely so they rebuild from clean storms.
- */
-/** Rebuild storm_records from the full storms table — safe to call any time. */
 export function rebuildStormRecords(): void {
   const db = getDb();
   const rows = db.prepare(`
@@ -564,6 +564,12 @@ export function pruneStormStrikes(): void {
  * strike coordinates. Pass getCountryCode from geoCountry to avoid a circular
  * import between db ↔ geoCountry.
  */
+export function hasMissingCountryPaths(): boolean {
+  const db = getDb();
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM storms WHERE strikes IS NOT NULL AND country_path IS NULL').get() as { n: number };
+  return n > 0;
+}
+
 export function enrichStormCountryPaths(
   lookupCC: (lat: number, lon: number) => string | null,
   limitDays = 30,
@@ -597,25 +603,18 @@ export function enrichStormCountryPaths(
   }
 }
 
-export function getTopDailyPeak(): { code: string; count: number; date: string } | null {
-  const db = getDb();
-  const row = db.prepare('SELECT code, count, date FROM country_peaks ORDER BY count DESC LIMIT 1')
-    .get() as { code: string; count: number; date: string } | undefined;
-  return row ?? null;
-}
-
 export function getCountryHistory(code: string): Array<{ date: string; count: number }> {
   const db = getDb();
   return db.prepare('SELECT date, count FROM daily_strikes WHERE code = ? ORDER BY date DESC').all(code) as Array<{ date: string; count: number }>;
 }
 
-const _upsertTotal = () => getDb().prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)');
-const _upsertCountry = () => getDb().prepare('INSERT INTO countries (code, count) VALUES (?, ?) ON CONFLICT(code) DO UPDATE SET count = excluded.count');
+let _upsertTotal: Database.Statement | null = null;
+let _upsertCountry: Database.Statement | null = null;
 
 export function saveCounters(total: number, countries: Record<string, number>): void {
   const db = getDb();
-  const upsertTotal = _upsertTotal();
-  const upsertCountry = _upsertCountry();
+  const upsertTotal = (_upsertTotal ??= db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)'));
+  const upsertCountry = (_upsertCountry ??= db.prepare('INSERT INTO countries (code, count) VALUES (?, ?) ON CONFLICT(code) DO UPDATE SET count = excluded.count'));
 
   db.transaction(() => {
     upsertTotal.run('total', String(total));

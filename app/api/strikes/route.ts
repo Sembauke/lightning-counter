@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, enrichStormCountryPaths, repairTaintedStormData, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -168,11 +168,9 @@ const trackedStorms: TrackedStorm[] = (() => {
     return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
   } catch { return []; }
 })();
-// One-time data repair: remove storms tainted by the old 6-hour re-match window,
-// then backfill country paths for the clean survivors.
+// Backfill country paths for any storms missing them (skips if nothing to do).
 setImmediate(() => {
-  try { repairTaintedStormData(); } catch { /* non-fatal */ }
-  try { enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
+  try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
 });
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)

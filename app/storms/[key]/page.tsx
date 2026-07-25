@@ -9,9 +9,13 @@ export const runtime = 'nodejs';
 
 interface Props { params: Promise<{ key: string }> }
 
+function loadStorm(key: string) {
+  return getStormByKey(decodeURIComponent(key));
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { key } = await params;
-  const storm = getStormByKey(decodeURIComponent(key));
+  const storm = loadStorm(key);
   if (!storm) return { title: 'Storm not found' };
   const name = storm.city ?? `${storm.lat.toFixed(2)}, ${storm.lon.toFixed(2)}`;
   return {
@@ -27,7 +31,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function StormDetailPage({ params }: Props) {
   const { key } = await params;
-  const storm = getStormByKey(decodeURIComponent(key));
+  const storm = loadStorm(key);
   if (!storm) notFound();
   const records = getStormRecords();
   const rank = getStormRank(storm.count);

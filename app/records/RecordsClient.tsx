@@ -1,6 +1,5 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
@@ -13,24 +12,15 @@ const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { s
 
 const CATEGORY_ORDER: StormRecordCategory[] = ['biggest', 'longest', 'farthest'];
 
-export default function RecordsClient() {
+interface Props {
+  storms: GlobalStormRecord[];
+  dailyBest: StormLogRow[];
+}
+
+export default function RecordsClient({ storms, dailyBest }: Props) {
   const t = useTranslations('records');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
-  const [storms, setStorms] = useState<GlobalStormRecord[]>([]);
-  const [dailyBest, setDailyBest] = useState<StormLogRow[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/records')
-      .then(r => r.json())
-      .then((data: { storms: GlobalStormRecord[]; dailyBest: StormLogRow[] }) => {
-        setStorms(data.storms);
-        setDailyBest(data.dailyBest ?? []);
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
-  }, []);
 
   const byCategory = new Map(storms.map(s => [s.category, s]));
 
@@ -50,7 +40,7 @@ export default function RecordsClient() {
       </div>
 
       <div className="records-body">
-        {!loaded ? null : storms.length === 0 ? (
+        {storms.length === 0 ? (
           <div className="archive-empty">{t('noData')}</div>
         ) : (
           <>
