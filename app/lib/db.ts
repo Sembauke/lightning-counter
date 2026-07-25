@@ -395,7 +395,7 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
            start_time AS startTime, end_time AS endTime,
            traveled_km AS traveledKm, total_count AS totalCount,
            country_path AS countryPath
-    FROM storms WHERE date = ? AND rate >= 50`;
+    FROM storms WHERE date = ? AND COALESCE(total_count, count) >= 5000`;
   const rows = (code
     ? db.prepare(`${base} AND code = ? ORDER BY end_time DESC, start_time DESC`).all(date, code)
     : db.prepare(`${base} ORDER BY end_time DESC, start_time DESC`).all(date)) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];

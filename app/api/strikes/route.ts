@@ -163,9 +163,9 @@ const STORM_MATCH_MIN_KM = 15;
 const STORM_DROP_MS = 1 * 60 * 60 * 1000;
 // No storm system moves faster than this — lifetime cap on distance traveled
 const STORM_MAX_KMH = 120;
-// A storm enters the storm log only once its peak rate reaches this (strikes/min);
+// A storm enters the storm log only once it has accumulated this many total strikes;
 // biggest-storm and record tables are exempt — they're superlatives, not a log
-const STORM_LOG_MIN_RATE = 50;
+const STORM_LOG_MIN_STRIKES = 5000;
 const trackedStorms: TrackedStorm[] = (() => {
   try {
     const saved = loadTrackedStorms() as TrackedStorm[];
@@ -439,7 +439,7 @@ setInterval(() => {
     }
     upsertBiggestStorms(records);
     upsertStormRecords(records);
-    upsertStorms(records.filter(r => r.rate >= STORM_LOG_MIN_RATE));
+    upsertStorms(records.filter(r => (r.totalCount ?? r.count) >= STORM_LOG_MIN_STRIKES));
 
     // Expire storms that fell below the threshold for several passes
     let i = trackedStorms.length;
