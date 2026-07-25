@@ -90,6 +90,17 @@ export default function StormsClient() {
         } else {
           setStorms(rows);
         }
+        // Clean up pins for storms that no longer exist (e.g. absorbed into another storm).
+        // Only do this for today — past dates are static and pins should survive navigation.
+        if (isToday) {
+          const liveKeys = new Set(rows.map(r => r.stormKey));
+          setPinnedKeys(prev => {
+            const cleaned = new Set([...prev].filter(k => liveKeys.has(k)));
+            if (cleaned.size === prev.size) return prev;
+            localStorage.setItem('pinnedStorms', JSON.stringify([...cleaned]));
+            return cleaned;
+          });
+        }
         setLoaded(true);
       } catch {
         if (!cancelled) setLoaded(true);
