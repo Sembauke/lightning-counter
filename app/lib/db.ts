@@ -462,12 +462,44 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
  * Storms with duration > 6 h almost certainly spliced two separate events.
  * Global records are cleared entirely so they rebuild from clean storms.
  */
+/** Rebuild storm_records from the full storms table — safe to call any time. */
+export function rebuildStormRecords(): void {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime,
+           traveled_km AS traveledKm, total_count AS totalCount,
+           strikes, country_path AS countryPath
+    FROM storms
+    WHERE storm_key IS NOT NULL
+  `).all() as Array<Omit<BiggestStorm, 'strikes' | 'countryPath'> & { stormKey: string; strikes: string | null; countryPath: string | null }>;
+
+  const candidates: BiggestStorm[] = rows.map(r => ({
+    ...r,
+    strikes: (() => { try { return r.strikes ? JSON.parse(r.strikes) : null; } catch { return null; } })(),
+    countryPath: (() => { try { return r.countryPath ? JSON.parse(r.countryPath) : null; } catch { return null; } })(),
+  }));
+
+  db.prepare('DELETE FROM storm_records').run();
+  upsertStormRecords(candidates);
+}
+
 export function repairTaintedStormData(): void {
   const db = getDb();
 
   // Only run once — flag stored in the counters table.
   const done = db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v1_done') as { value: string } | undefined;
-  if (done) return;
+  if (done) {
+    // repair_v1 already ran but wiped storm_records without rebuilding them.
+    // Rebuild once more (repair_v2) to restore the records from surviving storms.
+    const rebuilt = db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v2_done') as { value: string } | undefined;
+    if (!rebuilt) {
+      rebuildStormRecords();
+      db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v2_done', '1');
+    }
+    return;
+  }
 
   const sixHoursMs = 6 * 60 * 60 * 1000;
 
@@ -480,15 +512,15 @@ export function repairTaintedStormData(): void {
       AND (end_time - start_time) > ?
   `).run(sixHoursMs);
 
-  // Wipe global records entirely — they'll be rebuilt from clean incoming data.
-  db.prepare('DELETE FROM storm_records').run();
-
   // Remove country-biggest entries whose referenced storm was just deleted.
   db.prepare(`
     DELETE FROM country_biggest_storms
     WHERE storm_key IS NOT NULL
       AND storm_key NOT IN (SELECT storm_key FROM storms WHERE storm_key IS NOT NULL)
   `).run();
+
+  // Rebuild global records from the surviving clean storm rows.
+  rebuildStormRecords();
 
   db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v1_done', '1');
 }
