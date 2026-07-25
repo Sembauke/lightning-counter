@@ -470,6 +470,84 @@ export function deleteStorm(stormKey: string): void {
   db.prepare('DELETE FROM country_biggest_storms WHERE storm_key = ?').run(stormKey);
 }
 
+/**
+ * Scan today's storms and merge any pair whose centroids are within mergeKm.
+ * The storm with the lower peak count is absorbed: its DB rows are deleted,
+ * and the survivor inherits whichever values are better (earlier start, higher peak).
+ * Called at startup and can be called periodically.
+ */
+export function consolidateNearbyStorms(mergeKm = 75): void {
+  const db = getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  const hourAgo = Date.now() - 60 * 60 * 1000;
+
+  const rows = db.prepare(`
+    SELECT storm_key AS stormKey, count, rate, lat, lon, city, date,
+           origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+           start_time AS startTime, end_time AS endTime,
+           traveled_km AS traveledKm, total_count AS totalCount,
+           country_path AS countryPath
+    FROM storms
+    WHERE date = ? AND end_time > ?
+    ORDER BY count DESC
+  `).all(today, hourAgo) as Array<{
+    stormKey: string; count: number; rate: number;
+    lat: number; lon: number; city: string | null; date: string;
+    originLat: number | null; originLon: number | null; originCity: string | null;
+    startTime: number | null; endTime: number | null;
+    traveledKm: number | null; totalCount: number | null;
+    countryPath: string | null;
+  }>;
+
+  if (rows.length < 2) return;
+
+  const cos = Math.cos(rows[0].lat * Math.PI / 180);
+  function km(a: typeof rows[0], b: typeof rows[0]): number {
+    const dLat = (a.lat - b.lat) * 111.32;
+    const dLon = (a.lon - b.lon) * 111.32 * cos;
+    return Math.hypot(dLat, dLon);
+  }
+
+  const update = db.prepare(`
+    UPDATE storms SET
+      count = ?, rate = ?, start_time = ?,
+      origin_lat = ?, origin_lon = ?, origin_city = ?,
+      traveled_km = ?, total_count = ?
+    WHERE storm_key = ?
+  `);
+
+  let anyMerged = true;
+  while (anyMerged) {
+    anyMerged = false;
+    outer: for (let i = 0; i < rows.length; i++) {
+      for (let j = i + 1; j < rows.length; j++) {
+        if (km(rows[i], rows[j]) >= mergeKm) continue;
+        const big = rows[i]; // rows sorted DESC by count so i is always bigger
+        const small = rows[j];
+        // Inherit earlier start and better travel distance
+        const newStart = (small.startTime != null && (big.startTime == null || small.startTime < big.startTime))
+          ? small.startTime : big.startTime;
+        const newOriginLat = newStart === small.startTime ? small.originLat : big.originLat;
+        const newOriginLon = newStart === small.startTime ? small.originLon : big.originLon;
+        const newOriginCity = newStart === small.startTime ? small.originCity : big.originCity;
+        const newTravel = Math.max(big.traveledKm ?? 0, small.traveledKm ?? 0);
+        const newTotal = (big.totalCount ?? 0) + (small.totalCount ?? 0);
+        update.run(big.count, big.rate, newStart, newOriginLat, newOriginLon, newOriginCity, newTravel, newTotal, big.stormKey);
+        // Update in-memory row so subsequent passes use updated values
+        big.startTime = newStart; big.originLat = newOriginLat; big.originLon = newOriginLon;
+        big.originCity = newOriginCity; big.traveledKm = newTravel; big.totalCount = newTotal;
+        // Delete the absorbed storm from all tables
+        db.prepare('DELETE FROM storms WHERE storm_key = ?').run(small.stormKey);
+        db.prepare('DELETE FROM storm_records WHERE storm_key = ?').run(small.stormKey);
+        db.prepare('DELETE FROM country_biggest_storms WHERE storm_key = ?').run(small.stormKey);
+        rows.splice(j, 1);
+        anyMerged = true;
+        break outer;
+      }
+    }
+  }
+}
+
 export function rebuildStormRecords(): void {
   const db = getDb();
   const rows = db.prepare(`

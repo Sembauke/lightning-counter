@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { detectStorms, nearestCity, MERGE_KM, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
@@ -168,9 +168,10 @@ const trackedStorms: TrackedStorm[] = (() => {
     return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
   } catch { return []; }
 })();
-// Backfill country paths for any storms missing them (skips if nothing to do).
+// Startup tasks: backfill missing country paths and consolidate duplicate storm identities.
 setImmediate(() => {
   try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
+  try { consolidateNearbyStorms(); } catch { /* non-fatal */ }
 });
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
@@ -352,37 +353,44 @@ setInterval(() => {
       }
     }
 
-    // Fold any recently-active unmatched storm into the nearest matched storm if
-    // within MERGE_KM. This handles cases where two tracker identities were
-    // assigned when storm cells were far apart but have since converged — detectStorms
-    // already merged their underlying strike clusters, so only one identity should survive.
-    const recentCutoff = nowMs - 2 * WINDOW_MS;
-    const toAbsorb: TrackedStorm[] = [];
-    for (const st of trackedStorms) {
-      if (matched.has(st) || st.lastSeen < recentCutoff) continue;
-      for (const m of matched) {
-        if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= MERGE_KM) continue;
-        if (st.peakCount > m.peakCount) { m.peakCount = st.peakCount; m.peakRate = st.peakRate; }
-        if (st.startTime < m.startTime) {
-          m.startTime = st.startTime;
-          m.originLat = st.originLat; m.originLon = st.originLon; m.originCity = st.originCity;
+    // Merge any two tracked storms (active within the last hour) whose centroids
+    // are within MERGE_KM of each other. Runs until no overlapping pairs remain.
+    // This consolidates identities that were assigned when cells were far apart
+    // but have since converged into the same area.
+    {
+      let anyMerged = true;
+      while (anyMerged) {
+        anyMerged = false;
+        outer: for (let i = 0; i < trackedStorms.length; i++) {
+          const a = trackedStorms[i];
+          if (nowMs - a.lastSeen > STORM_DROP_MS) continue;
+          for (let j = i + 1; j < trackedStorms.length; j++) {
+            const b = trackedStorms[j];
+            if (nowMs - b.lastSeen > STORM_DROP_MS) continue;
+            if (kmBetween(a.lat, a.lon, b.lat, b.lon) >= MERGE_KM) continue;
+            const big = a.peakCount >= b.peakCount ? a : b;
+            const small = a.peakCount >= b.peakCount ? b : a;
+            if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
+            if (small.startTime < big.startTime) {
+              big.startTime = small.startTime;
+              big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
+            }
+            big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
+            big.totalStrikes += small.totalStrikes;
+            for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
+            for (const s of small.allStrikes) big.allStrikes.push(s);
+            if (big.allStrikes.length > ALL_STRIKES_MAX) {
+              big.allStrikes.sort((a, b) => a[2] - b[2]);
+              big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);
+              big.keepEvery *= 2;
+            }
+            trackedStorms.splice(trackedStorms.indexOf(small), 1);
+            if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
+            anyMerged = true;
+            break outer;
+          }
         }
-        m.traveledKm = Math.max(m.traveledKm, st.traveledKm);
-        m.totalStrikes += st.totalStrikes;
-        for (const c of st.countryCodes) if (!m.countryCodes.includes(c)) m.countryCodes.push(c);
-        for (const s of st.allStrikes) m.allStrikes.push(s);
-        if (m.allStrikes.length > ALL_STRIKES_MAX) {
-          m.allStrikes.sort((a, b) => a[2] - b[2]);
-          m.allStrikes = m.allStrikes.filter((_, i) => i % 2 === 0);
-          m.keepEvery *= 2;
-        }
-        toAbsorb.push(st);
-        break;
       }
-    }
-    for (const st of toAbsorb) {
-      trackedStorms.splice(trackedStorms.indexOf(st), 1);
-      if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
     }
 
     // Offer every storm seen this pass as a record candidate; the upsert only
@@ -415,6 +423,8 @@ setInterval(() => {
 
     // Persist in-flight storm state so a server restart doesn't wipe live storms
     saveTrackedStorms(trackedStorms);
+    // Consolidate any nearby storm DB rows that the in-memory merge may have missed
+    try { consolidateNearbyStorms(); } catch { /* non-fatal */ }
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 
