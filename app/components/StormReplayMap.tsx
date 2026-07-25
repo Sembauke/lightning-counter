@@ -29,7 +29,15 @@ const GRADIENT_REF_MS = 4 * 60 * 60 * 1000;
 interface Projected { x: number; y: number; time: number }
 interface Ring { x: number; y: number; start: number }
 
-export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) {
+export default function StormReplayMap({
+  strikes,
+  appendedStrikes,
+  isLive = false,
+}: {
+  strikes: StormStrike[];
+  appendedStrikes?: StormStrike[];
+  isLive?: boolean;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef<HTMLSpanElement>(null);
@@ -37,6 +45,8 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
   const projectedRef = useRef<Projected[]>([]);
   const ringsRef = useRef<Ring[]>([]);
   const rafRef = useRef<number | null>(null);
+  const appendedLengthRef = useRef(0);
+  const maxTimeRef = useRef(-Infinity);
   const [playing, setPlaying] = useState(false);
   const t = useTranslations('stats');
 
@@ -46,6 +56,7 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
       if (time < min) min = time;
       if (time > max) max = time;
     }
+    maxTimeRef.current = max;
     return { minTime: min, maxTime: max };
   }, [strikes]);
 
@@ -177,6 +188,30 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strikes]);
 
+  // Project and flash-draw newly-arrived live strikes without reinitializing the map
+  useEffect(() => {
+    if (!appendedStrikes?.length) return;
+    const newBatch = appendedStrikes.slice(appendedLengthRef.current);
+    if (!newBatch.length) return;
+    appendedLengthRef.current = appendedStrikes.length;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    const now = performance.now();
+    for (const [lat, lon, time] of newBatch) {
+      const p = map.latLngToContainerPoint([lat, lon]);
+      projectedRef.current.push({ x: p.x, y: p.y, time });
+      if (ringsRef.current.length < MAX_RINGS) {
+        ringsRef.current.push({ x: p.x, y: p.y, start: now });
+      }
+      if (time > maxTimeRef.current) maxTimeRef.current = time;
+    }
+    projectedRef.current.sort((a, b) => a.time - b.time);
+    draw(maxTimeRef.current, now);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appendedStrikes]);
+
   const play = () => {
     const proj = projectedRef.current;
     if (playing || proj.length === 0) return;
@@ -222,9 +257,17 @@ export default function StormReplayMap({ strikes }: { strikes: StormStrike[] }) 
       <div ref={containerRef} className="bsc-map-leaflet" />
       <canvas ref={canvasRef} className="bsc-map-canvas" />
       <span ref={timeRef} className="bsc-map-time">{timeRange}</span>
-      <button className="bsc-replay-btn" onClick={play} disabled={playing}>
-        ▶ {t('replay')}
-      </button>
+      {isLive
+        ? (
+          <span className="bsc-replay-btn bsc-live-label">
+            <span className="bsc-live-dot" /> LIVE
+          </span>
+        )
+        : (
+          <button className="bsc-replay-btn" onClick={play} disabled={playing}>
+            ▶ {t('replay')}
+          </button>
+        )}
     </div>
   );
 }

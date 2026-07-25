@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
@@ -121,6 +121,8 @@ function rankStyle(rank: number): React.CSSProperties {
   };
 }
 
+const POLL_INTERVAL_MS = 15_000;
+
 export default function StormDetailClient({
   storm, records, rank,
 }: {
@@ -130,6 +132,35 @@ export default function StormDetailClient({
 }) {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
+
+  const isLive = storm.endTime == null;
+  const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
+  const latestTsRef = useRef(
+    storm.strikes?.length ? Math.max(...storm.strikes.map(s => s[2])) : 0,
+  );
+
+  useEffect(() => {
+    if (!isLive || !storm.stormKey) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json() as { strikes: StormStrike[]; endTime: number | null };
+        const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
+        if (fresh.length > 0) {
+          latestTsRef.current = Math.max(...fresh.map(s => s[2]));
+          setAppendedStrikes(prev => [...prev, ...fresh]);
+        }
+      } catch { /* network blip — skip */ }
+    };
+
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    poll();
+    return () => { cancelled = true; clearInterval(id); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, storm.stormKey]);
 
   const name = storm.originCity && storm.city && storm.originCity !== storm.city
     ? ts('stormFromTo', { from: storm.originCity, to: storm.city })
@@ -191,6 +222,7 @@ export default function StormDetailClient({
           <h1 className="storm-detail-name">{name}</h1>
           <div className="storm-detail-date-line">{storm.date}</div>
           <div className="storm-record-badges">
+            {isLive && <span className="storm-record-badge storm-live-tag">LIVE</span>}
             <span className="storm-record-badge storm-record-badge--rank" style={rankStyle(rank)}>
               {ordinal(rank)} biggest storm
             </span>
@@ -405,7 +437,11 @@ export default function StormDetailClient({
           {storm.strikes && storm.strikes.length > 0
             ? (
               <div className="storm-detail-map">
-                <StormReplayMap strikes={storm.strikes} />
+                <StormReplayMap
+                  strikes={storm.strikes}
+                  appendedStrikes={appendedStrikes.length ? appendedStrikes : undefined}
+                  isLive={isLive}
+                />
               </div>
             )
             : (
