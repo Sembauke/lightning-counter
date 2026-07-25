@@ -463,6 +463,13 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
   return Object.fromEntries(rows.map(r => [r.stormKey, r.rank]));
 }
 
+export function deleteStorm(stormKey: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM storms WHERE storm_key = ?').run(stormKey);
+  db.prepare('DELETE FROM storm_records WHERE storm_key = ?').run(stormKey);
+  db.prepare('DELETE FROM country_biggest_storms WHERE storm_key = ?').run(stormKey);
+}
+
 export function rebuildStormRecords(): void {
   const db = getDb();
   const rows = db.prepare(`

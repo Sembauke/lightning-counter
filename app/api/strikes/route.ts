@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, type BiggestStorm, type StormStrike } from '../../lib/db';
-import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { detectStorms, nearestCity, MERGE_KM, type CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -350,6 +350,39 @@ setInterval(() => {
         trackedStorms.push(fresh);
         matched.add(fresh);
       }
+    }
+
+    // Fold any recently-active unmatched storm into the nearest matched storm if
+    // within MERGE_KM. This handles cases where two tracker identities were
+    // assigned when storm cells were far apart but have since converged — detectStorms
+    // already merged their underlying strike clusters, so only one identity should survive.
+    const recentCutoff = nowMs - 2 * WINDOW_MS;
+    const toAbsorb: TrackedStorm[] = [];
+    for (const st of trackedStorms) {
+      if (matched.has(st) || st.lastSeen < recentCutoff) continue;
+      for (const m of matched) {
+        if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= MERGE_KM) continue;
+        if (st.peakCount > m.peakCount) { m.peakCount = st.peakCount; m.peakRate = st.peakRate; }
+        if (st.startTime < m.startTime) {
+          m.startTime = st.startTime;
+          m.originLat = st.originLat; m.originLon = st.originLon; m.originCity = st.originCity;
+        }
+        m.traveledKm = Math.max(m.traveledKm, st.traveledKm);
+        m.totalStrikes += st.totalStrikes;
+        for (const c of st.countryCodes) if (!m.countryCodes.includes(c)) m.countryCodes.push(c);
+        for (const s of st.allStrikes) m.allStrikes.push(s);
+        if (m.allStrikes.length > ALL_STRIKES_MAX) {
+          m.allStrikes.sort((a, b) => a[2] - b[2]);
+          m.allStrikes = m.allStrikes.filter((_, i) => i % 2 === 0);
+          m.keepEvery *= 2;
+        }
+        toAbsorb.push(st);
+        break;
+      }
+    }
+    for (const st of toAbsorb) {
+      trackedStorms.splice(trackedStorms.indexOf(st), 1);
+      if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
     }
 
     // Offer every storm seen this pass as a record candidate; the upsert only
