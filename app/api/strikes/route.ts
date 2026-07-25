@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, type BiggestStorm, type StormStrike } from '../../lib/db';
-import { detectStorms, nearestCity, MERGE_KM, type CityTuple } from '../../lib/stormClusters';
+import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
+
+// Wider than the detection MERGE_KM (75 km) so that two tracked identities
+// from the same large storm system get consolidated even when their centroids
+// are far apart (large MCS can span 100+ km).
+const TRACKER_MERGE_KM = 100;
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -171,7 +176,7 @@ const trackedStorms: TrackedStorm[] = (() => {
 // Startup tasks: backfill missing country paths and consolidate duplicate storm identities.
 setImmediate(() => {
   try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
-  try { consolidateNearbyStorms(); } catch { /* non-fatal */ }
+  try { consolidateNearbyStorms(TRACKER_MERGE_KM); } catch { /* non-fatal */ }
 });
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
@@ -367,7 +372,7 @@ setInterval(() => {
           for (let j = i + 1; j < trackedStorms.length; j++) {
             const b = trackedStorms[j];
             if (nowMs - b.lastSeen > STORM_DROP_MS) continue;
-            if (kmBetween(a.lat, a.lon, b.lat, b.lon) >= MERGE_KM) continue;
+            if (kmBetween(a.lat, a.lon, b.lat, b.lon) >= TRACKER_MERGE_KM) continue;
             const big = a.peakCount >= b.peakCount ? a : b;
             const small = a.peakCount >= b.peakCount ? b : a;
             if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
@@ -424,7 +429,7 @@ setInterval(() => {
     // Persist in-flight storm state so a server restart doesn't wipe live storms
     saveTrackedStorms(trackedStorms);
     // Consolidate any nearby storm DB rows that the in-memory merge may have missed
-    try { consolidateNearbyStorms(); } catch { /* non-fatal */ }
+    try { consolidateNearbyStorms(TRACKER_MERGE_KM); } catch { /* non-fatal */ }
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 
