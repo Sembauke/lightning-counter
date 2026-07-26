@@ -14,6 +14,12 @@ export async function GET(
   return NextResponse.json({
     strikes: storm.strikes ?? [],
     endTime: storm.endTime,
-    count: storm.totalCount ?? storm.count,
+    totalCount: storm.totalCount,
+    count: storm.count,
+    rate: storm.rate,
+    startTime: storm.startTime,
+    traveledKm: storm.traveledKm,
+    city: storm.city,
+    originCity: storm.originCity,
   });
 }

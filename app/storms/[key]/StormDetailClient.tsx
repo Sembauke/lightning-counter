@@ -123,6 +123,29 @@ function rankStyle(rank: number): React.CSSProperties {
 
 const POLL_INTERVAL_MS = 15_000;
 
+interface PollResponse {
+  strikes: StormStrike[];
+  endTime: number | null;
+  totalCount: number | null;
+  count: number;
+  rate: number;
+  startTime: number | null;
+  traveledKm: number | null;
+  city: string | null;
+  originCity: string | null;
+}
+
+interface LiveStats {
+  endTime: number | null;
+  totalCount: number | null;
+  count: number;
+  rate: number;
+  startTime: number | null;
+  traveledKm: number | null;
+  city: string | null;
+  originCity: string | null;
+}
+
 export default function StormDetailClient({
   storm, records, rank,
 }: {
@@ -133,7 +156,18 @@ export default function StormDetailClient({
   const ts = useTranslations('storms');
   const countryName = useCountryName();
 
-  const isLive = storm.endTime == null;
+  const [liveStats, setLiveStats] = useState<LiveStats>({
+    endTime: storm.endTime,
+    totalCount: storm.totalCount,
+    count: storm.count,
+    rate: storm.rate,
+    startTime: storm.startTime,
+    traveledKm: storm.traveledKm,
+    city: storm.city,
+    originCity: storm.originCity,
+  });
+  const isLive = liveStats.endTime == null;
+
   const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
   const latestTsRef = useRef(
     storm.strikes?.length ? Math.max(...storm.strikes.map(s => s[2])) : 0,
@@ -147,7 +181,18 @@ export default function StormDetailClient({
       try {
         const res = await fetch(`/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes`);
         if (!res.ok || cancelled) return;
-        const data = await res.json() as { strikes: StormStrike[]; endTime: number | null };
+        const data = await res.json() as PollResponse;
+        // Update live stats — drives KPI re-renders and LIVE→ended transition
+        setLiveStats({
+          endTime: data.endTime,
+          totalCount: data.totalCount,
+          count: data.count,
+          rate: data.rate,
+          startTime: data.startTime,
+          traveledKm: data.traveledKm,
+          city: data.city,
+          originCity: data.originCity,
+        });
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
           latestTsRef.current = Math.max(...fresh.map(s => s[2]));
@@ -162,14 +207,14 @@ export default function StormDetailClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, storm.stormKey]);
 
-  const name = storm.originCity && storm.city && storm.originCity !== storm.city
-    ? ts('stormFromTo', { from: storm.originCity, to: storm.city })
-    : storm.city
-      ? ts('stormNear', { city: storm.city })
+  const name = liveStats.originCity && liveStats.city && liveStats.originCity !== liveStats.city
+    ? ts('stormFromTo', { from: liveStats.originCity, to: liveStats.city })
+    : liveStats.city
+      ? ts('stormNear', { city: liveStats.city })
       : `${storm.lat.toFixed(2)}, ${storm.lon.toFixed(2)}`;
 
-  const duration = storm.startTime != null && storm.endTime != null
-    ? storm.endTime - storm.startTime : null;
+  const duration = liveStats.startTime != null && liveStats.endTime != null
+    ? liveStats.endTime - liveStats.startTime : null;
 
   const stats = useMemo(
     () => (storm.strikes && storm.strikes.length >= 2 ? computeStats(storm.strikes) : null),
@@ -182,16 +227,16 @@ export default function StormDetailClient({
   const longestRec = records.find(r => r.category === 'longest');
   const farthestRec = records.find(r => r.category === 'farthest');
 
-  const stormTotal = storm.totalCount ?? storm.count;
-  const biggestRatio = biggestRec ? storm.count / biggestRec.count : null;
+  const stormTotal = liveStats.totalCount ?? liveStats.count;
+  const biggestRatio = biggestRec ? liveStats.count / biggestRec.count : null;
   const mostRatio    = mostRec ? stormTotal / (mostRec.totalCount ?? mostRec.count) : null;
   const longestRatio =
     longestRec && duration != null && longestRec.startTime != null && longestRec.endTime != null
       ? duration / (longestRec.endTime - longestRec.startTime)
       : null;
   const farthestRatio =
-    farthestRec?.traveledKm && storm.traveledKm
-      ? storm.traveledKm / farthestRec.traveledKm
+    farthestRec?.traveledKm && liveStats.traveledKm
+      ? liveStats.traveledKm / farthestRec.traveledKm
       : null;
 
   const hasCompare = biggestRatio != null || mostRatio != null || longestRatio != null || farthestRatio != null;
@@ -243,25 +288,27 @@ export default function StormDetailClient({
         {/* ── KPI grid ── */}
         <div className="storm-kpi-grid">
           <div className="storm-kpi">
-            <span className="storm-kpi-value">{(storm.totalCount ?? storm.count).toLocaleString()}</span>
+            <span className="storm-kpi-value">{stormTotal.toLocaleString()}</span>
             <span className="storm-kpi-label">Total strikes</span>
           </div>
           <div className="storm-kpi">
             <span className="storm-kpi-value">
-              {fmtRate(storm.rate)}<span className="storm-kpi-unit">/min</span>
+              {fmtRate(liveStats.rate)}<span className="storm-kpi-unit">/min</span>
             </span>
             <span className="storm-kpi-label">Peak rate</span>
           </div>
-          {duration != null && (
+          {(duration != null || isLive) && (
             <div className="storm-kpi">
-              <span className="storm-kpi-value">{fmtDuration(duration)}</span>
+              <span className="storm-kpi-value">
+                {duration != null ? fmtDuration(duration) : liveStats.startTime != null ? fmtDuration(Date.now() - liveStats.startTime) : '—'}
+              </span>
               <span className="storm-kpi-label">Duration</span>
             </div>
           )}
-          {storm.traveledKm != null && storm.traveledKm >= 1 && (
+          {liveStats.traveledKm != null && liveStats.traveledKm >= 1 && (
             <div className="storm-kpi">
               <span className="storm-kpi-value">
-                {Math.round(storm.traveledKm)}<span className="storm-kpi-unit">km</span>
+                {Math.round(liveStats.traveledKm)}<span className="storm-kpi-unit">km</span>
               </span>
               <span className="storm-kpi-label">Distance traveled</span>
             </div>
@@ -305,16 +352,16 @@ export default function StormDetailClient({
           <div className="storm-section">
             <div className="storm-section-title">Key moments</div>
             <div className="storm-info-table">
-              {storm.startTime != null && (
+              {liveStats.startTime != null && (
                 <div className="storm-info-row">
                   <span className="storm-info-label">Born</span>
-                  <span className="storm-info-value">{fmtClock(storm.startTime)}</span>
+                  <span className="storm-info-value">{fmtClock(liveStats.startTime)}</span>
                 </div>
               )}
-              {storm.originCity && (
+              {liveStats.originCity && (
                 <div className="storm-info-row">
                   <span className="storm-info-label">Origin</span>
-                  <span className="storm-info-value">{storm.originCity}</span>
+                  <span className="storm-info-value">{liveStats.originCity}</span>
                 </div>
               )}
               {stats && (
@@ -325,16 +372,16 @@ export default function StormDetailClient({
                   </span>
                 </div>
               )}
-              {storm.endTime != null && (
+              {liveStats.endTime != null && (
                 <div className="storm-info-row">
                   <span className="storm-info-label">Ended</span>
-                  <span className="storm-info-value">{fmtClock(storm.endTime)}</span>
+                  <span className="storm-info-value">{fmtClock(liveStats.endTime)}</span>
                 </div>
               )}
-              {storm.city && (
+              {liveStats.city && (
                 <div className="storm-info-row">
-                  <span className="storm-info-label">Final location</span>
-                  <span className="storm-info-value">{storm.city}</span>
+                  <span className="storm-info-label">{isLive ? 'Current location' : 'Final location'}</span>
+                  <span className="storm-info-value">{liveStats.city}</span>
                 </div>
               )}
               {duration != null && (
