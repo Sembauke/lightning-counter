@@ -60,6 +60,11 @@ export default function StormReplayMap({
     return { minTime: min, maxTime: max };
   }, [strikes]);
 
+  // Stretch the age gradient to cover the full storm lifespan so that beginning
+  // strikes are visible even when the storm lasted longer than GRADIENT_REF_MS.
+  // The floor ensures ageColor(t) is never called with t<0.12 (near-invisible).
+  const gradientRef = Math.max(GRADIENT_REF_MS, maxTime - minTime);
+
   // The storm's 5-minute window in the viewer's local time
   const timeRange = `${fmtClock(minTime)} – ${fmtClock(maxTime)}`;
 
@@ -90,7 +95,7 @@ export default function StormReplayMap({
           ctx.stroke();
         }
       } else {
-        const [r, g, b, a] = ageColor(Math.max(0, 1 - age / GRADIENT_REF_MS));
+        const [r, g, b, a] = ageColor(Math.max(0.12, 1 - age / gradientRef));
         ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
         ctx.fill();
