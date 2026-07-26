@@ -1925,6 +1925,16 @@ html, body {
   box-shadow: 0 0 8px rgba(255,220,0,0.4);
   white-space: nowrap;
   gap: 1px;
+  cursor: default;
+}
+.storm-rank-link {
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.storm-rank-link:hover {
+  background: rgba(255,220,0,0.15);
+  border-color: rgba(255,220,0,1);
+  box-shadow: 0 0 14px rgba(255,220,0,0.7);
 }
 .storm-rank-num {
   font-size: 0.72rem;

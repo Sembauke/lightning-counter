@@ -71,7 +71,7 @@ interface MapState {
   dpr: number;
   drawHeatmap: (() => void) | null;
   stormRankLabels: HTMLDivElement | null;
-  stormRankCells: Array<{ lat: number; lon: number; rank: number; cc: string; rate: number; trend: 'up' | 'down' | 'steady'; drift: string | null; mergedFrom: number }>;
+  stormRankCells: Array<{ lat: number; lon: number; rank: number; cc: string; rate: number; trend: 'up' | 'down' | 'steady'; drift: string | null; mergedFrom: number; stormKey: string | null }>;
   reprojectRankLabels: (() => void) | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   radarLayer: any;
@@ -166,6 +166,8 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const { enabled: tornadoEnabled } = useTornado();
   const [mapReady, setMapReady] = useState(false);
   const seenAlertIdsRef = useRef<Set<string>>(new Set());
+  // Periodically fetched storm list for matching rank bubbles to stormKeys
+  const liveStormsRef = useRef<Array<{ stormKey: string; lat: number; lon: number }>>([]);
   const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; lat: number; lon: number; key: number }>>([]);
 
   // Live strikes from SSE, pruned to the 30-min window
@@ -458,6 +460,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       // Storm rank label overlay — a plain div sibling to the canvases at z=500,
       // above the canvas overlays (z=401/450) which beat Leaflet's internal panes.
       const rankDiv = document.createElement('div');
+      // pointer-events:none on container; individual <a> badges override to auto
       rankDiv.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:500;overflow:visible;';
       container.appendChild(rankDiv);
       s.stormRankLabels = rankDiv;
@@ -468,17 +471,28 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
         div.innerHTML = '';
         for (const cell of s.stormRankCells) {
           const pt = s.map.latLngToContainerPoint([cell.lat, cell.lon]);
-          const el = document.createElement('div');
-          el.className = 'storm-rank-inner';
-          el.style.cssText = `position:absolute;left:${pt.x}px;top:${pt.y}px;transform:translate(-50%,-50%);`;
           const trendIcon = cell.trend === 'up' ? '↑' : cell.trend === 'down' ? '↓' : '';
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
           const driftStr = cell.drift ?? '';
           const mergeIcon = cell.mergedFrom > 1 ? '⚡'.repeat(Math.min(cell.mergedFrom, 3)) : '⚡';
-          el.innerHTML = `<span class="storm-rank-num">${mergeIcon} #${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
+          const inner = `<span class="storm-rank-num">${mergeIcon} #${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
             + (cell.cc ? `<span class="storm-rank-cc">${cell.cc}${driftStr ? ` ${driftStr}` : ''}</span>` : '')
             + `<span class="storm-rank-rate">${rateStr}</span>`;
-          div.appendChild(el);
+          const pos = `position:absolute;left:${pt.x}px;top:${pt.y}px;transform:translate(-50%,-50%);`;
+          if (cell.stormKey) {
+            const a = document.createElement('a');
+            a.className = 'storm-rank-inner storm-rank-link';
+            a.style.cssText = pos + 'pointer-events:auto;text-decoration:none;';
+            a.href = `/storms/${encodeURIComponent(cell.stormKey)}`;
+            a.innerHTML = inner;
+            div.appendChild(a);
+          } else {
+            const el = document.createElement('div');
+            el.className = 'storm-rank-inner';
+            el.style.cssText = pos;
+            el.innerHTML = inner;
+            div.appendChild(el);
+          }
         }
       };
 
@@ -1080,7 +1094,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       stateRef.current.drawHeatmap?.();
     };
 
-    const handleMouseUp = (e: MouseEvent) => {
+    const handleMouseUp = (_e: MouseEvent) => {
       if (!isSelectingRef.current) return;
       isSelectingRef.current = false;
       container.style.cursor = '';
@@ -1309,6 +1323,22 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     }
   }, [stormRanksEnabled]);
 
+  // Fetch today's storm list every 30 s so rank bubbles can link to detail pages
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/storms?date=${today}`);
+        if (!res.ok) return;
+        const rows = await res.json() as Array<{ stormKey: string; lat: number; lon: number }>;
+        liveStormsRef.current = rows.filter(r => r.stormKey);
+      } catch { /* non-fatal */ }
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready || strikes.length === 0) return;
@@ -1397,7 +1427,17 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       const ccCounts: Record<string, number> = {};
       for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
       const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0]?.toUpperCase() ?? '';
-      return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift, mergedFrom: cell.mergedFrom };
+      // Match to nearest tracked storm within 100 km for a clickable detail link
+      const storms = liveStormsRef.current;
+      let stormKey: string | null = null;
+      let bestKm = 100;
+      for (const st of storms) {
+        const dLat = (cell.lat - st.lat) * 111.32;
+        const dLon = (cell.lon - st.lon) * 111.32 * Math.cos(((cell.lat + st.lat) / 2) * Math.PI / 180);
+        const km = Math.hypot(dLat, dLon);
+        if (km < bestKm) { bestKm = km; stormKey = st.stormKey; }
+      }
+      return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift, mergedFrom: cell.mergedFrom, stormKey };
     });
     s.reprojectRankLabels?.();
   }, [strikes]);
