@@ -989,6 +989,21 @@ html, body {
   font-family: inherit;
 }
 .storm-detail-back:hover { color: #ccc; }
+.storm-detail-maplink {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: rgba(255,220,0,0.7);
+  text-decoration: none;
+  letter-spacing: 0.04em;
+  border: 1px solid rgba(255,220,0,0.25);
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  transition: color 0.15s, border-color 0.15s;
+}
+.storm-detail-maplink:hover {
+  color: #ffe040;
+  border-color: rgba(255,220,0,0.6);
+}
 .storm-detail-body {
   max-width: 900px;
   margin: 0 auto;
@@ -1028,6 +1043,7 @@ html, body {
 .storm-detail-sep { color: #444; }
 .storm-detail-date { color: #666; font-family: 'Courier New', monospace; }
 .storm-detail-map { border-radius: 8px; overflow: hidden; }
+.storm-detail-map .bsc-map { height: 520px; }
 .storm-detail-no-replay {
   text-align: center;
   color: #555;

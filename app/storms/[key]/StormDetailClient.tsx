@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
@@ -289,6 +290,10 @@ export default function StormDetailClient({
           className="storm-detail-back"
           onClick={() => window.history.length > 1 ? router.back() : router.push('/storms')}
         >← Back</button>
+        <Link
+          href={`/?lat=${storm.lat.toFixed(3)}&lon=${storm.lon.toFixed(3)}`}
+          className="storm-detail-maplink"
+        >View on map</Link>
       </div>
 
       <div className="storm-detail-body">
@@ -389,7 +394,7 @@ export default function StormDetailClient({
             <div className="storm-timeline-meta">
               {storm.startTime != null && <span>{fmtClock(storm.startTime)}</span>}
               <span className="storm-timeline-peak-label">
-                Peak {fmtClock(stats.peakTs)} — {stats.peakCount} strikes/min
+                Peak {fmtClock(stats.peakTs)} — {fmtRate(liveStats.rate)} strikes/min
               </span>
               {storm.endTime != null && <span>{fmtClock(storm.endTime)}</span>}
             </div>
