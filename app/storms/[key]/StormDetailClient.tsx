@@ -178,10 +178,13 @@ export default function StormDetailClient({
 
   const heldRecords = records.filter(r => r.stormKey && r.stormKey === storm.stormKey);
   const biggestRec = records.find(r => r.category === 'biggest');
+  const mostRec    = records.find(r => r.category === 'most');
   const longestRec = records.find(r => r.category === 'longest');
   const farthestRec = records.find(r => r.category === 'farthest');
 
+  const stormTotal = storm.totalCount ?? storm.count;
   const biggestRatio = biggestRec ? storm.count / biggestRec.count : null;
+  const mostRatio    = mostRec ? stormTotal / (mostRec.totalCount ?? mostRec.count) : null;
   const longestRatio =
     longestRec && duration != null && longestRec.startTime != null && longestRec.endTime != null
       ? duration / (longestRec.endTime - longestRec.startTime)
@@ -191,7 +194,7 @@ export default function StormDetailClient({
       ? storm.traveledKm / farthestRec.traveledKm
       : null;
 
-  const hasCompare = biggestRatio != null || longestRatio != null || farthestRatio != null;
+  const hasCompare = biggestRatio != null || mostRatio != null || longestRatio != null || farthestRatio != null;
 
   return (
     <div className="archive-page">
@@ -410,6 +413,13 @@ export default function StormDetailClient({
                   label="Biggest (peak window)"
                   ratio={biggestRatio}
                   isRecord={heldRecords.some(r => r.category === 'biggest')}
+                />
+              )}
+              {mostRatio != null && (
+                <CompareBar
+                  label="Most strikes (total)"
+                  ratio={mostRatio}
+                  isRecord={heldRecords.some(r => r.category === 'most')}
                 />
               )}
               {longestRatio != null && (
