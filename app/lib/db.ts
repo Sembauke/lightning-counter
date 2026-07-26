@@ -143,6 +143,23 @@ function getDb(): Database.Database {
       } catch { del.run(row.code); }
     }
   } catch { /* best-effort */ }
+
+  // Seed the 'most' record category (added after initial release) from all
+  // historical storms if not yet done.
+  try {
+    const v3 = _db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v3_done') as { value: string } | undefined;
+    if (!v3) {
+      // Defer to avoid a circular-call issue: rebuildStormRecords calls
+      // getDb() again, which is safe because _db is already set.
+      setImmediate(() => {
+        try {
+          rebuildStormRecords();
+          getDb().prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v3_done', '1');
+        } catch { /* non-fatal */ }
+      });
+    }
+  } catch { /* non-fatal */ }
+
   return _db;
 }
 
@@ -600,12 +617,6 @@ export function repairTaintedStormData(): void {
     if (!rebuilt) {
       rebuildStormRecords();
       db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v2_done', '1');
-    }
-    // repair_v3: seed the new 'most' record category from all historical storms.
-    const v3 = db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v3_done') as { value: string } | undefined;
-    if (!v3) {
-      rebuildStormRecords();
-      db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v3_done', '1');
     }
     return;
   }
