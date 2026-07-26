@@ -54,6 +54,7 @@ export default function StormsClient() {
   const [loaded, setLoaded] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ key: string; strikes: StormStrike[] } | null>(null);
+  const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
   const [flashKeys, setFlashKeys] = useState<Set<string>>(new Set());
   const [pinnedKeys, setPinnedKeys] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('pinnedStorms') ?? '[]')); } catch { return new Set(); }
@@ -123,16 +124,48 @@ export default function StormsClient() {
   }, [date]);
 
   useEffect(() => {
-    if (!expandedKey) { setDetail(null); return; }
+    if (!expandedKey) { setDetail(null); setAppendedStrikes([]); return; }
     let cancelled = false;
     setDetail(null);
+    setAppendedStrikes([]);
+
+    // Determine if this storm is currently live at expansion time
+    const expandedStorm = storms.find(s => s.stormKey === expandedKey);
+    const isLiveExpanded = expandedStorm != null && date === todayUTC()
+      && expandedStorm.endTime != null && Date.now() - expandedStorm.endTime < 10 * 60_000;
+
+    let baseCount = 0;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
     fetch(`/api/storms?key=${encodeURIComponent(expandedKey)}`)
       .then(r => r.json())
       .then((storm: { strikes: StormStrike[] | null } | null) => {
-        if (!cancelled && storm?.strikes) setDetail({ key: expandedKey, strikes: storm.strikes });
+        if (cancelled || !storm?.strikes) return;
+        setDetail({ key: expandedKey, strikes: storm.strikes });
+        baseCount = storm.strikes.length;
+
+        if (!isLiveExpanded) return;
+        pollTimer = setInterval(async () => {
+          if (cancelled || document.hidden) return;
+          try {
+            const res = await fetch(`/api/storms/${encodeURIComponent(expandedKey)}/strikes`);
+            const data = await res.json();
+            const all: StormStrike[] = data.strikes ?? [];
+            if (all.length > baseCount) {
+              const fresh = all.slice(baseCount);
+              baseCount = all.length;
+              setAppendedStrikes(prev => [...prev, ...fresh]);
+            }
+          } catch {}
+        }, 15_000);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedKey]);
 
   function changeDate(next: string) {
@@ -275,7 +308,11 @@ export default function StormsClient() {
                     </button>
                     {open && (
                       detail?.key === s.stormKey
-                        ? <StormReplayMap strikes={detail.strikes} />
+                        ? <StormReplayMap
+                            strikes={detail.strikes}
+                            appendedStrikes={isLive ? appendedStrikes : undefined}
+                            isLive={isLive}
+                          />
                         : <div className="storm-log-loading">…</div>
                     )}
                   </div>
