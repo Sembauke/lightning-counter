@@ -180,6 +180,8 @@ export default function StormDetailClient({
   }, [isLive]);
 
   const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
+  // Counts SSE strikes since last DB flush so the counter ticks in real-time
+  const [appendedSinceFlush, setAppendedSinceFlush] = useState(0);
   const latestTsRef = useRef(
     storm.strikes?.length ? Math.max(...storm.strikes.map(s => s[2])) : 0,
   );
@@ -194,6 +196,7 @@ export default function StormDetailClient({
         if (strike[2] > latestTsRef.current) {
           latestTsRef.current = strike[2];
           setAppendedStrikes(prev => [...prev, strike]);
+          setAppendedSinceFlush(prev => prev + 1);
         }
       } catch {}
     };
@@ -222,6 +225,7 @@ export default function StormDetailClient({
           city: data.city,
           originCity: data.originCity,
         });
+        setAppendedSinceFlush(0); // DB total now includes these strikes
         // Backfill any strikes between SSR and EventSource connect
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
@@ -263,7 +267,8 @@ export default function StormDetailClient({
   const longestRec = records.find(r => r.category === 'longest');
   const farthestRec = records.find(r => r.category === 'farthest');
 
-  const stormTotal = liveStats.totalCount ?? liveStats.count;
+  // Real-time total: DB flush value + strikes received via SSE since last flush
+  const stormTotal = (liveStats.totalCount ?? liveStats.count) + appendedSinceFlush;
   const biggestRatio = biggestRec ? liveStats.count / biggestRec.count : null;
   const mostRatio    = mostRec ? stormTotal / (mostRec.totalCount ?? mostRec.count) : null;
   const longestRatio =
@@ -327,7 +332,10 @@ export default function StormDetailClient({
         {/* ── KPI grid ── */}
         <div className="storm-kpi-grid">
           <div className="storm-kpi">
-            <span className="storm-kpi-value">{stormTotal.toLocaleString()}</span>
+            {/* key changes on each SSE strike → remounts span → CSS pulse animation fires */}
+            <span key={stormTotal} className="storm-kpi-value storm-kpi-value--live">
+              {stormTotal.toLocaleString()}
+            </span>
             <span className="storm-kpi-label">Total strikes</span>
           </div>
           <div className="storm-kpi">
