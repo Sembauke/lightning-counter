@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
 // Wider than the detection MERGE_KM (75 km) so that two tracked identities
@@ -86,6 +87,7 @@ function processStrike(lat: number, lon: number, time?: number) {
     if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
     pendingGridStrikes.push({ lat, lon, time: t });
     broadcastSSE(`data: ${JSON.stringify({ lat, lon, cc, time: t })}\n\n`);
+    dispatchToStormSubscribers(lat, lon, t);
   }
 }
 

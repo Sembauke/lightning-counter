@@ -167,7 +167,9 @@ export default function StormDetailClient({
     city: storm.city,
     originCity: storm.originCity,
   });
-  const isLive = liveStats.endTime == null;
+  // endTime is always a timestamp (last tracker flush); treat storm as live
+  // if it was active within the last 10 minutes — same logic as the storms list.
+  const isLive = liveStats.endTime != null && Date.now() - liveStats.endTime < 10 * 60_000;
 
   // Tick every minute so the live duration KPI re-renders without waiting for a poll
   const [now, setNow] = useState(() => Date.now());
@@ -182,6 +184,25 @@ export default function StormDetailClient({
     storm.strikes?.length ? Math.max(...storm.strikes.map(s => s[2])) : 0,
   );
 
+  // SSE: real-time per-strike updates for live storms (millisecond latency)
+  useEffect(() => {
+    if (!isLive || !storm.stormKey) return;
+    const es = new EventSource(`/api/storms/${encodeURIComponent(storm.stormKey)}/stream`);
+    es.onmessage = (e) => {
+      try {
+        const strike = JSON.parse(e.data) as StormStrike;
+        if (strike[2] > latestTsRef.current) {
+          latestTsRef.current = strike[2];
+          setAppendedStrikes(prev => [...prev, strike]);
+        }
+      } catch {}
+    };
+    return () => es.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, storm.stormKey]);
+
+  // KPI poll: update stats (rate, count, location, endTime) every 15s
+  // Also fills the gap between SSR snapshot and EventSource connect on first run
   useEffect(() => {
     if (!isLive || !storm.stormKey) return;
     let cancelled = false;
@@ -191,7 +212,6 @@ export default function StormDetailClient({
         const res = await fetch(`/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes`);
         if (!res.ok || cancelled) return;
         const data = await res.json() as PollResponse;
-        // Update live stats — drives KPI re-renders and LIVE→ended transition
         setLiveStats({
           endTime: data.endTime,
           totalCount: data.totalCount,
@@ -202,6 +222,7 @@ export default function StormDetailClient({
           city: data.city,
           originCity: data.originCity,
         });
+        // Backfill any strikes between SSR and EventSource connect
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
           latestTsRef.current = Math.max(...fresh.map(s => s[2]));
