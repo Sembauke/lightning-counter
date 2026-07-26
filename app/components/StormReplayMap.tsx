@@ -256,18 +256,13 @@ export default function StormReplayMap({
     <div className="bsc-map">
       <div ref={containerRef} className="bsc-map-leaflet" />
       <canvas ref={canvasRef} className="bsc-map-canvas" />
-      <span ref={timeRef} className="bsc-map-time">{timeRange}</span>
-      {isLive
-        ? (
-          <span className="bsc-replay-btn bsc-live-label">
-            <span className="bsc-live-dot" /> LIVE
-          </span>
-        )
-        : (
-          <button className="bsc-replay-btn" onClick={play} disabled={playing}>
-            ▶ {t('replay')}
-          </button>
-        )}
+      <span ref={timeRef} className="bsc-map-time">
+        {isLive && <span className="bsc-live-dot bsc-live-dot--inline" />}
+        {timeRange}
+      </span>
+      <button className="bsc-replay-btn" onClick={play} disabled={playing}>
+        ▶ {t('replay')}
+      </button>
     </div>
   );
 }

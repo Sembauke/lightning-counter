@@ -781,6 +781,8 @@ html, body {
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
 }
 
 .bsc-replay-btn {
@@ -805,21 +807,15 @@ html, body {
 }
 .bsc-replay-btn:disabled { opacity: 0.5; cursor: default; }
 
-.bsc-live-label {
-  cursor: default;
-  border-color: rgba(255,60,60,0.5);
-  color: #ff5555;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  animation: live-pulse 1.8s ease-in-out infinite;
-}
-.bsc-live-dot {
+.bsc-live-dot--inline {
+  display: inline-block;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #ff4444;
-  flex-shrink: 0;
+  margin-right: 0.45rem;
+  vertical-align: middle;
+  animation: live-pulse 1.8s ease-in-out infinite;
 }
 
 /* ── Storm records (hall of fame) page ── */
