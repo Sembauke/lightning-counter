@@ -1685,7 +1685,9 @@ html, body {
   letter-spacing: 0.06em;
 }
 
-.storm-table {
+/* Scope overrides the records-page .storm-table { display: flex } rule above */
+.storm-panel .storm-table {
+  display: table;
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
