@@ -1,8 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
@@ -153,6 +153,7 @@ export default function StormDetailClient({
   records: GlobalStormRecord[];
   rank: number;
 }) {
+  const router = useRouter();
   const ts = useTranslations('storms');
   const countryName = useCountryName();
 
@@ -167,6 +168,14 @@ export default function StormDetailClient({
     originCity: storm.originCity,
   });
   const isLive = liveStats.endTime == null;
+
+  // Tick every minute so the live duration KPI re-renders without waiting for a poll
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isLive) return;
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [isLive]);
 
   const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
   const latestTsRef = useRef(
@@ -216,9 +225,15 @@ export default function StormDetailClient({
   const duration = liveStats.startTime != null && liveStats.endTime != null
     ? liveStats.endTime - liveStats.startTime : null;
 
+  // Merge server strikes with live-appended ones for the timeline chart and geo stats
+  const allStrikesForStats = useMemo(() => {
+    const base = storm.strikes ?? [];
+    return appendedStrikes.length ? [...base, ...appendedStrikes] : base;
+  }, [storm.strikes, appendedStrikes]);
+
   const stats = useMemo(
-    () => (storm.strikes && storm.strikes.length >= 2 ? computeStats(storm.strikes) : null),
-    [storm.strikes],
+    () => (allStrikesForStats.length >= 2 ? computeStats(allStrikesForStats) : null),
+    [allStrikesForStats],
   );
 
   const heldRecords = records.filter(r => r.stormKey && r.stormKey === storm.stormKey);
@@ -244,7 +259,10 @@ export default function StormDetailClient({
   return (
     <div className="archive-page">
       <div className="archive-toolbar">
-        <Link href="/records" className="storm-detail-back">← Records</Link>
+        <button
+          className="storm-detail-back"
+          onClick={() => window.history.length > 1 ? router.back() : router.push('/storms')}
+        >← Back</button>
       </div>
 
       <div className="storm-detail-body">
@@ -300,7 +318,11 @@ export default function StormDetailClient({
           {(duration != null || isLive) && (
             <div className="storm-kpi">
               <span className="storm-kpi-value">
-                {duration != null ? fmtDuration(duration) : liveStats.startTime != null ? fmtDuration(Date.now() - liveStats.startTime) : '—'}
+                {duration != null
+                  ? fmtDuration(duration)
+                  : liveStats.startTime != null
+                    ? fmtDuration(now - liveStats.startTime)
+                    : '—'}
               </span>
               <span className="storm-kpi-label">Duration</span>
             </div>

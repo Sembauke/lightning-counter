@@ -32,7 +32,7 @@ export default function RecordsClient({ storms, dailyBest, top100 }: Props) {
   function highlight(rec: GlobalStormRecord): string {
     switch (rec.category) {
       case 'biggest': return ts('peakRate', { rate: fmtRate(rec.rate) });
-      case 'most':    return ts('strikesCount', { count: rec.totalCount ?? rec.count });
+      case 'most':    return rec.startTime != null && rec.endTime != null ? fmtDuration(rec.endTime - rec.startTime) : ts('strikesCount', { count: rec.totalCount ?? rec.count });
       case 'longest': return rec.startTime != null && rec.endTime != null ? fmtDuration(rec.endTime - rec.startTime) : '';
       case 'farthest': return ts('traveled', { km: Math.round(rec.traveledKm ?? 0) });
       default: return '';

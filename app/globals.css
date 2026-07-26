@@ -982,6 +982,11 @@ html, body {
   color: #888;
   text-decoration: none;
   letter-spacing: 0.04em;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 .storm-detail-back:hover { color: #ccc; }
 .storm-detail-body {
