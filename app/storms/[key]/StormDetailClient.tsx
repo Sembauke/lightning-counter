@@ -103,11 +103,6 @@ function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; 
   );
 }
 
-function ordinal(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
-}
 
 function rankStyle(rank: number): React.CSSProperties {
   const t = Math.pow(Math.max(0, 1 - (rank - 1) / 99), 0.5);
@@ -134,6 +129,8 @@ interface PollResponse {
   traveledKm: number | null;
   city: string | null;
   originCity: string | null;
+  rank: number;
+  nextRankThreshold: number | null;
 }
 
 interface LiveStats {
@@ -148,11 +145,12 @@ interface LiveStats {
 }
 
 export default function StormDetailClient({
-  storm, records, rank,
+  storm, records, rank, nextRankThreshold,
 }: {
   storm: BiggestStorm;
   records: GlobalStormRecord[];
   rank: number;
+  nextRankThreshold: number | null;
 }) {
   const router = useRouter();
   const ts = useTranslations('storms');
@@ -187,6 +185,13 @@ export default function StormDetailClient({
     storm.strikes?.length ? Math.max(...storm.strikes.map(s => s[2])) : 0,
   );
 
+  // Live rank + threshold — start from server-rendered values, updated by each KPI poll
+  const [displayRank, setDisplayRank] = useState(rank);
+  const [displayNextThreshold, setDisplayNextThreshold] = useState(nextRankThreshold);
+  // Refs so the crossing-detection effect can call poll() and read stormTotal without stale closures
+  const pollNowRef = useRef<(() => Promise<void>) | null>(null);
+  const stormTotalRef = useRef(0);
+
   // SSE: real-time per-strike updates for live storms (millisecond latency)
   useEffect(() => {
     if (!isLive || !storm.stormKey) return;
@@ -205,15 +210,16 @@ export default function StormDetailClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, storm.stormKey]);
 
-  // KPI poll: update stats (rate, count, location, endTime) every 15s
-  // Also fills the gap between SSR snapshot and EventSource connect on first run
+  // KPI poll: update stats + rank every 15s; also backfills strikes missed between SSR and SSE
   useEffect(() => {
     if (!isLive || !storm.stormKey) return;
     let cancelled = false;
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes`);
+        const liveTotal = stormTotalRef.current;
+        const url = `/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes?liveTotal=${liveTotal}`;
+        const res = await fetch(url);
         if (!res.ok || cancelled) return;
         const data = await res.json() as PollResponse;
         setLiveStats({
@@ -227,6 +233,9 @@ export default function StormDetailClient({
           originCity: data.originCity,
         });
         setAppendedSinceFlush(0); // DB total now includes these strikes
+        // Take the better (lower-number) rank — never regress an optimistic advance
+        if (data.rank) setDisplayRank(prev => Math.min(prev, data.rank));
+        if ('nextRankThreshold' in data) setDisplayNextThreshold(data.nextRankThreshold);
         // Backfill any strikes between SSR and EventSource connect
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
@@ -236,11 +245,35 @@ export default function StormDetailClient({
       } catch { /* network blip — skip */ }
     };
 
+    pollNowRef.current = poll;
     const id = setInterval(poll, POLL_INTERVAL_MS);
     poll();
-    return () => { cancelled = true; clearInterval(id); };
+    return () => { cancelled = true; clearInterval(id); pollNowRef.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, storm.stormKey]);
+
+  // Real-time total: DB flush value + strikes received via SSE since last flush
+  // (defined here so the crossing effect below can reference it)
+  const stormTotal = (liveStats.totalCount ?? liveStats.count) + appendedSinceFlush;
+
+  // Keep stormTotalRef in sync so the poll always sends the current live total
+  stormTotalRef.current = stormTotal;
+
+  // When stormTotal crosses displayNextThreshold:
+  // 1. Optimistically advance the rank immediately (never shows "stuck")
+  // 2. Clear old threshold so the tag hides while re-polling
+  // 3. Poll with the live total so the server returns the correct next threshold
+  const prevTotalRef = useRef(0);
+  useEffect(() => {
+    if (displayNextThreshold == null) return;
+    const prev = prevTotalRef.current;
+    prevTotalRef.current = stormTotal;
+    if (prev < displayNextThreshold && stormTotal >= displayNextThreshold) {
+      setDisplayRank(r => r - 1);
+      setDisplayNextThreshold(null);
+      pollNowRef.current?.();
+    }
+  }, [stormTotal, displayNextThreshold]);
 
   const name = liveStats.originCity && liveStats.city && liveStats.originCity !== liveStats.city
     ? ts('stormFromTo', { from: liveStats.originCity, to: liveStats.city })
@@ -263,15 +296,15 @@ export default function StormDetailClient({
   );
 
   const heldRecords = records.filter(r => r.stormKey && r.stormKey === storm.stormKey);
-  const biggestRec = records.find(r => r.category === 'biggest');
-  const mostRec    = records.find(r => r.category === 'most');
-  const longestRec = records.find(r => r.category === 'longest');
+  const biggestRec  = records.find(r => r.category === 'biggest');
+  const longestRec  = records.find(r => r.category === 'longest');
   const farthestRec = records.find(r => r.category === 'farthest');
 
-  // Real-time total: DB flush value + strikes received via SSE since last flush
-  const stormTotal = (liveStats.totalCount ?? liveStats.count) + appendedSinceFlush;
-  const biggestRatio = biggestRec ? liveStats.count / biggestRec.count : null;
-  const mostRatio    = mostRec ? stormTotal / (mostRec.totalCount ?? mostRec.count) : null;
+  // Strikes needed to surpass the storm ranked just above; updates live per SSE strike
+  const strikesToNextRank = isLive && displayRank > 1 && displayNextThreshold != null
+    ? displayNextThreshold - stormTotal + 1
+    : null;
+  const biggestRatio = biggestRec ? stormTotal / (biggestRec.totalCount ?? biggestRec.count) : null;
   const longestRatio =
     longestRec && duration != null && longestRec.startTime != null && longestRec.endTime != null
       ? duration / (longestRec.endTime - longestRec.startTime)
@@ -281,7 +314,7 @@ export default function StormDetailClient({
       ? liveStats.traveledKm / farthestRec.traveledKm
       : null;
 
-  const hasCompare = biggestRatio != null || mostRatio != null || longestRatio != null || farthestRatio != null;
+  const hasCompare = biggestRatio != null || longestRatio != null || farthestRatio != null;
 
   return (
     <div className="archive-page">
@@ -320,13 +353,17 @@ export default function StormDetailClient({
           <div className="storm-detail-date-line">{storm.date}</div>
           <div className="storm-record-badges">
             {isLive && <span className="storm-record-badge storm-live-tag">LIVE</span>}
-            <span className="storm-record-badge storm-record-badge--rank" style={rankStyle(rank)}>
-              {ordinal(rank)} biggest storm
+            <span className="storm-record-badge storm-record-badge--rank" style={rankStyle(displayRank)}>
+              #{displayRank} biggest
             </span>
+            {strikesToNextRank != null && strikesToNextRank > 0 && (
+              <span className="storm-rank-progress">
+                ↑ #{displayRank - 1} in {strikesToNextRank.toLocaleString()} strikes
+              </span>
+            )}
             {heldRecords.map(r => (
               <span key={r.category} className={`storm-record-badge storm-record-badge--${r.category}`}>
                 {r.category === 'biggest' ? 'Global Record — Biggest'
-                  : r.category === 'most'    ? 'Global Record — Most Strikes'
                   : r.category === 'longest' ? 'Global Record — Longest'
                   : 'Global Record — Farthest'}
               </span>
@@ -513,16 +550,9 @@ export default function StormDetailClient({
             <div className="storm-compare-list">
               {biggestRatio != null && (
                 <CompareBar
-                  label="Biggest (peak window)"
+                  label="Biggest (total strikes)"
                   ratio={biggestRatio}
                   isRecord={heldRecords.some(r => r.category === 'biggest')}
-                />
-              )}
-              {mostRatio != null && (
-                <CompareBar
-                  label="Most strikes (total)"
-                  ratio={mostRatio}
-                  isRecord={heldRecords.some(r => r.category === 'most')}
                 />
               )}
               {longestRatio != null && (
@@ -543,9 +573,9 @@ export default function StormDetailClient({
           </div>
         )}
 
-        {/* ── Replay map ── */}
+        {/* ── Replay map / Live map ── */}
         <div className="storm-section">
-          <div className="storm-section-title">Strike replay</div>
+          <div className="storm-section-title">{isLive ? 'Live map' : 'Strike replay'}</div>
           {storm.strikes && storm.strikes.length > 0
             ? (
               <div className="storm-detail-map">

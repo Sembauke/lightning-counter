@@ -41,10 +41,12 @@ export default function StormReplayMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef<HTMLSpanElement>(null);
+  const timeTextRef = useRef<HTMLSpanElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const projectedRef = useRef<Projected[]>([]);
   const ringsRef = useRef<Ring[]>([]);
   const rafRef = useRef<number | null>(null);
+  const liveRafRef = useRef<number | null>(null);
   const appendedLengthRef = useRef(0);
   const maxTimeRef = useRef(-Infinity);
   const [playing, setPlaying] = useState(false);
@@ -123,8 +125,8 @@ export default function StormReplayMap({
 
       const map = L.map(containerRef.current, {
         zoomControl: false, attributionControl: false,
-        dragging: true, scrollWheelZoom: true, doubleClickZoom: false,
-        boxZoom: false, keyboard: false, touchZoom: true,
+        dragging: !isLive, scrollWheelZoom: !isLive, doubleClickZoom: false,
+        boxZoom: false, keyboard: false, touchZoom: !isLive,
         minZoom: 4, maxZoom: 12,
       });
       L.tileLayer(TILE_SAT.url, TILE_SAT.options).addTo(map);
@@ -217,6 +219,28 @@ export default function StormReplayMap({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appendedStrikes]);
 
+  // Live mode: continuous RAF that ages strikes by real elapsed time and keeps rings animated
+  useEffect(() => {
+    if (!isLive) return;
+    const tick = () => {
+      if (mapRef.current) {
+        draw(Date.now(), performance.now());
+        if (timeTextRef.current && maxTimeRef.current > -Infinity) {
+          timeTextRef.current.textContent = fmtClock(maxTimeRef.current, true);
+        }
+      }
+      liveRafRef.current = requestAnimationFrame(tick);
+    };
+    liveRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (liveRafRef.current !== null) {
+        cancelAnimationFrame(liveRafRef.current);
+        liveRafRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive]);
+
   const play = () => {
     const proj = projectedRef.current;
     if (playing || proj.length === 0) return;
@@ -243,14 +267,14 @@ export default function StormReplayMap({
       }
 
       draw(cutoff, now, freshMs);
-      if (timeRef.current) timeRef.current.textContent = fmtClock(cutoff, true);
+      if (timeTextRef.current) timeTextRef.current.textContent = fmtClock(cutoff, true);
 
       if (p < 1 || ringsRef.current.length > 0) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
         rafRef.current = null;
         draw(maxTime, performance.now());
-        if (timeRef.current) timeRef.current.textContent = timeRange;
+        if (timeTextRef.current) timeTextRef.current.textContent = timeRange;
         setPlaying(false);
       }
     };
@@ -263,11 +287,12 @@ export default function StormReplayMap({
       <canvas ref={canvasRef} className="bsc-map-canvas" />
       <span ref={timeRef} className="bsc-map-time">
         {isLive && <span className="bsc-live-dot bsc-live-dot--inline" />}
-        {timeRange}
+        <span ref={timeTextRef}>{timeRange}</span>
       </span>
-      <button className="bsc-replay-btn" onClick={play} disabled={playing}>
-        ▶ {t('replay')}
-      </button>
+      {isLive
+        ? <span className="bsc-live-badge">● LIVE</span>
+        : <button className="bsc-replay-btn" onClick={play} disabled={playing}>▶ {t('replay')}</button>
+      }
     </div>
   );
 }

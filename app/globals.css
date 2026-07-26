@@ -807,6 +807,23 @@ html, body {
 }
 .bsc-replay-btn:disabled { opacity: 0.5; cursor: default; }
 
+.bsc-live-badge {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 600;
+  padding: 0.35rem 0.8rem;
+  background: rgba(8,8,18,0.85);
+  border: 1px solid rgba(255,60,60,0.45);
+  border-radius: 6px;
+  color: #ff4444;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+
 .bsc-live-dot--inline {
   display: inline-block;
   width: 7px;
@@ -1068,19 +1085,56 @@ html, body {
   gap: 0.4rem;
   margin-top: 0.25rem;
 }
+/* ── Shared badge base ── */
 .storm-record-badge {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0.2rem 0.6rem;
-  border-radius: 4px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 3px;
+  white-space: nowrap;
 }
-.storm-record-badge--rank     { background: rgba(255,255,255,0.06); color: #aaa; border: 1px solid rgba(255,255,255,0.12); }
-.storm-record-badge--biggest  { background: rgba(255,107,53,0.18); color: #ff6b35; border: 1px solid rgba(255,107,53,0.4); }
-.storm-record-badge--most     { background: rgba(255,200,0,0.14); color: #ffc800; border: 1px solid rgba(255,200,0,0.4); }
-.storm-record-badge--longest  { background: rgba(100,200,255,0.12); color: #64c8ff; border: 1px solid rgba(100,200,255,0.35); }
-.storm-record-badge--farthest { background: rgba(150,255,150,0.12); color: #80e880; border: 1px solid rgba(150,255,150,0.3); }
+
+/* Rank badge — rankStyle() supplies color / background / borderColor inline */
+.storm-record-badge--rank {
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+}
+
+/* Global record badges */
+.storm-record-badge--biggest  {
+  background: rgba(255, 95, 45, 0.12);
+  color: #ff7a55;
+  border: 1px solid rgba(255, 95, 45, 0.3);
+}
+.storm-record-badge--longest  {
+  background: rgba(70, 175, 255, 0.10);
+  color: #5db8ff;
+  border: 1px solid rgba(70, 175, 255, 0.28);
+}
+.storm-record-badge--farthest {
+  background: rgba(70, 215, 100, 0.10);
+  color: #5dd878;
+  border: 1px solid rgba(70, 215, 100, 0.26);
+}
+.storm-record-badge--most { display: none; } /* merged into biggest */
+
+/* Rank progress countdown — live storms only */
+.storm-rank-progress {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 3px;
+  background: rgba(255, 152, 18, 0.08);
+  border: 1px solid rgba(255, 152, 18, 0.4);
+  color: rgba(255, 170, 40, 0.92);
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
 
 .storm-kpi-grid {
   display: grid;
@@ -1417,33 +1471,46 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .storm-live-tag {
-  display: inline-block;
-  margin-right: 0.5rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  background: rgba(255, 50, 50, 0.18);
-  color: #ff5555;
-  border: 1px solid rgba(255, 50, 50, 0.4);
-  font-size: 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.2rem 0.52rem;
+  border-radius: 3px;
+  background: rgba(215, 35, 35, 0.12);
+  border: 1px solid rgba(215, 35, 35, 0.3);
+  color: #f07070;
+  font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   text-decoration: none;
+  white-space: nowrap;
   animation: live-pulse 1.8s ease-in-out infinite;
 }
-.storm-live-tag:hover { background: rgba(255, 50, 50, 0.3); }
+.storm-live-tag::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.storm-live-tag:hover { background: rgba(215, 35, 35, 0.22); }
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
 .storm-log-rank {
-  display: inline-block;
-  margin-right: 0.45rem;
-  padding: 0.05rem 0.35rem;
-  border-radius: 4px;
-  background: rgba(255,255,255,0.07);
-  color: #999;
-  font-size: 0.68rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.44rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  /* color, background, borderColor supplied by rankStyle() inline */
+  border: 1px solid transparent;
 }
 .storm-log-badges .storm-chevron { color: rgba(255,220,0,0.4); font-size: 0.85rem; }
 

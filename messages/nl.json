@@ -9,7 +9,7 @@
     "watching": "kijkers",
     "settings": "Instellingen",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap",
+    "toggleHeatmap": "Heatmap in-/uitschakelen",
     "stormActivity": "Onweeractiviteit",
     "records": "Records",
     "storms": "Onweersbuien",
@@ -79,7 +79,7 @@
     "farthest": "Verst gereisd",
     "dailyPeak": "Meeste ontladingen op één dag",
     "noData": "Nog geen records — onweersbuien worden gevolgd.",
-    "dailyBest": "Best storm per day",
+    "dailyBest": "Beste bui per dag",
     "most": "Meeste bliksems"
   },
   "stormLog": {

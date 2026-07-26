@@ -332,7 +332,7 @@ export interface GlobalStormRecord extends BiggestStorm {
 }
 
 const RECORD_METRICS: Record<StormRecordCategory, (s: BiggestStorm) => number | null> = {
-  biggest: s => s.count,
+  biggest: s => (s.totalCount != null && s.totalCount > 0 ? s.totalCount : s.count),
   longest: s => (s.startTime != null && s.endTime != null ? s.endTime - s.startTime : null),
   farthest: s => (s.traveledKm != null && s.traveledKm >= 5 ? s.traveledKm : null),
   most:    s => (s.totalCount != null && s.totalCount > 0 ? s.totalCount : s.count),
@@ -347,6 +347,7 @@ export function getStormRecords(): GlobalStormRecord[] {
            traveled_km AS traveledKm, total_count AS totalCount, strikes,
            country_path AS countryPath
     FROM storm_records
+    WHERE category != 'most'
   `).all() as Array<Omit<GlobalStormRecord, 'strikes' | 'countryPath'> & { strikes: string | null; countryPath: string | null }>;
   return rows.map(row => {
     let strikes: StormStrike[] | null = null;
@@ -500,9 +501,9 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
 }
 
 /** 1-based rank of this storm by peak count across all logged storms */
-export function getStormRank(count: number): number {
+export function getStormRank(totalCount: number): number {
   const db = getDb();
-  const row = db.prepare('SELECT COUNT(*) AS n FROM storms WHERE count > ?').get(count) as { n: number };
+  const row = db.prepare('SELECT COUNT(*) AS n FROM storms WHERE COALESCE(total_count, count) > ?').get(totalCount) as { n: number };
   return row.n + 1;
 }
 
@@ -513,11 +514,24 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
   const placeholders = stormKeys.map(() => '?').join(',');
   const rows = db.prepare(`
     WITH ranked AS (
-      SELECT storm_key, ROW_NUMBER() OVER (ORDER BY count DESC) AS rank FROM storms
+      SELECT storm_key, ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC) AS rank FROM storms
     )
     SELECT storm_key AS stormKey, rank FROM ranked WHERE storm_key IN (${placeholders})
   `).all(...stormKeys) as Array<{ stormKey: string; rank: number }>;
   return Object.fromEntries(rows.map(r => [r.stormKey, r.rank]));
+}
+
+/** Total count of the nearest storm ranked above `currentTotal` for the rank-progress tag */
+export function getNextRankThreshold(stormKey: string, currentTotal: number): number | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT COALESCE(total_count, count) AS threshold
+    FROM storms
+    WHERE storm_key != ? AND COALESCE(total_count, count) > ?
+    ORDER BY COALESCE(total_count, count) ASC
+    LIMIT 1
+  `).get(stormKey, currentTotal) as { threshold: number } | undefined;
+  return row?.threshold ?? null;
 }
 
 export function deleteStorm(stormKey: string): void {

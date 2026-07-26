@@ -266,7 +266,7 @@ export default function StormsClient() {
                     <span className="storm-log-badges">
                       {isLive && <span className="storm-live-tag">LIVE</span>}
                       {s.rank != null && (
-                        <span className="storm-log-rank" style={rankStyle(s.rank)}>{ordinal(s.rank)} biggest</span>
+                        <span className="storm-log-rank" style={rankStyle(s.rank)}>#{s.rank}</span>
                       )}
                       {!isLive && <span className={`storm-chevron${open ? ' open' : ''}`}>▾</span>}
                     </span>

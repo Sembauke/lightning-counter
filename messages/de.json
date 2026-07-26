@@ -9,7 +9,7 @@
     "watching": "zuschauer",
     "settings": "Einstellungen",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap",
+    "toggleHeatmap": "Heatmap umschalten",
     "stormActivity": "Gewitteraktivität",
     "records": "Rekorde",
     "storms": "Gewitter",
@@ -79,6 +79,7 @@
     "farthest": "Weiteste Strecke",
     "dailyPeak": "Meiste Entladungen an einem Tag",
     "noData": "Noch keine Rekorde — Gewitter werden verfolgt.",
+    "dailyBest": "Bester Sturm pro Tag",
     "most": "Meiste Blitze"
   },
   "stormLog": {

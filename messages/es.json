@@ -9,7 +9,7 @@
     "watching": "viendo",
     "settings": "Ajustes",
     "heatmap": "Heatmap",
-    "toggleHeatmap": "Toggle heatmap",
+    "toggleHeatmap": "Activar/desactivar mapa de calor",
     "stormActivity": "Actividad Tormentas",
     "records": "Récords",
     "storms": "Tormentas",
@@ -79,6 +79,7 @@
     "farthest": "Mayor distancia recorrida",
     "dailyPeak": "Más descargas en un día",
     "noData": "Aún no hay récords — se están siguiendo las tormentas.",
+    "dailyBest": "Mejor tormenta por día",
     "most": "Más rayos"
   },
   "stormLog": {
