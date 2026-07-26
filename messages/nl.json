@@ -79,7 +79,8 @@
     "farthest": "Verst gereisd",
     "dailyPeak": "Meeste ontladingen op één dag",
     "noData": "Nog geen records — onweersbuien worden gevolgd.",
-    "dailyBest": "Best storm per day"
+    "dailyBest": "Best storm per day",
+    "most": "Meeste bliksems"
   },
   "stormLog": {
     "title": "Onweerslogboek",

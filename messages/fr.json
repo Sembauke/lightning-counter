@@ -79,7 +79,8 @@
     "farthest": "Plus longue distance",
     "dailyPeak": "Plus de décharges en une journée",
     "noData": "Pas encore de records — les orages sont suivis.",
-    "dailyBest": "Best storm per day"
+    "dailyBest": "Best storm per day",
+    "most": "Plus d'éclairs"
   },
   "stormLog": {
     "title": "Journal des orages",

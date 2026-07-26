@@ -78,7 +78,8 @@
     "longest": "Tormenta más duradera",
     "farthest": "Mayor distancia recorrida",
     "dailyPeak": "Más descargas en un día",
-    "noData": "Aún no hay récords — se están siguiendo las tormentas."
+    "noData": "Aún no hay récords — se están siguiendo las tormentas.",
+    "most": "Más rayos"
   },
   "stormLog": {
     "title": "Registro de tormentas",

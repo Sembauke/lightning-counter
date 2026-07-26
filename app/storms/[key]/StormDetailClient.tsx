@@ -228,11 +228,10 @@ export default function StormDetailClient({
             </span>
             {heldRecords.map(r => (
               <span key={r.category} className={`storm-record-badge storm-record-badge--${r.category}`}>
-                {r.category === 'biggest'
-                  ? 'Global Record — Biggest'
-                  : r.category === 'longest'
-                    ? 'Global Record — Longest'
-                    : 'Global Record — Farthest'}
+                {r.category === 'biggest' ? 'Global Record — Biggest'
+                  : r.category === 'most'    ? 'Global Record — Most Strikes'
+                  : r.category === 'longest' ? 'Global Record — Longest'
+                  : 'Global Record — Farthest'}
               </span>
             ))}
           </div>

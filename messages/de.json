@@ -78,7 +78,8 @@
     "longest": "Langlebigstes Gewitter",
     "farthest": "Weiteste Strecke",
     "dailyPeak": "Meiste Entladungen an einem Tag",
-    "noData": "Noch keine Rekorde — Gewitter werden verfolgt."
+    "noData": "Noch keine Rekorde — Gewitter werden verfolgt.",
+    "most": "Meiste Blitze"
   },
   "stormLog": {
     "title": "Gewitterprotokoll",

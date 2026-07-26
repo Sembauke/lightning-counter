@@ -1057,6 +1057,7 @@ html, body {
 }
 .storm-record-badge--rank     { background: rgba(255,255,255,0.06); color: #aaa; border: 1px solid rgba(255,255,255,0.12); }
 .storm-record-badge--biggest  { background: rgba(255,107,53,0.18); color: #ff6b35; border: 1px solid rgba(255,107,53,0.4); }
+.storm-record-badge--most     { background: rgba(255,200,0,0.14); color: #ffc800; border: 1px solid rgba(255,200,0,0.4); }
 .storm-record-badge--longest  { background: rgba(100,200,255,0.12); color: #64c8ff; border: 1px solid rgba(100,200,255,0.35); }
 .storm-record-badge--farthest { background: rgba(150,255,150,0.12); color: #80e880; border: 1px solid rgba(150,255,150,0.3); }
 
