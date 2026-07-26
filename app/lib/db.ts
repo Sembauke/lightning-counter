@@ -144,17 +144,39 @@ function getDb(): Database.Database {
     }
   } catch { /* best-effort */ }
 
-  // Seed the 'most' record category (added after initial release) from all
-  // historical storms if not yet done.
+  // Seed the 'most' record category from historical storms (one-time, on first boot
+  // after the category was added). Only touches this one row — does not rebuild others.
   try {
     const v3 = _db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v3_done') as { value: string } | undefined;
     if (!v3) {
-      // Defer to avoid a circular-call issue: rebuildStormRecords calls
-      // getDb() again, which is safe because _db is already set.
       setImmediate(() => {
         try {
-          rebuildStormRecords();
-          getDb().prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v3_done', '1');
+          const db = getDb();
+          const best = db.prepare(`
+            SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
+                   origin_lat AS originLat, origin_lon AS originLon, origin_city AS originCity,
+                   start_time AS startTime, end_time AS endTime,
+                   traveled_km AS traveledKm, total_count AS totalCount,
+                   strikes, country_path AS countryPath
+            FROM storms
+            WHERE storm_key IS NOT NULL
+            ORDER BY COALESCE(total_count, count) DESC
+            LIMIT 1
+          `).get() as (Omit<BiggestStorm, 'strikes' | 'countryPath'> & { stormKey: string; strikes: string | null; countryPath: string | null }) | undefined;
+          if (best) {
+            db.prepare(`
+              INSERT OR IGNORE INTO storm_records
+                (category, code, count, rate, lat, lon, city, date,
+                 origin_lat, origin_lon, origin_city, start_time, end_time, storm_key,
+                 traveled_km, total_count, strikes, country_path)
+              VALUES ('most', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              best.code, best.count, best.rate, best.lat, best.lon, best.city, best.date,
+              best.originLat, best.originLon, best.originCity, best.startTime, best.endTime,
+              best.stormKey, best.traveledKm, best.totalCount, best.strikes, best.countryPath,
+            );
+          }
+          db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v3_done', '1');
         } catch { /* non-fatal */ }
       });
     }
