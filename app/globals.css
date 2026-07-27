@@ -2031,9 +2031,12 @@ html, body {
   cursor: default;
 }
 .storm-rank-link {
+  color: #ffe040;
+  text-decoration: none;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
+.storm-rank-link:visited { color: #ffe040; }
 .storm-rank-link:hover {
   background: rgba(255,220,0,0.15);
   border-color: rgba(255,220,0,1);
