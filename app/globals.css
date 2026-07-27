@@ -2038,6 +2038,7 @@ html, body {
 }
 .storm-rank-link:visited { color: #ffe040; }
 .storm-rank-link:hover {
+  color: #ffe040;
   background: rgba(255,220,0,0.15);
   border-color: rgba(255,220,0,1);
   box-shadow: 0 0 14px rgba(255,220,0,0.7);
