@@ -474,8 +474,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           const trendIcon = cell.trend === 'up' ? '↑' : cell.trend === 'down' ? '↓' : '';
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
           const driftStr = cell.drift ?? '';
-          const mergeIcon = cell.mergedFrom > 1 ? '⚡'.repeat(Math.min(cell.mergedFrom, 3)) : '⚡';
-          const inner = `<span class="storm-rank-num">${mergeIcon} #${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
+          const inner = `<span class="storm-rank-num">⚡ #${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
             + (cell.cc ? `<span class="storm-rank-cc">${cell.cc}${driftStr ? ` ${driftStr}` : ''}</span>` : '')
             + `<span class="storm-rank-rate">${rateStr}</span>`;
           const pos = `position:absolute;left:${pt.x}px;top:${pt.y}px;transform:translate(-50%,-50%);`;
