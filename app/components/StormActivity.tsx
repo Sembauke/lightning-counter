@@ -219,6 +219,7 @@ function StormRow({ rank, cc, name, isSea, count, rate, peak, isOpen, onToggle, 
                         </span>
                       </span>
                       <span className="storm-cell-meta">
+                        {cell.mergedFrom > 1 && <span className="storm-merge-tag">merged</span>}
                         {near && near.km > 0 ? `${near.km} km ${t(`dir${near.dir}`)} · ` : ''}
                         {t('strikesCount', { count: cell.count })}
                         {cell.drift ? ` · ${t('moving', { dir: t(`dir${cell.drift}`) })}` : ''}

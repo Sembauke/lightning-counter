@@ -879,7 +879,8 @@ html, body {
 .rec-country {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.45rem;
   font-size: 0.8rem;
   color: rgba(255,220,0,0.8);
 }
@@ -1824,6 +1825,7 @@ html, body {
   font-size: 1rem;
   line-height: 1;
   padding: 0 0 0 0.3rem;
+  margin-left: auto;
 }
 .alert-toast-close:hover { opacity: 1; }
 
@@ -1964,6 +1966,25 @@ html, body {
   font-size: 0.68rem;
   color: rgba(255,230,120,0.75);
   letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.storm-merge-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.35rem;
+  border-radius: 3px;
+  background: rgba(90, 180, 255, 0.1);
+  border: 1px solid rgba(90, 180, 255, 0.28);
+  color: rgba(130, 200, 255, 0.9);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 /* Map location search */

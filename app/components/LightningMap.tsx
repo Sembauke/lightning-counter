@@ -887,6 +887,11 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
 
       s.ready = true;
       setMapReady(true);
+      // Redraw any rank cells that were computed before this (re-)init.
+      // In React Strict Mode dev the map effect runs twice; the second mount
+      // sees mapReady already true so the rank-labels effect never re-fires,
+      // leaving the new div empty. Calling here fills it immediately.
+      s.reprojectRankLabels?.();
 
       // Fly to ?lat=X&lon=Y if navigated here from the storm log's LIVE badge
       const urlParams = new URLSearchParams(window.location.search);
@@ -909,6 +914,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       s.map?.remove();
       s.map = null;
       s.ready = false;
+      setMapReady(false);
     };
   }, []);
 

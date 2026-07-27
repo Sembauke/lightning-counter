@@ -29,7 +29,9 @@ let todayCounts: Record<string, number> = { ...loadDailyStrikes(currentDay) };
 
 // ── Strike buffers ─────────────────────────────────────────────────────
 interface RecentStrike { lat: number; lon: number; cc: string | null; time: number }
-const recentStrikes: RecentStrike[] = [];
+// Survive HMR module reloads in dev — same pattern as _serverTotal/_serverCountryCounts
+const recentStrikes: RecentStrike[] = (globalThis as any)._recentStrikes ?? [];
+(globalThis as any)._recentStrikes = recentStrikes;
 // Must fully cover the storm widget's 5-minute window (+1 min slack) even at
 // peak global rates (~100/s), or its rates collapse on every page refresh.
 // Older map visuals are seeded from the DB archive, not this buffer.
