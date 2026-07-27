@@ -481,7 +481,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
           if (cell.stormKey) {
             const a = document.createElement('a');
             a.className = 'storm-rank-inner storm-rank-link';
-            a.style.cssText = pos + 'pointer-events:auto;text-decoration:none;';
+            a.style.cssText = pos + 'pointer-events:auto;text-decoration:none;color:#ffe040;';
             a.href = `/storms/${encodeURIComponent(cell.stormKey)}`;
             a.innerHTML = inner;
             div.appendChild(a);
