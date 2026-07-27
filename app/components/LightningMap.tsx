@@ -1439,7 +1439,7 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
       return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift, mergedFrom: cell.mergedFrom, stormKey };
     });
     s.reprojectRankLabels?.();
-  }, [strikes]);
+  }, [strikes, mapReady]);
 
   // Location search
   interface NominatimResult { place_id: number; display_name: string; lat: string; lon: string }
