@@ -10,6 +10,17 @@ export interface Strike {
   cc?: string;
 }
 
+export interface TrackedStormSummary {
+  key: string;
+  lat: number;
+  lon: number;
+  totalStrikes: number;
+  cc: string;
+  rate: number;
+  rank: number;
+  hasPage: boolean;
+}
+
 export type CountryCounts = Record<string, number>;
 
 // Must hold at least the storm widget's full 5-min window at peak rates (~100/s)
@@ -24,6 +35,7 @@ export function useBlitzortung() {
   const [countryCounts, setCountryCounts] = useState<CountryCounts>({});
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [trackedStorms, setTrackedStorms] = useState<TrackedStormSummary[]>([]);
 
   const counterRef = useRef(0);
 
@@ -31,6 +43,9 @@ export function useBlitzortung() {
     const es = new EventSource('/api/strikes');
 
     es.addEventListener('init', (e: MessageEvent) => {
+      // Unblock the map immediately — dots arrive asynchronously via the
+      // history event and the viewport DB fetch.
+      setHistoryLoaded(true);
       try {
         const data = JSON.parse(e.data) as { total: number; countries: CountryCounts };
         setTotalCount(data.total);
@@ -38,7 +53,7 @@ export function useBlitzortung() {
       } catch { /* ignore */ }
     });
 
-    // Pre-populate map with strikes from the last 30 min
+    // Pre-populate map with recent strikes (capped on server to ~10 k)
     es.addEventListener('history', (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data) as Array<{ lat: number; lon: number; cc?: string | null; time: number }>;
@@ -50,7 +65,13 @@ export function useBlitzortung() {
           ...(s.cc ? { cc: s.cc } : {}),
         }));
         setStrikes(historical);
-        setHistoryLoaded(true);
+      } catch { /* ignore */ }
+    });
+
+    es.addEventListener('storms', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data) as TrackedStormSummary[];
+        setTrackedStorms(data);
       } catch { /* ignore */ }
     });
 
@@ -118,5 +139,5 @@ export function useBlitzortung() {
     };
   }, []);
 
-  return { strikes, totalCount, countryCounts, connected, historyLoaded, isDemo: false };
+  return { strikes, totalCount, countryCounts, connected, historyLoaded, trackedStorms, isDemo: false };
 }

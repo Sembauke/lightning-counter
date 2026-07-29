@@ -443,6 +443,24 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
+/** All currently-active storms (end_time within last 10 min), any size, any date — for map rank matching */
+/** Returns all storm_keys currently in the storms table — used to validate links before broadcasting */
+export function getTrackedStormKeys(): Set<string> {
+  const db = getDb();
+  const rows = db.prepare('SELECT storm_key FROM storms WHERE storm_key IS NOT NULL').all() as Array<{ storm_key: string }>;
+  return new Set(rows.map(r => r.storm_key));
+}
+
+export function getLiveStorms(): Array<{ stormKey: string; lat: number; lon: number; totalCount: number | null; count: number }> {
+  const db = getDb();
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  return db.prepare(`
+    SELECT storm_key AS stormKey, lat, lon, total_count AS totalCount, count
+    FROM storms WHERE end_time >= ?
+    ORDER BY COALESCE(total_count, count) DESC
+  `).all(cutoff) as Array<{ stormKey: string; lat: number; lon: number; totalCount: number | null; count: number }>;
+}
+
 /** Best storm per calendar date, ordered newest-first, for the records page timeline */
 export function getBiggestStormPerDay(): StormLogRow[] {
   const db = getDb();
@@ -679,6 +697,19 @@ export function repairTaintedStormData(): void {
   rebuildStormRecords();
 
   db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v1_done', '1');
+}
+
+/** Returns lat/lon for all recent (within 1 hour) DB storm entries, keyed by storm_key. */
+export function getRecentStormPositions(): Map<string, { lat: number; lon: number }> {
+  const db = getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  const hourAgo = Date.now() - 60 * 60 * 1000;
+  const rows = db.prepare(
+    `SELECT storm_key, lat, lon FROM storms WHERE date = ? AND end_time > ? AND storm_key IS NOT NULL`
+  ).all(today, hourAgo) as Array<{ storm_key: string; lat: number; lon: number }>;
+  const map = new Map<string, { lat: number; lon: number }>();
+  for (const r of rows) map.set(r.storm_key, { lat: r.lat, lon: r.lon });
+  return map;
 }
 
 export function saveTrackedStorms(storms: unknown[]): void {

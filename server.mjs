@@ -157,4 +157,10 @@ setInterval(() => {
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`> Ready on http://0.0.0.0:${port}`);
+  // Pre-warm the home page so Next.js compiles the LightningMap chunk before
+  // the first user request. Without this, the initial page load triggers a
+  // cold compile that shows "Loading map…" for several seconds.
+  setTimeout(() => {
+    fetch(`http://127.0.0.1:${port}/`).catch(() => {});
+  }, 500);
 });

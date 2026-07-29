@@ -2042,13 +2042,13 @@ html, body {
   background: rgba(6,6,14,0.9);
   border: 1.5px solid rgba(255,220,0,0.75);
   border-radius: 5px;
-  padding: 3px 7px;
+  padding: 5px 9px;
   font-family: 'Courier New', Courier, monospace;
   font-weight: 700;
   color: #ffe040;
   box-shadow: 0 0 8px rgba(255,220,0,0.4);
   white-space: nowrap;
-  gap: 1px;
+  gap: 2px;
   cursor: default;
 }
 .storm-rank-link {
@@ -2064,21 +2064,35 @@ html, body {
   box-shadow: 0 0 14px rgba(255,220,0,0.7);
 }
 .storm-rank-num {
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   line-height: 1.2;
 }
 .storm-rank-trend[data-trend="up"]   { color: #4dff91; }
 .storm-rank-trend[data-trend="down"] { color: #ff6b6b; }
-.storm-rank-cc {
-  font-size: 0.55rem;
-  letter-spacing: 0.04em;
-  opacity: 0.85;
-  line-height: 1.1;
+.storm-rank-total {
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  color: rgba(255, 215, 100, 0.95);
 }
 .storm-rank-rate {
-  font-size: 0.55rem;
-  opacity: 0.7;
-  line-height: 1.1;
+  font-size: 0.65rem;
+  opacity: 0.75;
+  line-height: 1.2;
+}
+.storm-track-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.06rem 0.3rem;
+  border-radius: 3px;
+  background: rgba(100, 220, 130, 0.12);
+  border: 1px solid rgba(100, 220, 130, 0.3);
+  color: rgba(140, 240, 160, 0.95);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 1px;
 }
 
 .storm-focus-circle {

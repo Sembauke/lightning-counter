@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
@@ -49,8 +49,13 @@ const sseControllers: Set<ReadableStreamDefaultController<Uint8Array>> = (() => 
   }
   return (globalThis as any)._sseControllers;
 })();
+// Increment a global generation counter on each module load. broadcastSSE checks
+// this so that stale module instances (hot-reload survivors without the processStrike
+// staleness guard) cannot send broadcasts to current clients.
+const myGeneration: number = ((globalThis as any)._sseBcastGen = ((globalThis as any)._sseBcastGen ?? 0) + 1);
 
 function broadcastSSE(chunk: string) {
+  if ((globalThis as any)._sseBcastGen !== myGeneration) return;
   const buf = enc.encode(chunk);
   for (const ctrl of sseControllers) {
     try { ctrl.enqueue(buf); } catch { sseControllers.delete(ctrl); }
@@ -101,8 +106,21 @@ const queued: Array<{ lat: number; lon: number; time?: number }> = (globalThis a
 (globalThis as any)._strikeQueue = [];
 for (const { lat, lon, time } of queued) processStrike(lat, lon, time);
 
+// ── Stale-interval cleanup ─────────────────────────────────────────────
+// Use named globalThis slots (_iv_*) for every interval so that ANY module
+// load — regardless of when it was created or what cleanup code it had —
+// kills the previous instance's timers. clearInterval on a named slot is
+// unconditional: it works even for modules loaded before this mechanism
+// existed, because it targets the timer object itself, not a tracking list.
+// Also clear the old _routeIntervals list for modules that used that approach.
+for (const id of ((globalThis as any)._routeIntervals ?? [])) clearInterval(id as ReturnType<typeof setInterval>);
+(globalThis as any)._routeIntervals = [];
+for (const k of ['_iv_histPrune', '_iv_dbFlush', '_iv_gridBatch', '_iv_hourly']) {
+  if ((globalThis as any)[k]) clearInterval((globalThis as any)[k]);
+}
+
 // ── Periodic maintenance ───────────────────────────────────────────────
-setInterval(() => {
+(globalThis as any)._iv_histPrune = setInterval(() => {
   const cutoff = Date.now() - HISTORY_LIFETIME_MS;
   while (recentStrikes.length > 0 && recentStrikes[0].time < cutoff) recentStrikes.shift();
 }, 60_000);
@@ -143,6 +161,8 @@ interface TrackedStorm {
   travelAnchor: { lat: number; lon: number } | null;
   posBuf: Array<{ lat: number; lon: number }>;
   lastSeen: number;
+  currentRate: number;
+  inDb: boolean;
   // Full-life strike accumulation for the replay: passes overlap, so only
   // strikes newer than lastStrikeTime get appended; keepEvery thins the
   // stream once the array would outgrow ALL_STRIKES_MAX
@@ -174,13 +194,53 @@ const trackedStorms: TrackedStorm[] = (() => {
   try {
     const saved = loadTrackedStorms() as TrackedStorm[];
     const cutoff = Date.now() - STORM_DROP_MS;
-    return saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
+    const loaded = saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
+    // Mark storms that are already in the DB so the map can link them immediately
+    const dbKeys = getTrackedStormKeys();
+    // Nudge stale lastSeen into the 5-min active window so the first connect-time
+    // broadcast includes them. After a hot-reload or restart the saved timestamps
+    // can be >5 min old, causing labels=0 until the first 30s interval fires.
+    // The interval resets lastSeen to the real match time on its first pass.
+    const minLastSeen = Date.now() - 4 * 60 * 1000;
+    for (const st of loaded) {
+      st.inDb = dbKeys.has(st.key);
+      if (st.lastSeen < minLastSeen) st.lastSeen = minLastSeen;
+    }
+    return loaded;
   } catch { return []; }
 })();
-// Startup tasks: backfill missing country paths and consolidate duplicate storm identities.
+// Startup tasks run async so they don't delay the first SSE response.
+// inDb flags are re-validated in the connect-time handler (below) instead.
 setImmediate(() => {
   try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
-  try { consolidateNearbyStorms(TRACKER_MERGE_KM); } catch { /* non-fatal */ }
+  try {
+    consolidateNearbyStorms(TRACKER_MERGE_KM);
+    // After consolidation some in-memory storms may have had their DB row deleted
+    // (consolidation keeps the highest-count row and deletes others). Re-key any
+    // orphaned in-memory storms to the surviving DB entry so they don't lose TRACKING.
+    const liveKeys = getTrackedStormKeys();
+    const livePositions = getRecentStormPositions();
+    for (const st of trackedStorms) {
+      if (liveKeys.has(st.key)) {
+        st.inDb = true;
+      } else if (st.inDb) {
+        // Key was deleted by consolidation — find the nearby surviving DB storm and adopt it.
+        let bestKey: string | null = null;
+        let bestKm = Infinity;
+        for (const [key, pos] of livePositions) {
+          const d = kmBetween(st.lat, st.lon, pos.lat, pos.lon);
+          if (d < TRACKER_MERGE_KM && d < bestKm) { bestKm = d; bestKey = key; }
+        }
+        if (bestKey) {
+          st.key = bestKey;
+          st.inDb = true;
+          livePositions.delete(bestKey); // prevent two storms from claiming the same DB key
+        } else {
+          st.inDb = false;
+        }
+      }
+    }
+  } catch { /* non-fatal */ }
 });
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
@@ -196,12 +256,32 @@ function meanPos(points: Array<{ lat: number; lon: number }>): { lat: number; lo
 const STRIKE_SAMPLE_MAX = 4000;
 // Cap on a storm's accumulated replay strikes; halved (and thinned) on overflow
 const ALL_STRIKES_MAX = 24_000;
-let stormSeq = 0;
+// Persisted on globalThis so hot-reloads in dev don't reset it and create
+// duplicate in-memory identities for the same physical storm.
+let stormSeq: number = (globalThis as any)._stormSeq ?? 0;
 
 function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const dLat = (aLat - bLat) * 111.32;
   const dLon = (aLon - bLon) * 111.32 * Math.cos(((aLat + bLat) / 2) * Math.PI / 180);
   return Math.hypot(dLat, dLon);
+}
+
+// Deduplicate active storms before broadcasting: remove entries within 75 km of a
+// higher-priority entry so duplicate in-memory identities (e.g. from a dev
+// hot-reload that reset stormSeq) don't pollute the broadcast.
+// Priority: DB-linked (inDb=true) beats non-DB; within same tier, more totalStrikes wins.
+function dedupeActiveStorms(storms: TrackedStorm[], nowMs: number): TrackedStorm[] {
+  const active = storms.filter(st => nowMs - st.lastSeen < 5 * 60_000);
+  const sorted = [...active].sort((a, b) => {
+    if (a.inDb !== b.inDb) return (b.inDb ? 1 : 0) - (a.inDb ? 1 : 0);
+    return b.totalStrikes - a.totalStrikes;
+  });
+  const kept: TrackedStorm[] = [];
+  for (const st of sorted) {
+    const tooClose = kept.some(k => kmBetween(k.lat, k.lon, st.lat, st.lon) < 20);
+    if (!tooClose) kept.push(st);
+  }
+  return kept.sort((a, b) => (b.currentRate ?? 0) - (a.currentRate ?? 0)).slice(0, 20);
 }
 
 function roundPt(m: { lat: number; lon: number; time: number }): StormStrike {
@@ -245,7 +325,8 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   }
 }
 
-setInterval(() => {
+(globalThis as any)._iv_dbFlush = setInterval(() => {
+  if ((globalThis as any)._processStrike !== processStrike) return;
   try {
     saveCounters(serverTotal, serverCountryCounts);
     saveDailyAndPeaks(currentDay, todayCounts);
@@ -265,6 +346,20 @@ setInterval(() => {
     const rates: Record<string, number> = {};
     for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
     upsertCountryPeakRates(rates);
+
+    // Re-validate inDb flags each pass. Startup consolidateNearbyStorms (setImmediate)
+    // fires AFTER the first SSE connect-time re-validation, so it can delete a key
+    // that was still valid at connect time. Without this, the stale inDb=true persists
+    // indefinitely and the TRACKING link leads to a 404.
+    // NOTE: we do NOT call consolidateNearbyStorms here — that would create a race
+    // where it deletes keys we're about to upsert. Only the startup call (setImmediate)
+    // is allowed; this pass only clears flags for keys already gone from the DB.
+    try {
+      const liveDbKeys = getTrackedStormKeys();
+      for (const st of trackedStorms) {
+        if (st.inDb && !liveDbKeys.has(st.key)) st.inDb = false;
+      }
+    } catch { /* non-fatal */ }
 
     // Detect storm cells across ALL countries (including sea strikes) so storms
     // that cross borders or move offshore are tracked as one continuous system.
@@ -336,6 +431,7 @@ setInterval(() => {
         best.lon = cell.lon;
         best.city = city;
         best.lastSeen = nowMs;
+        best.currentRate = cell.rate;
         if (cell.count > best.peakCount) {
           best.peakCount = cell.count;
           best.peakRate = cell.rate;
@@ -343,8 +439,10 @@ setInterval(() => {
         accumulateStrikes(best, cell.members);
         matched.add(best);
       } else {
+        const freshKey = `${cc}:${nowMs}:${stormSeq++}`;
+        (globalThis as any)._stormSeq = stormSeq;
         const fresh: TrackedStorm = {
-          key: `${cc}:${nowMs}:${stormSeq++}`,
+          key: freshKey,
           cc,
           originLat: cell.lat, originLon: cell.lon, originCity: city,
           startTime: nowMs,
@@ -353,6 +451,8 @@ setInterval(() => {
           traveledKm: 0,
           travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
           lastSeen: nowMs,
+          currentRate: cell.rate,
+          inDb: false,
           allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
           countryCodes: Object.keys(ccCounts),
         };
@@ -403,7 +503,15 @@ setInterval(() => {
             absorbInto(big, small);
             matched.delete(small);
             trackedStorms.splice(trackedStorms.indexOf(small), 1);
-            if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
+            // If the loser had a DB entry but the winner doesn't, adopt its key so
+            // the TRACKING link survives the merge without a 404 gap.
+            if (small.inDb && !big.inDb) {
+              big.key = small.key;
+              big.inDb = true;
+              // small.key is now big's key — don't delete the DB row
+            } else {
+              if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
+            }
             anyMerged = true;
             break outer;
           }
@@ -418,7 +526,15 @@ setInterval(() => {
         if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= TRACKER_MERGE_KM) continue;
         absorbInto(m, st);
         trackedStorms.splice(trackedStorms.indexOf(st), 1);
-        if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
+        // If the absorbed stray had a DB entry but the winner doesn't, adopt its key
+        // so the existing TRACKING link continues to work without a 404 gap.
+        if (st.inDb && !m.inDb) {
+          m.key = st.key;
+          m.inDb = true;
+          // st.key is now m's key — don't delete the DB row
+        } else {
+          if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
+        }
         break;
       }
     }
@@ -443,7 +559,11 @@ setInterval(() => {
     }
     upsertBiggestStorms(records);
     upsertStormRecords(records);
-    upsertStorms(records.filter(r => (r.totalCount ?? r.count) >= STORM_LOG_MIN_STRIKES));
+    const loggable = records.filter(r => (r.totalCount ?? r.count) >= STORM_LOG_MIN_STRIKES);
+    upsertStorms(loggable);
+    // Mark in-memory storms as persisted so the next broadcast can link to their pages
+    const loggedKeys = new Set(loggable.map(r => r.stormKey).filter(Boolean));
+    for (const st of trackedStorms) { if (loggedKeys.has(st.key)) st.inDb = true; }
 
     // Expire storms that fell below the threshold for several passes
     let i = trackedStorms.length;
@@ -453,18 +573,33 @@ setInterval(() => {
 
     // Persist in-flight storm state so a server restart doesn't wipe live storms
     saveTrackedStorms(trackedStorms);
-    // Consolidate any nearby storm DB rows that the in-memory merge may have missed
-    try { consolidateNearbyStorms(TRACKER_MERGE_KM); } catch { /* non-fatal */ }
+    // NOTE: consolidateNearbyStorms is NOT called here. It runs once at startup
+    // (setImmediate) to clean up leftover DB rows from previous server runs.
+    // Calling it periodically causes a race: it merges the freshly-upserted
+    // current storm key into an older DB row with a higher count, deleting the
+    // current key and permanently preventing the storm from getting TRACKING.
+    // In-memory Phase 1/2 merges already handle per-pass deduplication.
+
+    // Push authoritative storm summaries to all SSE clients so map rank labels
+    // use server-tracked positions and lifetime totals — no client-side matching needed.
+    const activeStorms = dedupeActiveStorms(trackedStorms, nowMs);
+    if (activeStorms.length > 0) {
+      broadcastSSE(`event: storms\ndata: ${JSON.stringify(activeStorms.map((st, i) => ({
+        key: st.key, lat: st.lat, lon: st.lon, totalStrikes: st.totalStrikes,
+        cc: st.cc, rate: st.currentRate ?? 0, rank: i + 1,
+        hasPage: st.inDb === true,
+      })))}\n\n`);
+    }
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 
-setInterval(() => {
+(globalThis as any)._iv_gridBatch = setInterval(() => {
   if (pendingGridStrikes.length === 0) return;
   const batch = pendingGridStrikes.splice(0);
   try { archiveGridStrikeBatch(batch); } catch (err) { console.error('[db] grid batch failed:', err); }
 }, 5_000);
 
-setInterval(() => {
+(globalThis as any)._iv_hourly = setInterval(() => {
   try {
     pruneGridStrikes();
     pruneStormStrikes();
@@ -489,9 +624,32 @@ export async function GET() {
       ctrl.enqueue(enc.encode(
         `event: init\ndata: ${JSON.stringify({ total: serverTotal, countries: serverCountryCounts })}\n\n`
       ));
+      // Cap history payload to the most-recent 10 k strikes (≈ 2 min at peak
+      // global rate) — the full 40 k buffer is ~2 MB of JSON and makes the
+      // initial page load noticeably slow for no visible benefit (dots that
+      // are >2 min old are nearly transparent anyway).
+      const historySlice = recentStrikes.length > 10_000 ? recentStrikes.slice(-10_000) : recentStrikes;
       ctrl.enqueue(enc.encode(
-        `event: history\ndata: ${JSON.stringify(recentStrikes)}\n\n`
+        `event: history\ndata: ${JSON.stringify(historySlice)}\n\n`
       ));
+      // Send current tracked storms immediately so rank labels appear without waiting 30 s.
+      // Re-validate inDb from the DB first: startup consolidation (setImmediate) may have
+      // deleted keys that were marked inDb=true at module load time.
+      try {
+        const freshKeys = getTrackedStormKeys();
+        for (const st of trackedStorms) {
+          if (st.inDb && !freshKeys.has(st.key)) st.inDb = false;
+        }
+      } catch { /* non-fatal */ }
+      const connectNow = Date.now();
+      const connectStorms = dedupeActiveStorms(trackedStorms, connectNow);
+      if (connectStorms.length > 0) {
+        ctrl.enqueue(enc.encode(`event: storms\ndata: ${JSON.stringify(connectStorms.map((st, i) => ({
+          key: st.key, lat: st.lat, lon: st.lon, totalStrikes: st.totalStrikes,
+          cc: st.cc, rate: st.currentRate ?? 0, rank: i + 1,
+          hasPage: st.inDb === true,
+        })))}\n\n`));
+      }
       if (activeSources.size > 0) {
         ctrl.enqueue(enc.encode('event: status\ndata: live\n\n'));
       }

@@ -1,4 +1,4 @@
-import { getStormsForDate, getStormByKey, getStormRanks } from '../../lib/db';
+import { getStormsForDate, getStormByKey, getStormRanks, getNextRankThreshold, getLiveStorms } from '../../lib/db';
 import { getCountryCode } from '../../lib/geoCountry';
 
 export const dynamic = 'force-dynamic';
@@ -9,6 +9,17 @@ export async function GET(req: Request) {
   const key = url.searchParams.get('key');
   if (key) {
     return Response.json(getStormByKey(key));
+  }
+  // Lightweight live-storms list for map rank matching — no date or size filter
+  if (url.searchParams.get('live') === '1') {
+    const live = getLiveStorms();
+    const ranks = getStormRanks(live.map(s => s.stormKey));
+    return Response.json(live.map(s => {
+      const rank = ranks[s.stormKey] ?? null;
+      const total = s.totalCount ?? s.count;
+      const nextRankThreshold = rank != null && rank > 1 ? getNextRankThreshold(s.stormKey, total) : null;
+      return { stormKey: s.stormKey, lat: s.lat, lon: s.lon, rank, nextRankThreshold, totalCount: s.totalCount, count: s.count };
+    }));
   }
   const date = url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10);
   const code = url.searchParams.get('code')?.toUpperCase() || undefined;
@@ -24,7 +35,10 @@ export async function GET(req: Request) {
       try { originCode = getCountryCode(s.originLat, s.originLon); } catch { /* non-fatal */ }
     }
     const withOrigin = originCode && originCode !== s.code ? { ...s, originCode } : s;
-    return { ...withOrigin, rank: ranks[s.stormKey] ?? null };
+    const rank = ranks[s.stormKey] ?? null;
+    const total = s.totalCount ?? s.count;
+    const nextRankThreshold = rank != null && rank > 1 ? getNextRankThreshold(s.stormKey, total) : null;
+    return { ...withOrigin, rank, nextRankThreshold };
   });
   return Response.json(rows);
 }

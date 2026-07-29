@@ -3,9 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import 'leaflet/dist/leaflet.css';
-import type { Strike } from '../hooks/useBlitzortung';
+import type { Strike, TrackedStormSummary } from '../hooks/useBlitzortung';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
-import { detectStorms } from '../lib/stormClusters';
 import { ageColor } from '../lib/ageGradient';
 import { useHeatmap } from '../context/HeatmapContext';
 import { useCountryTooltip } from '../context/TooltipContext';
@@ -71,7 +70,7 @@ interface MapState {
   dpr: number;
   drawHeatmap: (() => void) | null;
   stormRankLabels: HTMLDivElement | null;
-  stormRankCells: Array<{ lat: number; lon: number; rank: number; cc: string; rate: number; trend: 'up' | 'down' | 'steady'; drift: string | null; mergedFrom: number; stormKey: string | null }>;
+  stormRankCells: Array<{ lat: number; lon: number; rank: number; totalStrikes: number; rate: number; stormKey: string | null; cc: string }>;
   reprojectRankLabels: (() => void) | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   radarLayer: any;
@@ -148,7 +147,7 @@ function playTick(ctx: AudioContext) {
   src.start();
 }
 
-export default function LightningMap({ strikes, sound, historyLoaded }: { strikes: Strike[]; sound: boolean; historyLoaded: boolean }) {
+export default function LightningMap({ strikes, sound, historyLoaded, trackedStorms }: { strikes: Strike[]; sound: boolean; historyLoaded: boolean; trackedStorms: TrackedStormSummary[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const soundRef = useRef(sound);
   soundRef.current = sound;
@@ -166,8 +165,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
   const { enabled: tornadoEnabled } = useTornado();
   const [mapReady, setMapReady] = useState(false);
   const seenAlertIdsRef = useRef<Set<string>>(new Set());
-  // Periodically fetched storm list for matching rank bubbles to stormKeys
-  const liveStormsRef = useRef<Array<{ stormKey: string; lat: number; lon: number }>>([]);
   const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; lat: number; lon: number; key: number }>>([]);
 
   // Live strikes from SSE, pruned to the 30-min window
@@ -469,15 +466,32 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
         const div = s.stormRankLabels;
         if (!div || !s.map) return;
         div.innerHTML = '';
-        for (const cell of s.stormRankCells) {
+        // Skip labels whose center falls within MIN_PX of an already-placed one so
+        // overlapping badges don't block pointer events on each other.
+        // TRACKING storms (stormKey != null) are placed first so they are never
+        // suppressed by a faster but untracked storm that happens to be nearby.
+        const MIN_PX = 100;
+        const placed: Array<{ x: number; y: number }> = [];
+        const cells = [...s.stormRankCells].sort((a, b) => (b.stormKey ? 1 : 0) - (a.stormKey ? 1 : 0));
+        for (const cell of cells) {
           const pt = s.map.latLngToContainerPoint([cell.lat, cell.lon]);
-          const trendIcon = cell.trend === 'up' ? '↑' : cell.trend === 'down' ? '↓' : '';
+          const tooClose = placed.some(p => Math.hypot(pt.x - p.x, pt.y - p.y) < MIN_PX);
+          if (tooClose) continue;
+          placed.push({ x: pt.x, y: pt.y });
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
-          const driftStr = cell.drift ?? '';
-          const inner = `<span class="storm-rank-num">⚡ #${cell.rank}${trendIcon ? ` <span class="storm-rank-trend" data-trend="${cell.trend}">${trendIcon}</span>` : ''}</span>`
-            + (cell.cc ? `<span class="storm-rank-cc">${cell.cc}${driftStr ? ` ${driftStr}` : ''}</span>` : '')
-            + `<span class="storm-rank-rate">${rateStr}</span>`;
-          const pos = `position:absolute;left:${pt.x}px;top:${pt.y}px;transform:translate(-50%,-50%);`;
+          const countStr = cell.totalStrikes >= 1000 ? `${(cell.totalStrikes / 1000).toFixed(1)}k` : String(cell.totalStrikes);
+          const trackTag = cell.stormKey ? `<span class="storm-track-tag">tracking</span>` : '';
+          const inner = `<span class="storm-rank-num">⚡ #${cell.rank}</span>`
+            + `<span class="storm-rank-total">${countStr} strikes</span>`
+            + `<span class="storm-rank-rate">${rateStr}</span>`
+            + trackTag;
+          // Offset the label by 80 km east so it clears the storm cluster at any zoom.
+          // Project a point 80 km east of the centroid; the pixel difference scales
+          // automatically with zoom (≈130 px at z8, ≈30 px at z4).
+          const lonDeg80km = 80 / (111.32 * Math.cos(cell.lat * Math.PI / 180));
+          const eastPt = s.map.latLngToContainerPoint([cell.lat, cell.lon + lonDeg80km]);
+          const pxRight = Math.max(18, eastPt.x - pt.x);
+          const pos = `position:absolute;left:${pt.x + pxRight}px;top:${pt.y}px;transform:translate(0,-50%);`;
           if (cell.stormKey) {
             const a = document.createElement('a');
             a.className = 'storm-rank-inner storm-rank-link';
@@ -1328,21 +1342,6 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     }
   }, [stormRanksEnabled]);
 
-  // Fetch today's storm list every 30 s so rank bubbles can link to detail pages
-  useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/storms?date=${today}`);
-        if (!res.ok) return;
-        const rows = await res.json() as Array<{ stormKey: string; lat: number; lon: number }>;
-        liveStormsRef.current = rows.filter(r => r.stormKey);
-      } catch { /* non-fatal */ }
-    };
-    load();
-    const id = setInterval(load, 30_000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     const s = stateRef.current;
@@ -1416,36 +1415,21 @@ export default function LightningMap({ strikes, sound, historyLoaded }: { strike
     s.drawHeatmap?.();
   }, [strikes]);
 
-  // Rank labels — detect active storm cells and render numbered badges in a plain
-  // div overlay at z=500, above the canvas layers (z=401/450) that beat Leaflet panes.
+  // Rank labels — use server-pushed storm data directly (positions + lifetime
+  // totals + page links). No client-side matching needed; eliminates all flicker.
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready || !stormRanksEnabledRef.current) return;
-    const STORM_WINDOW_MS = 5 * 60 * 1000;
-    const cutoff = Date.now() - STORM_WINDOW_MS;
-    const recent = strikes.filter(sk => sk.time > cutoff);
-    const cells = detectStorms(recent, STORM_WINDOW_MS)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 20);
-
-    s.stormRankCells = cells.map((cell, i) => {
-      const ccCounts: Record<string, number> = {};
-      for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
-      const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0]?.toUpperCase() ?? '';
-      // Match to nearest tracked storm within 100 km for a clickable detail link
-      const storms = liveStormsRef.current;
-      let stormKey: string | null = null;
-      let bestKm = 100;
-      for (const st of storms) {
-        const dLat = (cell.lat - st.lat) * 111.32;
-        const dLon = (cell.lon - st.lon) * 111.32 * Math.cos(((cell.lat + st.lat) / 2) * Math.PI / 180);
-        const km = Math.hypot(dLat, dLon);
-        if (km < bestKm) { bestKm = km; stormKey = st.stormKey; }
-      }
-      return { lat: cell.lat, lon: cell.lon, rank: i + 1, cc, rate: cell.rate, trend: cell.trend, drift: cell.drift, mergedFrom: cell.mergedFrom, stormKey };
-    });
+    s.stormRankCells = trackedStorms.map(sv => ({
+      lat: sv.lat, lon: sv.lon,
+      rank: sv.rank,
+      totalStrikes: sv.totalStrikes,
+      rate: sv.rate,
+      cc: sv.cc,
+      stormKey: sv.hasPage ? sv.key : null,
+    }));
     s.reprojectRankLabels?.();
-  }, [strikes, mapReady]);
+  }, [trackedStorms, mapReady]);
 
   // Location search
   interface NominatimResult { place_id: number; display_name: string; lat: string; lon: string }
