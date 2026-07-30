@@ -875,7 +875,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
               const d = Math.hypot(p.x - cx, p.y - cy);
               if (d > maxDistPx) maxDistPx = d;
             }
-            maxDistPx = Math.max(20, maxDistPx);
+            // Minimum hull extent in km-scaled pixels (avoids zoom-dependent false merges)
+            const minHullPx = 15 * radiusPx / OUTLINE_KM;
+            maxDistPx = Math.max(minHullPx, maxDistPx);
             const _cellKey = cell.stormKey ?? `rank-${cell.rank}`;
             const vel = stormVelocitiesRef.current.get(_cellKey) ?? null;
             return { cx, cy, radiusPx, hullPts, maxDistPx, lat: cell.lat, lon: cell.lon, vel, rate: cell.rate, rank: cell.rank, hasPage: cell.hasPage };
@@ -907,7 +909,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             return tMerge !== null ? tMerge / 60 : null;
           };
 
-          // Phase 2: union-find — merge storms whose blue expansion circles overlap
+          // Phase 2: union-find — merge storms whose green hull edges overlap (km-space, zoom-independent)
           const parent = stormData.map((_, i) => i);
           const findRoot = (i: number): number => {
             while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
@@ -915,8 +917,15 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           };
           for (let i = 0; i < stormData.length; i++) {
             for (let j = i + 1; j < stormData.length; j++) {
-              const dist = Math.hypot(stormData[i].cx - stormData[j].cx, stormData[i].cy - stormData[j].cy);
-              if (dist < stormData[i].maxDistPx + stormData[j].maxDistPx) {
+              const si = stormData[i], sj = stormData[j];
+              const cosLat = Math.cos(((si.lat + sj.lat) / 2) * Math.PI / 180);
+              const distKm = Math.sqrt(
+                Math.pow((sj.lon - si.lon) * 111.32 * cosLat, 2) +
+                Math.pow((sj.lat - si.lat) * 111.32, 2)
+              );
+              const iHullKm = (si.maxDistPx / si.radiusPx) * OUTLINE_KM;
+              const jHullKm = (sj.maxDistPx / sj.radiusPx) * OUTLINE_KM;
+              if (distKm < iHullKm + jHullKm) {
                 parent[findRoot(i)] = findRoot(j);
               }
             }
