@@ -9,6 +9,7 @@ import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { BiggestStorm, GlobalStormRecord, StormStrike } from '../../lib/db';
+import { useStormMerge } from '../../context/StormMergeContext';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
 
@@ -155,6 +156,8 @@ export default function StormDetailClient({
   const router = useRouter();
   const ts = useTranslations('storms');
   const countryName = useCountryName();
+  const { mergeMap } = useStormMerge();
+  const mergeStatus = storm.stormKey ? mergeMap.get(storm.stormKey) : undefined;
 
   const [liveStats, setLiveStats] = useState<LiveStats>({
     endTime: storm.endTime,
@@ -275,10 +278,13 @@ export default function StormDetailClient({
     }
   }, [stormTotal, displayNextThreshold]);
 
-  const name = liveStats.originCity && liveStats.city && liveStats.originCity !== liveStats.city
-    ? ts('stormFromTo', { from: liveStats.originCity, to: liveStats.city })
-    : liveStats.city
-      ? ts('stormNear', { city: liveStats.city })
+  const isOceanStorm = storm.code === 'XO';
+  const effectiveCity = liveStats.city ?? (isOceanStorm ? 'Open Ocean' : null);
+  const effectiveOrigin = liveStats.originCity ?? (isOceanStorm ? 'Open Ocean' : null);
+  const name = effectiveOrigin && effectiveCity && effectiveOrigin !== effectiveCity
+    ? ts('stormFromTo', { from: effectiveOrigin, to: effectiveCity })
+    : effectiveCity
+      ? ts('stormNear', { city: effectiveCity })
       : `${storm.lat.toFixed(2)}, ${storm.lon.toFixed(2)}`;
 
   const duration = liveStats.startTime != null && liveStats.endTime != null
@@ -368,6 +374,19 @@ export default function StormDetailClient({
                   : 'Global Record — Farthest'}
               </span>
             ))}
+            {mergeStatus?.type === 'merging' && (() => {
+              const rem = Math.max(0, Math.round((mergeStatus.mergeAtMs - Date.now()) / 60_000));
+              return (
+                <span className="storm-record-badge storm-merge-status-badge storm-merge-status-badge--merging">
+                  ⚡ merging{rem > 0 ? ` ~${rem}m` : ''}
+                </span>
+              );
+            })()}
+            {mergeStatus?.type === 'splitting' && (
+              <span className="storm-record-badge storm-merge-status-badge storm-merge-status-badge--splitting">
+                ⚡ splitting{mergeStatus.estimatedMinutes != null ? ` ~${mergeStatus.estimatedMinutes}m` : ''}
+              </span>
+            )}
           </div>
         </div>
 

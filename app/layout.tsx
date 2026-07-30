@@ -9,6 +9,8 @@ import { RainRadarProvider } from './context/RainRadarContext';
 import { StormRanksProvider } from './context/StormRanksContext';
 import { MapSearchProvider } from './context/MapSearchContext';
 import { TornadoProvider } from './context/TornadoContext';
+import { StormOutlineProvider } from './context/StormOutlineContext';
+import { StormMergeProvider } from './context/StormMergeContext';
 import { SITE_URL as BASE } from './lib/site';
 
 export const metadata: Metadata = {
@@ -76,8 +78,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <StormRanksProvider>
                     <MapSearchProvider>
                       <TornadoProvider>
-                        <Navbar />
-                        {children}
+                        <StormOutlineProvider>
+                          <StormMergeProvider>
+                            <Navbar />
+                            {children}
+                          </StormMergeProvider>
+                        </StormOutlineProvider>
                       </TornadoProvider>
                     </MapSearchProvider>
                   </StormRanksProvider>

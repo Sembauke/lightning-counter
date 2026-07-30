@@ -1,4 +1,7 @@
 export default function CountryFlag({ code, name }: { code: string; name: string }) {
+  if (code === 'XO') {
+    return <span className="cl-flag-ocean" title={name} aria-label={name}>🌊</span>;
+  }
   return (
     <img
       src={`https://flagcdn.com/w20/${code.toLowerCase()}.png`}

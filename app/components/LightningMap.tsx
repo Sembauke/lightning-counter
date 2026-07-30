@@ -12,6 +12,8 @@ import { useRainRadar } from '../context/RainRadarContext';
 import { useStormRanks } from '../context/StormRanksContext';
 import { useMapSearch } from '../context/MapSearchContext';
 import { useTornado } from '../context/TornadoContext';
+import { useStormOutline } from '../context/StormOutlineContext';
+import { useStormMerge, type MergeStatus } from '../context/StormMergeContext';
 import { useCountryName } from '../hooks/useCountryName';
 
 interface FlashRing {
@@ -70,7 +72,7 @@ interface MapState {
   dpr: number;
   drawHeatmap: (() => void) | null;
   stormRankLabels: HTMLDivElement | null;
-  stormRankCells: Array<{ lat: number; lon: number; rank: number; totalStrikes: number; rate: number; stormKey: string | null; cc: string }>;
+  stormRankCells: Array<{ lat: number; lon: number; rank: number; totalStrikes: number; rate: number; stormKey: string | null; hasPage: boolean; cc: string }>;
   reprojectRankLabels: (() => void) | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   radarLayer: any;
@@ -147,6 +149,25 @@ function playTick(ctx: AudioContext) {
   src.start();
 }
 
+function convexHull(pts: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  if (pts.length < 3) return pts;
+  let start = 0;
+  for (let i = 1; i < pts.length; i++) if (pts[i].x < pts[start].x) start = i;
+  const hull: Array<{ x: number; y: number }> = [];
+  let cur = start;
+  do {
+    hull.push(pts[cur]);
+    let next = (cur + 1) % pts.length;
+    for (let i = 0; i < pts.length; i++) {
+      const cross = (pts[next].x - pts[cur].x) * (pts[i].y - pts[cur].y)
+                  - (pts[next].y - pts[cur].y) * (pts[i].x - pts[cur].x);
+      if (cross < 0) next = i;
+    }
+    cur = next;
+  } while (cur !== start && hull.length <= pts.length);
+  return hull;
+}
+
 export default function LightningMap({ strikes, sound, historyLoaded, trackedStorms }: { strikes: Strike[]; sound: boolean; historyLoaded: boolean; trackedStorms: TrackedStormSummary[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const soundRef = useRef(sound);
@@ -163,6 +184,18 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   stormRanksEnabledRef.current = stormRanksEnabled;
   const { enabled: mapSearchEnabled } = useMapSearch();
   const { enabled: tornadoEnabled } = useTornado();
+  const { enabled: stormOutlineEnabled } = useStormOutline();
+  const stormOutlineEnabledRef = useRef(stormOutlineEnabled);
+  stormOutlineEnabledRef.current = stormOutlineEnabled;
+  const { updateMergeStatus, mergeMap } = useStormMerge();
+  const updateMergeStatusRef = useRef(updateMergeStatus);
+  updateMergeStatusRef.current = updateMergeStatus;
+  const mergeMapRef = useRef(mergeMap);
+  mergeMapRef.current = mergeMap;
+  const prevStormPositionsRef = useRef<Map<string, { lat: number; lon: number; t: number }>>(new Map());
+  const stormVelocitiesRef = useRef<Map<string, { dlatS: number; dlonS: number }>>(new Map());
+  const suppressedMergeKeysRef = useRef<Set<string>>(new Set());
+  const weakClusterKeysRef = useRef<Set<string>>(new Set());
   const [mapReady, setMapReady] = useState(false);
   const seenAlertIdsRef = useRef<Set<string>>(new Set());
   const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; lat: number; lon: number; key: number }>>([]);
@@ -466,6 +499,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         const div = s.stormRankLabels;
         if (!div || !s.map) return;
         div.innerHTML = '';
+        if (!stormRanksEnabledRef.current) return;
         // Skip labels whose center falls within MIN_PX of an already-placed one so
         // overlapping badges don't block pointer events on each other.
         // TRACKING storms (stormKey != null) are placed first so they are never
@@ -474,13 +508,16 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         const placed: Array<{ x: number; y: number }> = [];
         const cells = [...s.stormRankCells].sort((a, b) => (b.stormKey ? 1 : 0) - (a.stormKey ? 1 : 0));
         for (const cell of cells) {
+          const _cellKeyS = cell.stormKey ?? `rank-${cell.rank}`;
+          if (suppressedMergeKeysRef.current.has(_cellKeyS)) continue;
+          if (weakClusterKeysRef.current.has(_cellKeyS)) continue;
           const pt = s.map.latLngToContainerPoint([cell.lat, cell.lon]);
           const tooClose = placed.some(p => Math.hypot(pt.x - p.x, pt.y - p.y) < MIN_PX);
           if (tooClose) continue;
           placed.push({ x: pt.x, y: pt.y });
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
           const countStr = cell.totalStrikes >= 1000 ? `${(cell.totalStrikes / 1000).toFixed(1)}k` : String(cell.totalStrikes);
-          const trackTag = cell.stormKey ? `<span class="storm-track-tag">tracking</span>` : '';
+          const trackTag = cell.hasPage ? `<span class="storm-track-tag">tracking</span>` : '';
           const inner = `<span class="storm-rank-num">⚡ #${cell.rank}</span>`
             + `<span class="storm-rank-total">${countStr} strikes</span>`
             + `<span class="storm-rank-rate">${rateStr}</span>`
@@ -492,7 +529,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           const eastPt = s.map.latLngToContainerPoint([cell.lat, cell.lon + lonDeg80km]);
           const pxRight = Math.max(18, eastPt.x - pt.x);
           const pos = `position:absolute;left:${pt.x + pxRight}px;top:${pt.y}px;transform:translate(0,-50%);`;
-          if (cell.stormKey) {
+          if (cell.hasPage && cell.stormKey) {
             const a = document.createElement('a');
             a.className = 'storm-rank-inner storm-rank-link';
             a.style.cssText = pos + 'pointer-events:auto;text-decoration:none;color:#ffe040;';
@@ -639,10 +676,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             hCtx.fill();
           }
 
-          hCtx.restore();
-          return;
-        }
-
+        } else {
         const zoom = s.map.getZoom();
         const { displayPx, binZoom } = (binLockedRef.current && lockedLevelRef.current)
           ? lockedLevelRef.current
@@ -796,6 +830,401 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           hCtx.setLineDash([6 / dpr, 3 / dpr]);
           hCtx.strokeRect(rx + 1 / dpr, ry + 1 / dpr, rw - 2 / dpr, rh - 2 / dpr);
           hCtx.setLineDash([]);
+        }
+        } // end heatmap-only else
+
+        // Storm cluster outlines — neon green convex hull (or circle fallback) per storm cell
+        if (stormOutlineEnabledRef.current && s.stormRankCells.length > 0) {
+          const OUTLINE_KM = 80;
+          // Hull drawn from a tighter radius to exclude sparse outliers far from the storm core
+          const HULL_KM = 55;
+          // Collect strikes within a wider radius so a drifted server centroid still catches nearby activity
+          const COLLECT_KM = 120;
+          const allPts = [...heatmapBufferRef.current, ...dbBufferRef.current];
+          const outlineCutoff = Date.now() - WINDOW_MS;
+
+          // Phase 1: compute per-storm canvas coords + nearby strike points
+          const stormData = s.stormRankCells.map(cell => {
+            const cnx = mercNX(cell.lon);
+            const cny = mercNY(cell.lat);
+            const cx = cnx * drawScale + heatDrawOx;
+            const cy = cny * drawScale + heatDrawOy;
+            const lonDegR = OUTLINE_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
+            const enx = mercNX(cell.lon + lonDegR);
+            const radiusPx = Math.max(20, Math.abs((enx * drawScale + heatDrawOx) - cx));
+            const hullLonDegR = HULL_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
+            const hullEnx = mercNX(cell.lon + hullLonDegR);
+            const hullRadiusPx = Math.max(15, Math.abs((hullEnx * drawScale + heatDrawOx) - cx));
+            const collectLonDeg = COLLECT_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
+            const dLat = COLLECT_KM / 111.32;
+            const latMin = cell.lat - dLat, latMax = cell.lat + dLat;
+            const lonMin = cell.lon - collectLonDeg, lonMax = cell.lon + collectLonDeg;
+            const screenPts: Array<{ x: number; y: number }> = [];
+            for (const pt of allPts) {
+              if (pt.time < outlineCutoff) continue;
+              if (pt.lat < latMin || pt.lat > latMax || pt.lon < lonMin || pt.lon > lonMax) continue;
+              const dLt = (pt.lat - cell.lat) * 111.32;
+              const dLn = (pt.lon - cell.lon) * 111.32 * Math.cos(cell.lat * Math.PI / 180);
+              if (dLt * dLt + dLn * dLn > COLLECT_KM * COLLECT_KM) continue;
+              screenPts.push({ x: pt.nx * drawScale + heatDrawOx, y: pt.ny * drawScale + heatDrawOy });
+            }
+            // Hull uses tighter HULL_KM radius to stay close to the storm core
+            const hullPts = screenPts.filter(p => Math.hypot(p.x - cx, p.y - cy) <= hullRadiusPx);
+            let maxDistPx = 0;
+            for (const p of hullPts) {
+              const d = Math.hypot(p.x - cx, p.y - cy);
+              if (d > maxDistPx) maxDistPx = d;
+            }
+            maxDistPx = Math.max(20, maxDistPx);
+            const _cellKey = cell.stormKey ?? `rank-${cell.rank}`;
+            const vel = stormVelocitiesRef.current.get(_cellKey) ?? null;
+            return { cx, cy, radiusPx, hullPts, maxDistPx, lat: cell.lat, lon: cell.lon, vel, rate: cell.rate, rank: cell.rank, hasPage: cell.hasPage };
+          });
+
+          const timeToThresholdMin = (
+            lat1: number, lon1: number, vel1: { dlatS: number; dlonS: number } | null,
+            lat2: number, lon2: number, vel2: { dlatS: number; dlonS: number } | null,
+            thresholdKm: number
+          ): number | null => {
+            const cosLat = Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+            const dxKm = (lon2 - lon1) * 111.32 * cosLat;
+            const dyKm = (lat2 - lat1) * 111.32;
+            const distKm = Math.sqrt(dxKm * dxKm + dyKm * dyKm);
+            if (!vel1 && !vel2) return null;
+            const v1 = vel1 ?? { dlatS: 0, dlonS: 0 };
+            const v2 = vel2 ?? { dlatS: 0, dlonS: 0 };
+            const dvxKmS = (v2.dlonS - v1.dlonS) * 111.32 * cosLat;
+            const dvyKmS = (v2.dlatS - v1.dlatS) * 111.32;
+            const a = dvxKmS * dvxKmS + dvyKmS * dvyKmS;
+            const b = 2 * (dxKm * dvxKmS + dyKm * dvyKmS);
+            const c = distKm * distKm - thresholdKm * thresholdKm;
+            if (a < 1e-10) return c > 0 ? null : -1;
+            const disc = b * b - 4 * a * c;
+            if (disc < 0) return null;
+            const t1 = (-b - Math.sqrt(disc)) / (2 * a);
+            const t2 = (-b + Math.sqrt(disc)) / (2 * a);
+            const tMerge = t1 > 0 ? t1 : t2 > 0 ? t2 : null;
+            return tMerge !== null ? tMerge / 60 : null;
+          };
+
+          // Phase 2: union-find — merge storms whose blue expansion circles overlap
+          const parent = stormData.map((_, i) => i);
+          const findRoot = (i: number): number => {
+            while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+            return i;
+          };
+          for (let i = 0; i < stormData.length; i++) {
+            for (let j = i + 1; j < stormData.length; j++) {
+              const dist = Math.hypot(stormData[i].cx - stormData[j].cx, stormData[i].cy - stormData[j].cy);
+              if (dist < stormData[i].maxDistPx + stormData[j].maxDistPx) {
+                parent[findRoot(i)] = findRoot(j);
+              }
+            }
+          }
+
+          // Phase 3: collect groups and draw one hull + circle per group
+          const groups = new Map<number, typeof stormData>();
+          for (let i = 0; i < stormData.length; i++) {
+            const root = findRoot(i);
+            if (!groups.has(root)) groups.set(root, []);
+            groups.get(root)!.push(stormData[i]);
+          }
+
+          // Suppress labels for non-primary storms within the same merged group
+          {
+            const suppressed = new Set<string>();
+            for (const group of groups.values()) {
+              if (group.length <= 1) continue;
+              const indices = group.map(sd => stormData.indexOf(sd));
+              let primaryIdx = indices[0];
+              let primaryRank = s.stormRankCells[primaryIdx].rank;
+              for (const idx of indices.slice(1)) {
+                const r = s.stormRankCells[idx].rank;
+                if (r < primaryRank) { primaryRank = r; primaryIdx = idx; }
+              }
+              for (const idx of indices) {
+                if (idx === primaryIdx) continue;
+                const cell = s.stormRankCells[idx];
+                suppressed.add(cell.stormKey ?? `rank-${cell.rank}`);
+              }
+            }
+            suppressedMergeKeysRef.current = suppressed;
+          }
+
+          // Track weak untracked clusters — red circle, no DOM label
+          {
+            const weakKeys = new Set<string>();
+            for (const group of groups.values()) {
+              const peakRate = Math.max(...group.map(d => d.rate));
+              const anyTracked = group.some(d => d.hasPage);
+              if (peakRate < 20 && !anyTracked) {
+                for (const d of group) {
+                  const idx = stormData.indexOf(d);
+                  if (idx >= 0) {
+                    const cell = s.stormRankCells[idx];
+                    weakKeys.add(cell.stormKey ?? `rank-${cell.rank}`);
+                  }
+                }
+              }
+            }
+            weakClusterKeysRef.current = weakKeys;
+          }
+
+          // Build and publish MergeMap — done BEFORE drawing so React can re-render UI
+          let currentMergeMap = new Map<string, MergeStatus>();
+          {
+            const newMergeMap = new Map<string, MergeStatus>();
+            const groupList2 = Array.from(groups.values());
+
+            // Determine stormKeys for each storm entry
+            const stormKeys = s.stormRankCells.map(cell => cell.stormKey ?? `rank-${cell.rank}`);
+
+            // Merged groups (size > 1): check if diverging → splitting
+            for (const group of groups.values()) {
+              if (group.length <= 1) continue;
+              // Check if any pair within the group is diverging
+              let isSplitting = false;
+              let splitMinMin = Infinity;
+              for (let si = 0; si < group.length; si++) {
+                for (let sj = si + 1; sj < group.length; sj++) {
+                  const sa = group[si], sb = group[sj];
+                  if (!sa.vel || !sb.vel) continue;
+                  const cosLat2 = Math.cos(((sa.lat + sb.lat) / 2) * Math.PI / 180);
+                  const dxKm2 = (sb.lon - sa.lon) * 111.32 * cosLat2;
+                  const dyKm2 = (sb.lat - sa.lat) * 111.32;
+                  const distKm2 = Math.sqrt(dxKm2 * dxKm2 + dyKm2 * dyKm2);
+                  const dvxKmS2 = (sb.vel.dlonS - sa.vel.dlonS) * 111.32 * cosLat2;
+                  const dvyKmS2 = (sb.vel.dlatS - sa.vel.dlatS) * 111.32;
+                  const speed2 = Math.sqrt(dvxKmS2 * dvxKmS2 + dvyKmS2 * dvyKmS2);
+                  const dotProd2 = dxKm2 * dvxKmS2 + dyKm2 * dvyKmS2;
+                  // Require ≥22 km/h relative speed — filters centroid jitter
+                  if (speed2 >= 0.006 && dotProd2 > 0 && distKm2 < OUTLINE_KM * 2) {
+                    const tSplit2 = ((OUTLINE_KM * 2 - distKm2) / speed2) / 60;
+                    if (tSplit2 < splitMinMin) splitMinMin = tSplit2;
+                  }
+                }
+              }
+              isSplitting = splitMinMin >= 5 && splitMinMin < 60;
+              if (isSplitting) {
+                const splitEstMin = Math.round(splitMinMin);
+                const splitStatus: MergeStatus = { type: 'splitting', estimatedMinutes: splitEstMin };
+                for (let si = 0; si < group.length; si++) {
+                  const idx2 = stormData.indexOf(group[si]);
+                  if (idx2 >= 0) newMergeMap.set(stormKeys[idx2], splitStatus);
+                }
+              }
+            }
+
+            // Pairs of separate groups that are converging: publish merging status
+            for (let gi = 0; gi < groupList2.length; gi++) {
+              for (let gj = gi + 1; gj < groupList2.length; gj++) {
+                const ga2 = groupList2[gi];
+                const gb2 = groupList2[gj];
+                const gaLat2 = ga2.reduce((sum, d) => sum + d.lat, 0) / ga2.length;
+                const gaLon2 = ga2.reduce((sum, d) => sum + d.lon, 0) / ga2.length;
+                const gbLat2 = gb2.reduce((sum, d) => sum + d.lat, 0) / gb2.length;
+                const gbLon2 = gb2.reduce((sum, d) => sum + d.lon, 0) / gb2.length;
+                const _cosLat2 = Math.cos(((gaLat2 + gbLat2) / 2) * Math.PI / 180);
+                const _curDistKm2 = Math.sqrt(Math.pow((gbLon2 - gaLon2) * 111.32 * _cosLat2, 2) + Math.pow((gbLat2 - gaLat2) * 111.32, 2));
+                if (_curDistKm2 > OUTLINE_KM * 3) continue; // too far apart to credibly predict merging
+                // Threshold = sum of actual hull extents — timer reaches 0 when green edges touch
+                const gaHullKm = Math.max(...ga2.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
+                const gbHullKm = Math.max(...gb2.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
+                const hullTouchKm = gaHullKm + gbHullKm;
+                const tMin2 = timeToThresholdMin(gaLat2, gaLon2, ga2[0].vel, gbLat2, gbLon2, gb2[0].vel, hullTouchKm);
+                const isConverging2 = tMin2 !== null && tMin2 >= 0 && tMin2 < 120;
+                if (!isConverging2) continue;
+                const mergeAtMs2 = Date.now() + tMin2! * 60_000;
+                // Collect storm keys for group a and group b
+                const gaKeys: string[] = [];
+                const gbKeys: string[] = [];
+                for (let si = 0; si < ga2.length; si++) {
+                  const idx2 = stormData.indexOf(ga2[si]);
+                  if (idx2 >= 0) gaKeys.push(stormKeys[idx2]);
+                }
+                for (let si = 0; si < gb2.length; si++) {
+                  const idx2 = stormData.indexOf(gb2[si]);
+                  if (idx2 >= 0) gbKeys.push(stormKeys[idx2]);
+                }
+                // For group a members: merging with group b keys
+                for (const key of gaKeys) {
+                  if (!newMergeMap.has(key)) {
+                    newMergeMap.set(key, { type: 'merging', withStormKeys: gbKeys, mergeAtMs: mergeAtMs2 });
+                  }
+                }
+                // For group b members: merging with group a keys
+                for (const key of gbKeys) {
+                  if (!newMergeMap.has(key)) {
+                    newMergeMap.set(key, { type: 'merging', withStormKeys: gaKeys, mergeAtMs: mergeAtMs2 });
+                  }
+                }
+              }
+            }
+
+            currentMergeMap = newMergeMap;
+            updateMergeStatusRef.current(newMergeMap);
+          }
+
+          const groupList = Array.from(groups.values());
+
+          // Pre-merge: draw convergence indicator between non-merged groups that are close
+          for (let gi = 0; gi < groupList.length; gi++) {
+            for (let gj = gi + 1; gj < groupList.length; gj++) {
+              const ga = groupList[gi];
+              const gb = groupList[gj];
+              const gaCx = ga.reduce((sum, d) => sum + d.cx, 0) / ga.length;
+              const gaCy = ga.reduce((sum, d) => sum + d.cy, 0) / ga.length;
+              const gbCx = gb.reduce((sum, d) => sum + d.cx, 0) / gb.length;
+              const gbCy = gb.reduce((sum, d) => sum + d.cy, 0) / gb.length;
+              const gaLat = ga.reduce((sum, d) => sum + d.lat, 0) / ga.length;
+              const gaLon = ga.reduce((sum, d) => sum + d.lon, 0) / ga.length;
+              const gbLat = gb.reduce((sum, d) => sum + d.lat, 0) / gb.length;
+              const gbLon = gb.reduce((sum, d) => sum + d.lon, 0) / gb.length;
+              const _cosLat = Math.cos(((gaLat + gbLat) / 2) * Math.PI / 180);
+              const _curDistKm = Math.sqrt(Math.pow((gbLon - gaLon) * 111.32 * _cosLat, 2) + Math.pow((gbLat - gaLat) * 111.32, 2));
+              if (_curDistKm > OUTLINE_KM * 3) continue;
+              const _gaHullKm = Math.max(...ga.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
+              const _gbHullKm = Math.max(...gb.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
+              const tMin = timeToThresholdMin(gaLat, gaLon, ga[0].vel, gbLat, gbLon, gb[0].vel, _gaHullKm + _gbHullKm);
+              const isConverging = tMin !== null && tMin >= 0 && tMin < 120;
+              if (!isConverging) continue;
+              const midX = (gaCx + gbCx) / 2;
+              const midY = (gaCy + gbCy) / 2;
+              hCtx.save();
+              hCtx.strokeStyle = '#ffaa00';
+              hCtx.shadowColor = '#ffaa00';
+              hCtx.shadowBlur = 6;
+              hCtx.lineWidth = 1;
+              hCtx.globalAlpha = 0.55;
+              hCtx.setLineDash([4, 6]);
+              hCtx.beginPath();
+              hCtx.moveTo(gaCx, gaCy);
+              hCtx.lineTo(gbCx, gbCy);
+              hCtx.stroke();
+              hCtx.restore();
+              hCtx.save();
+              hCtx.font = 'bold 10px monospace';
+              hCtx.fillStyle = '#ffaa00';
+              hCtx.shadowColor = '#000';
+              hCtx.shadowBlur = 3;
+              hCtx.globalAlpha = 0.9;
+              hCtx.textAlign = 'center';
+              hCtx.textBaseline = 'middle';
+              hCtx.fillText(`merge ~${Math.round(tMin!)}m`, midX, midY - 8);
+              hCtx.restore();
+            }
+          }
+
+          // PCA ellipse: fits the principal axes of the strike distribution
+          const fitEllipse = (pts: Array<{ x: number; y: number }>, fallbackR: number, fcx: number, fcy: number, sigma: number) => {
+            if (pts.length < 5) return { ex: fcx, ey: fcy, rx: fallbackR, ry: Math.max(fallbackR * 0.4, 15), angle: 0 };
+            const mx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+            const my = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+            let vxx = 0, vyy = 0, vxy = 0;
+            for (const p of pts) { const dx = p.x - mx, dy = p.y - my; vxx += dx*dx; vyy += dy*dy; vxy += dx*dy; }
+            vxx /= pts.length; vyy /= pts.length; vxy /= pts.length;
+            const trace = vxx + vyy;
+            const disc = Math.sqrt(Math.max(0, (trace / 2) ** 2 - (vxx * vyy - vxy * vxy)));
+            const l1 = trace / 2 + disc;
+            const l2 = Math.max(0, trace / 2 - disc);
+            const angle = Math.atan2(l1 - vxx, vxy);
+            const rx = Math.max(fallbackR * 0.4, sigma * Math.sqrt(l1));
+            const ry = Math.max(fallbackR * 0.2, sigma * Math.sqrt(l2));
+            return { ex: mx, ey: my, rx, ry, angle };
+          };
+
+          for (const group of groups.values()) {
+            const mergedPts = group.flatMap(d => d.hullPts);
+            const gcx = group.reduce((sum, d) => sum + d.cx, 0) / group.length;
+            const gcy = group.reduce((sum, d) => sum + d.cy, 0) / group.length;
+            const gRadiusPx = Math.max(...group.map(d => d.radiusPx));
+            const peakRate = Math.max(...group.map(d => d.rate));
+            const isWeak = peakRate < 20;
+
+            const ellipse = fitEllipse(mergedPts, gRadiusPx, gcx, gcy, 2.5);
+
+            hCtx.save();
+            if (isWeak) {
+              // Red neon ellipse — tight PCA fit around weak untracked cluster
+              hCtx.strokeStyle = '#ff2d2d';
+              hCtx.shadowColor = '#ff2d2d';
+              hCtx.shadowBlur = 10;
+              hCtx.lineWidth = 1.5;
+              hCtx.globalAlpha = 0.85;
+              hCtx.beginPath();
+              hCtx.ellipse(ellipse.ex, ellipse.ey, ellipse.rx, ellipse.ry, ellipse.angle, 0, Math.PI * 2);
+              hCtx.stroke();
+              // Label inside at ellipse center — outline technique for legibility
+              const weakPrimaryRank = Math.min(...group.map(d => d.rank));
+              const weakRateStr = `${Math.round(peakRate)}/m`;
+              hCtx.font = 'bold 11px sans-serif';
+              hCtx.textAlign = 'center';
+              hCtx.textBaseline = 'middle';
+              hCtx.globalAlpha = 1;
+              hCtx.shadowBlur = 0;
+              const _drawWeakText = (text: string, tx: number, ty: number) => {
+                hCtx.lineWidth = 3;
+                hCtx.strokeStyle = 'rgba(0,0,0,0.85)';
+                hCtx.strokeText(text, tx, ty);
+                hCtx.fillStyle = '#ff6060';
+                hCtx.fillText(text, tx, ty);
+              };
+              _drawWeakText(`#${weakPrimaryRank}`, ellipse.ex, ellipse.ey - 8);
+              _drawWeakText(weakRateStr, ellipse.ex, ellipse.ey + 8);
+            } else {
+              // Green: PCA ellipse for active storms
+              hCtx.strokeStyle = '#39ff14';
+              hCtx.shadowColor = '#39ff14';
+              hCtx.shadowBlur = 10;
+              hCtx.lineWidth = 1.5;
+              hCtx.globalAlpha = 0.85;
+              hCtx.beginPath();
+              hCtx.ellipse(ellipse.ex, ellipse.ey, ellipse.rx, ellipse.ry, ellipse.angle, 0, Math.PI * 2);
+              hCtx.stroke();
+
+              // Merge/split status text on the ellipse
+              const _primaryD = group.reduce((a, b) => a.rank < b.rank ? a : b);
+              const _primaryIdx = stormData.indexOf(_primaryD);
+              const _primaryKey = _primaryIdx >= 0 ? (s.stormRankCells[_primaryIdx].stormKey ?? `rank-${s.stormRankCells[_primaryIdx].rank}`) : null;
+              const _ms = _primaryKey ? currentMergeMap.get(_primaryKey) : null;
+              if (_ms) {
+                let _statusText = '';
+                if (_ms.type === 'merging') {
+                  const _rem = Math.max(0, Math.round((_ms.mergeAtMs - Date.now()) / 60_000));
+                  _statusText = _rem > 0 ? `merge ~${_rem}m` : 'merging';
+                } else if (_ms.type === 'splitting') {
+                  _statusText = _ms.estimatedMinutes != null ? `split ~${_ms.estimatedMinutes}m` : 'splitting';
+                }
+                if (_statusText) {
+                  hCtx.font = 'bold 11px sans-serif';
+                  hCtx.textAlign = 'center';
+                  hCtx.textBaseline = 'middle';
+                  hCtx.globalAlpha = 1;
+                  hCtx.shadowBlur = 0;
+                  hCtx.lineWidth = 3;
+                  hCtx.strokeStyle = 'rgba(0,0,0,0.85)';
+                  hCtx.strokeText(_statusText, ellipse.ex, ellipse.ey);
+                  hCtx.fillStyle = '#ffaa00';
+                  hCtx.fillText(_statusText, ellipse.ex, ellipse.ey);
+                }
+              }
+
+              // Blue: expanded ellipse showing full reach
+              const blueEllipse = fitEllipse(mergedPts, gRadiusPx, gcx, gcy, 4.0);
+              hCtx.strokeStyle = '#00cfff';
+              hCtx.shadowColor = '#00cfff';
+              hCtx.shadowBlur = 10;
+              hCtx.lineWidth = 1.5;
+              hCtx.globalAlpha = 0.65;
+              hCtx.setLineDash([6, 4]);
+              hCtx.beginPath();
+              hCtx.ellipse(blueEllipse.ex, blueEllipse.ey, blueEllipse.rx, blueEllipse.ry, blueEllipse.angle, 0, Math.PI * 2);
+              hCtx.stroke();
+              hCtx.setLineDash([]);
+            }
+            hCtx.restore();
+
+          }
         }
 
         hCtx.restore();
@@ -1331,17 +1760,25 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     return () => { cancelled = true; clearInterval(timer); clear(); };
   }, [tornadoEnabled, mapReady]);
 
-  // Gate storm rank labels on the toggle
+  // Gate storm rank labels on the toggle — cells stay populated so outline can use them
   useEffect(() => {
     const s = stateRef.current;
     if (!stormRanksEnabled) {
-      s.stormRankCells = [];
       if (s.stormRankLabels) s.stormRankLabels.innerHTML = '';
     } else {
       s.reprojectRankLabels?.();
     }
   }, [stormRanksEnabled]);
 
+  useEffect(() => {
+    stateRef.current.drawHeatmap?.();
+  }, [stormOutlineEnabled]);
+
+  // Reprojected rank labels whenever mergeMap changes so badges stay in sync
+  useEffect(() => {
+    const s = stateRef.current;
+    if (s.ready && stormRanksEnabledRef.current) s.reprojectRankLabels?.();
+  }, [mergeMap]);
 
   useEffect(() => {
     const s = stateRef.current;
@@ -1419,16 +1856,32 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   // totals + page links). No client-side matching needed; eliminates all flicker.
   useEffect(() => {
     const s = stateRef.current;
-    if (!s.ready || !stormRanksEnabledRef.current) return;
+    if (!s.ready) return;
     s.stormRankCells = trackedStorms.map(sv => ({
       lat: sv.lat, lon: sv.lon,
       rank: sv.rank,
       totalStrikes: sv.totalStrikes,
       rate: sv.rate,
       cc: sv.cc,
-      stormKey: sv.hasPage ? sv.key : null,
+      stormKey: sv.key,
+      hasPage: sv.hasPage,
     }));
-    s.reprojectRankLabels?.();
+    const _now = Date.now();
+    const _newPrev = new Map<string, { lat: number; lon: number; t: number }>();
+    const _newVel = new Map<string, { dlatS: number; dlonS: number }>();
+    s.stormRankCells.forEach(cell => {
+      const _key = cell.stormKey ?? `rank-${cell.rank}`;
+      const _prev = prevStormPositionsRef.current.get(_key);
+      if (_prev && _now - _prev.t >= 10000) {
+        const _dt = (_now - _prev.t) / 1000;
+        _newVel.set(_key, { dlatS: (cell.lat - _prev.lat) / _dt, dlonS: (cell.lon - _prev.lon) / _dt });
+      }
+      _newPrev.set(_key, { lat: cell.lat, lon: cell.lon, t: _now });
+    });
+    prevStormPositionsRef.current = _newPrev;
+    stormVelocitiesRef.current = _newVel;
+    if (stormRanksEnabledRef.current) s.reprojectRankLabels?.();
+    if (stormOutlineEnabledRef.current) s.drawHeatmap?.();
   }, [trackedStorms, mapReady]);
 
   // Location search

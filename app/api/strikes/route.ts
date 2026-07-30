@@ -78,10 +78,9 @@ function processStrike(lat: number, lon: number, time?: number) {
 
   serverTotal++;
   (globalThis as any)._serverTotal = serverTotal;
-  if (cc) {
-    serverCountryCounts[cc] = (serverCountryCounts[cc] ?? 0) + 1;
-    todayCounts[cc] = (todayCounts[cc] ?? 0) + 1;
-  }
+  const countCc = cc ?? 'XO';
+  serverCountryCounts[countCc] = (serverCountryCounts[countCc] ?? 0) + 1;
+  todayCounts[countCc] = (todayCounts[countCc] ?? 0) + 1;
 
   // Prefer the upstream discharge time; fall back to arrival time when it is
   // missing or in the future
@@ -338,9 +337,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     const fiveMinCounts: Record<string, number> = {};
     const byCountry: Record<string, RecentStrike[]> = {};
     for (const s of recentStrikes) {
-      if (s.time > cutoff5m && s.cc) {
-        fiveMinCounts[s.cc] = (fiveMinCounts[s.cc] ?? 0) + 1;
-        (byCountry[s.cc] ??= []).push(s);
+      if (s.time > cutoff5m) {
+        const rcc = s.cc ?? 'XO';
+        fiveMinCounts[rcc] = (fiveMinCounts[rcc] ?? 0) + 1;
+        (byCountry[rcc] ??= []).push(s);
       }
     }
     const rates: Record<string, number> = {};
@@ -384,6 +384,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
 
       // If no land strikes in this cluster, try to inherit cc from a nearby tracked
       // storm — this keeps offshore-drifting storms alive in the log.
+      // If still no cc, track as 'XO' (open ocean) so large ocean storms are ranked.
       if (!cc) {
         let nearestSt: TrackedStorm | null = null;
         let nearestKm = Infinity;
@@ -392,7 +393,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           if (km < matchWindow(st) && km < nearestKm) { nearestKm = km; nearestSt = st; }
         }
         if (nearestSt) cc = nearestSt.cc;
-        else continue; // brand-new storm entirely at sea — skip
+        else cc = 'XO';
       }
 
       // Among all tracked storms within range, pick the biggest (by peak count)
@@ -406,7 +407,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         if (!best || st.peakCount > best.peakCount) best = st;
       }
 
-      const city = nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null;
+      const city = cc === 'XO' ? 'Open Ocean' : (nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null);
       const foot = footprintCenter(cell.members);
       if (best) {
         // Add every country present in this cluster (not just the dominant one).

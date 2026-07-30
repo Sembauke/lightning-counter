@@ -8,6 +8,7 @@ import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
 import type { StormLogRow, StormStrike } from '../lib/db';
+import { useStormMerge } from '../context/StormMergeContext';
 
 // The API adds originCode when a storm crossed a border since it started
 type StormRow = StormLogRow & { originCode?: string | null; rank?: number | null };
@@ -39,6 +40,7 @@ function todayUTC(): string {
 }
 
 export default function StormsClient() {
+  const { mergeMap } = useStormMerge();
   const t = useTranslations('stormLog');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -265,6 +267,22 @@ export default function StormsClient() {
                     </span>
                     <span className="storm-log-badges">
                       {isLive && <span className="storm-live-tag">LIVE</span>}
+                      {isLive && (() => {
+                        const ms = mergeMap.get(s.stormKey);
+                        if (!ms) return null;
+                        let est = '';
+                        if (ms.type === 'merging') {
+                          const rem = Math.max(0, Math.round((ms.mergeAtMs - Date.now()) / 60_000));
+                          est = rem > 0 ? ` ~${rem}m` : '';
+                        } else if (ms.type === 'splitting' && ms.estimatedMinutes != null) {
+                          est = ` ~${ms.estimatedMinutes}m`;
+                        }
+                        return (
+                          <span className={`storm-merge-status-tag storm-merge-status-tag--${ms.type}`}>
+                            ⚡ {ms.type}{est}
+                          </span>
+                        );
+                      })()}
                       {s.rank != null && (
                         <span className="storm-log-rank" style={rankStyle(s.rank)}>#{s.rank}</span>
                       )}
@@ -273,11 +291,16 @@ export default function StormsClient() {
                   </div>
                   {/* Row 2: storm name */}
                   <span className="storm-log-name">
-                    {s.originCity && s.city && s.originCity !== s.city
-                      ? ts('stormFromTo', { from: s.originCity, to: s.city })
-                      : s.city
-                        ? ts('stormNear', { city: s.city })
-                        : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`}
+                    {(() => {
+                      const isXO = s.code === 'XO';
+                      const effCity = s.city ?? (isXO ? 'Open Ocean' : null);
+                      const effOrigin = s.originCity ?? (isXO ? 'Open Ocean' : null);
+                      return effOrigin && effCity && effOrigin !== effCity
+                        ? ts('stormFromTo', { from: effOrigin, to: effCity })
+                        : effCity
+                          ? ts('stormNear', { city: effCity })
+                          : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`;
+                    })()}
                   </span>
                   {/* Row 3: stats */}
                   <div className="storm-log-stats">

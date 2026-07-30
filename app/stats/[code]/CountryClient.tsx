@@ -78,11 +78,15 @@ export default function CountryClient() {
           <div className="biggest-storm-card">
             <span className="bsc-title">{t('biggestStorm')}</span>
             <span className="bsc-name">
-              ⚡ {biggestStorm.originCity && biggestStorm.city && biggestStorm.originCity !== biggestStorm.city
-                ? ts('stormFromTo', { from: biggestStorm.originCity, to: biggestStorm.city })
-                : biggestStorm.city
-                  ? ts('stormNear', { city: biggestStorm.city })
-                  : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`}
+              ⚡ {(() => {
+                const ec = biggestStorm.city ?? (code === 'XO' ? 'Open Ocean' : null);
+                const eo = biggestStorm.originCity ?? (code === 'XO' ? 'Open Ocean' : null);
+                return eo && ec && eo !== ec
+                  ? ts('stormFromTo', { from: eo, to: ec })
+                  : ec
+                    ? ts('stormNear', { city: ec })
+                    : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`;
+              })()}
             </span>
             <span className="bsc-meta">
               {ts('strikesCount', { count: biggestStorm.totalCount ?? biggestStorm.count })}

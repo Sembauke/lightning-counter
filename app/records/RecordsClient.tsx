@@ -8,6 +8,7 @@ import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
 import type { GlobalStormRecord, StormRecordCategory, StormLogRow } from '../lib/db';
+import { useStormMerge } from '../context/StormMergeContext';
 
 const StormReplayMap = dynamic(() => import('../components/StormReplayMap'), { ssr: false });
 
@@ -22,6 +23,7 @@ interface Props {
 type TableView = 'day' | 'alltime';
 
 export default function RecordsClient({ storms, dailyBest, top100 }: Props) {
+  const { mergeMap } = useStormMerge();
   const t = useTranslations('records');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -39,10 +41,12 @@ export default function RecordsClient({ storms, dailyBest, top100 }: Props) {
   }
 
   function stormName(s: StormLogRow) {
-    return s.originCity && s.city && s.originCity !== s.city
-      ? ts('stormFromTo', { from: s.originCity, to: s.city })
-      : s.city
-        ? ts('stormNear', { city: s.city })
+    const effectiveCity = s.city ?? (s.code === 'XO' ? 'Open Ocean' : null);
+    const effectiveOrigin = s.originCity ?? (s.code === 'XO' ? 'Open Ocean' : null);
+    return effectiveOrigin && effectiveCity && effectiveOrigin !== effectiveCity
+      ? ts('stormFromTo', { from: effectiveOrigin, to: effectiveCity })
+      : effectiveCity
+        ? ts('stormNear', { city: effectiveCity })
         : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`;
   }
 
@@ -141,9 +145,27 @@ export default function RecordsClient({ storms, dailyBest, top100 }: Props) {
                         <span className="storm-table-rank">#{i + 1}</span>
                       )}
                       <span className="storm-table-date">{s.date}</span>
-                      <span className="storm-table-flags">{flags(s)}</span>
                       <span className="storm-table-info">
-                        <span className="storm-table-name">{stormName(s)}</span>
+                        <span className="storm-table-flags">{flags(s)}</span>
+                        <span className="storm-table-name">
+                          {stormName(s)}
+                          {(() => {
+                            const ms = mergeMap.get(s.stormKey);
+                            if (!ms) return null;
+                            let est = '';
+                            if (ms.type === 'merging') {
+                              const rem = Math.max(0, Math.round((ms.mergeAtMs - Date.now()) / 60_000));
+                              est = rem > 0 ? ` ~${rem}m` : '';
+                            } else if (ms.type === 'splitting' && ms.estimatedMinutes != null) {
+                              est = ` ~${ms.estimatedMinutes}m`;
+                            }
+                            return (
+                              <span className={`storm-merge-status-tag storm-merge-status-tag--${ms.type}`}>
+                                ⚡ {ms.type}{est}
+                              </span>
+                            );
+                          })()}
+                        </span>
                         <span className="storm-table-stats">
                           {ts('strikesCount', { count: s.totalCount ?? s.count })}
                           {' · '}{ts('peakRate', { rate: fmtRate(s.rate) })}

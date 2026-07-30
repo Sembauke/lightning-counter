@@ -13,6 +13,7 @@ export function useCountryName(): (code: string) => string {
   }, [locale]);
 
   return (code: string) => {
+    if (code === 'XO') return 'Open Ocean';
     try { return displayNames?.of(code) ?? code; } catch { return code; }
   };
 }

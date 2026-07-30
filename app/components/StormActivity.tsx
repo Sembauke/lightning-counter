@@ -113,7 +113,8 @@ export default function StormActivity() {
             <tbody>
               {storms.map(({ cc, count, rate }, i) => {
                 const isSea = cc === SEA;
-                const peak = isSea ? undefined : peakRates[cc];
+                const isOcean = isSea || cc === 'XO';
+                const peak = isOcean ? undefined : peakRates[cc];
                 const isOpen = expandedCc === cc;
                 return (
                   <StormRow
@@ -121,14 +122,14 @@ export default function StormActivity() {
                     rank={i + 1}
                     cc={cc}
                     name={isSea ? t('atSea') : countryName(cc)}
-                    isSea={isSea}
+                    isSea={isOcean}
                     count={count}
                     rate={rate}
                     peak={peak}
                     isOpen={isOpen}
                     onToggle={() => setExpandedCc(isOpen ? null : cc)}
                     cells={isOpen ? cells : null}
-                    cities={isOpen && !isSea ? cities : []}
+                    cities={isOpen && !isOcean ? cities : []}
                     onFlyTo={flyTo}
                   />
                 );
