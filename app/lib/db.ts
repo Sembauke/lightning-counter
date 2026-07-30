@@ -405,12 +405,31 @@ export type StormLogRow = Omit<BiggestStorm, 'strikes'> & { stormKey: string };
 export function upsertStorms(storms: BiggestStorm[]): void {
   if (storms.length === 0) return;
   const db = getDb();
+  // Use upsert syntax so we can protect the strikes blob: keep whichever version
+  // starts earlier (lower first-strike timestamp = more historical coverage).
+  // This prevents a post-restart short accumulation from overwriting a rich
+  // pre-restart history that spans the full storm lifetime.
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO storms
+    INSERT INTO storms
       (storm_key, code, count, rate, lat, lon, city, date,
        origin_lat, origin_lon, origin_city, start_time, end_time,
        traveled_km, total_count, strikes, country_path)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(storm_key) DO UPDATE SET
+      code = excluded.code, count = excluded.count, rate = excluded.rate,
+      lat = excluded.lat, lon = excluded.lon, city = excluded.city, date = excluded.date,
+      origin_lat = excluded.origin_lat, origin_lon = excluded.origin_lon,
+      origin_city = excluded.origin_city, start_time = excluded.start_time,
+      end_time = excluded.end_time, traveled_km = excluded.traveled_km,
+      total_count = excluded.total_count,
+      strikes = CASE
+        WHEN excluded.strikes IS NULL THEN storms.strikes
+        WHEN storms.strikes IS NULL THEN excluded.strikes
+        WHEN CAST(json_extract(excluded.strikes,'$[0][2]') AS INTEGER) <=
+             CAST(json_extract(storms.strikes,'$[0][2]') AS INTEGER) THEN excluded.strikes
+        ELSE storms.strikes
+      END,
+      country_path = excluded.country_path
   `);
   db.transaction(() => {
     for (const s of storms) {

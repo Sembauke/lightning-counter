@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
@@ -204,6 +204,17 @@ const trackedStorms: TrackedStorm[] = (() => {
     for (const st of loaded) {
       st.inDb = dbKeys.has(st.key);
       if (st.lastSeen < minLastSeen) st.lastSeen = minLastSeen;
+      // If allStrikes is missing or unusually short (e.g. lost on prev restart),
+      // seed from the DB strikes blob which has the full historical coverage.
+      if (st.inDb && (!st.allStrikes || st.allStrikes.length < 100)) {
+        try {
+          const dbStorm = getStormByKey(st.key);
+          if (dbStorm?.strikes && dbStorm.strikes.length > (st.allStrikes?.length ?? 0)) {
+            st.allStrikes = dbStorm.strikes;
+            st.lastStrikeTime = Math.max(...dbStorm.strikes.map(s => s[2]));
+          }
+        } catch { /* non-fatal */ }
+      }
     }
     return loaded;
   } catch { return []; }
