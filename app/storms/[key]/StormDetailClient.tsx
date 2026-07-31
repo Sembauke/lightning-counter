@@ -393,8 +393,7 @@ export default function StormDetailClient({
         {/* ── KPI grid ── */}
         <div className="storm-kpi-grid">
           <div className="storm-kpi">
-            {/* key changes on each SSE strike → remounts span → CSS pulse animation fires */}
-            <span key={stormTotal} className="storm-kpi-value storm-kpi-value--live">
+            <span className="storm-kpi-value">
               {stormTotal.toLocaleString()}
             </span>
             <span className="storm-kpi-label">Total strikes</span>

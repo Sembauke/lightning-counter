@@ -19,8 +19,9 @@ const REPLAY_MS_PER_STORM_MIN = 2_000;
 // playback freshness follows real time instead (see play()).
 const FRESH_MS = 20_000;
 const RING_MS = 600;
-// Rings are an accent, not a light show — keep only a few alive at once
-const MAX_RINGS = 12;
+// In replay mode keep concurrent rings modest; live mode uncaps so every
+// real-time strike gets its own ring (they expire fast enough not to pile up)
+const MAX_RINGS_REPLAY = 12;
 const TARGET_RING_COUNT = 60;
 // Dot colors age against a fixed 4-hour scale (matching how slowly colors
 // shift on the live map) instead of cycling the full spectrum per replay
@@ -117,7 +118,7 @@ export default function StormReplayMap({
       if (p >= 1) { rings.splice(i, 1); continue; }
       if (p <= 0) continue;
       ctx.beginPath();
-      ctx.arc(rings[i].x, rings[i].y, Math.max(1, Math.sqrt(p) * 18), 0, Math.PI * 2);
+      ctx.arc(rings[i].x, rings[i].y, Math.max(1, Math.sqrt(p) * 40), 0, Math.PI * 2);
       ctx.strokeStyle = `rgba(255,220,60,${(Math.pow(1 - p, 1.5) * 0.95).toFixed(3)})`;
       ctx.lineWidth = 2.5 * (1 - p) + 0.5;
       ctx.stroke();
@@ -215,9 +216,9 @@ export default function StormReplayMap({
     for (const [lat, lon, time] of newBatch) {
       const p = map.latLngToContainerPoint([lat, lon]);
       projectedRef.current.push({ x: p.x, y: p.y, time });
-      if (ringsRef.current.length < MAX_RINGS) {
-        ringsRef.current.push({ x: p.x, y: p.y, start: now });
-      }
+      // Live mode: every real-time strike gets a ring (they expire in 600 ms so
+      // they don't accumulate); replay caps via MAX_RINGS_REPLAY.
+      ringsRef.current.push({ x: p.x, y: p.y, start: now });
       if (time > maxTimeRef.current) maxTimeRef.current = time;
     }
     projectedRef.current.sort((a, b) => a.time - b.time);
@@ -278,7 +279,7 @@ export default function StormReplayMap({
       const cutoff = replayMinTime + p * (maxTime - replayMinTime);
 
       while (nextIdx < proj.length && proj[nextIdx].time <= cutoff) {
-        if (nextIdx % ringEvery === 0 && ringsRef.current.length < MAX_RINGS) {
+        if (nextIdx % ringEvery === 0 && ringsRef.current.length < MAX_RINGS_REPLAY) {
           ringsRef.current.push({ x: proj[nextIdx].x, y: proj[nextIdx].y, start: now + Math.random() * 150 });
         }
         nextIdx++;
