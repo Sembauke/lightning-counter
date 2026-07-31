@@ -70,8 +70,10 @@ export default function StormReplayMap({
   // The storm's 5-minute window in the viewer's local time
   const timeRange = `${fmtClock(minTime)} – ${fmtClock(maxTime)}`;
 
-  // Draw every strike at or before `cutoff` (storm time) plus active ring pulses
-  const draw = (cutoff: number, now: number, freshMs = FRESH_MS) => {
+  // Draw every strike at or before `cutoff` (storm time) plus active ring pulses.
+  // windowStart: when set (replay mode) strikes older than this are skipped so the
+  // display shows a sliding 4-hour window instead of the full accumulated history.
+  const draw = (cutoff: number, now: number, freshMs = FRESH_MS, windowStart?: number) => {
     const cnv = canvasRef.current;
     if (!cnv) return;
     const ctx = cnv.getContext('2d');
@@ -84,7 +86,11 @@ export default function StormReplayMap({
     // the replay leaves them behind, on a 4-hour reference scale
     for (const pt of projectedRef.current) {
       if (pt.time > cutoff) continue;
+      if (windowStart !== undefined && pt.time < windowStart) continue;
       const age = cutoff - pt.time;
+      // During replay use the fixed 4-hour scale so the full colour range is
+      // visible within the sliding window rather than compressed to a thin band.
+      const ageRef = windowStart !== undefined ? GRADIENT_REF_MS : gradientRef;
       ctx.beginPath();
       if (age < freshMs) {
         const f = age / freshMs;
@@ -97,7 +103,7 @@ export default function StormReplayMap({
           ctx.stroke();
         }
       } else {
-        const [r, g, b, a] = ageColor(Math.max(0.12, 1 - age / gradientRef));
+        const [r, g, b, a] = ageColor(Math.max(0.12, 1 - age / ageRef));
         ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
         ctx.fill();
@@ -246,9 +252,21 @@ export default function StormReplayMap({
     if (playing || proj.length === 0) return;
     setPlaying(true);
     ringsRef.current = [];
-    let nextIdx = 0;
+
+    // Skip isolated early strikes: find the first index where the gap to the
+    // NEXT strike is less than 2 hours — the storm is "continuous" from there.
+    // This prevents a single outlier strike 11 hours before the main activity
+    // from padding the replay with ~17 s of empty screen.
+    let replayStartIdx = 0;
+    const GAP_MS = 2 * 60 * 60 * 1000;
+    for (let i = 0; i < proj.length - 1; i++) {
+      if (proj[i + 1].time - proj[i].time < GAP_MS) { replayStartIdx = i; break; }
+    }
+    const replayMinTime = proj[replayStartIdx].time;
+
+    let nextIdx = replayStartIdx;
     const start = performance.now();
-    const spanMs = Math.max(1, maxTime - minTime);
+    const spanMs = Math.max(1, maxTime - replayMinTime);
     const replayMs = Math.min(REPLAY_MS_MAX, Math.max(REPLAY_MS_MIN, (spanMs / 60_000) * REPLAY_MS_PER_STORM_MIN));
     // Sample rings evenly across the storm instead of ringing every strike
     const ringEvery = Math.max(1, Math.round(proj.length / TARGET_RING_COUNT));
@@ -257,7 +275,7 @@ export default function StormReplayMap({
 
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / replayMs);
-      const cutoff = minTime + p * (maxTime - minTime);
+      const cutoff = replayMinTime + p * (maxTime - replayMinTime);
 
       while (nextIdx < proj.length && proj[nextIdx].time <= cutoff) {
         if (nextIdx % ringEvery === 0 && ringsRef.current.length < MAX_RINGS) {
@@ -266,7 +284,7 @@ export default function StormReplayMap({
         nextIdx++;
       }
 
-      draw(cutoff, now, freshMs);
+      draw(cutoff, now, freshMs, cutoff - GRADIENT_REF_MS);
       if (timeTextRef.current) timeTextRef.current.textContent = fmtClock(cutoff, true);
 
       if (p < 1 || ringsRef.current.length > 0) {
