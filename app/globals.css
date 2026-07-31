@@ -1098,10 +1098,37 @@ html, body {
   white-space: nowrap;
 }
 
-/* Rank badge — rankStyle() supplies color / background / borderColor inline */
-.storm-record-badge--rank {
+/* Rank progress bar */
+.storm-rank-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.storm-rank-bar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.storm-rank-bar-label {
+  font-size: 0.78rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  border: 1px solid transparent;
+}
+.storm-rank-bar-next {
+  font-size: 0.7rem;
+  color: rgba(255,170,40,0.75);
+  font-variant-numeric: tabular-nums;
+}
+.storm-rank-bar-track {
+  background: #1c1c1c;
+  border-radius: 4px;
+  height: 10px;
+  overflow: hidden;
+}
+.storm-rank-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  opacity: 0.85;
 }
 
 /* Global record badges */
@@ -1122,34 +1149,28 @@ html, body {
 }
 .storm-record-badge--most { display: none; } /* merged into biggest */
 
-/* Rank progress countdown — live storms only */
-.storm-rank-progress {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2rem 0.55rem;
-  border-radius: 3px;
-  background: rgba(255, 152, 18, 0.08);
-  border: 1px solid rgba(255, 152, 18, 0.4);
-  color: rgba(255, 170, 40, 0.92);
-  font-size: 0.7rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
-}
 
+.storm-content-card {
+  background: rgba(255,255,255,0.022);
+  border: 1px solid #1e1e1e;
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.storm-section--map {
+  margin-top: 0.25rem;
+}
 .storm-kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 0.75rem;
+  gap: 0.75rem 1.25rem;
 }
 .storm-kpi {
-  background: #111;
-  border: 1px solid #222;
-  border-radius: 8px;
-  padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.2rem;
 }
 .storm-kpi-value {
   font-size: 1.5rem;
@@ -1176,25 +1197,23 @@ html, body {
   gap: 0.75rem;
 }
 .storm-section-title {
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.68rem;
+  font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #555;
+  color: #484848;
+}
+.storm-section--map .storm-section-title {
   border-bottom: 1px solid #1e1e1e;
   padding-bottom: 0.4rem;
+  color: #555;
 }
 
 .storm-timeline-meta {
   display: flex;
   justify-content: space-between;
   font-size: 0.72rem;
-  color: #666;
-}
-.storm-timeline-peak-label {
-  color: #ff8c5a;
-  font-weight: 600;
-  text-align: center;
+  color: #555;
 }
 .timeline-chart {
   width: 100%;
@@ -1202,15 +1221,10 @@ html, body {
   display: block;
 }
 
-.storm-two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-}
 @media (max-width: 640px) {
-  .storm-two-col { grid-template-columns: 1fr; }
   .storm-kpi-grid { grid-template-columns: repeat(3, 1fr); }
   .storm-kpi-value { font-size: 1.2rem; }
+  .storm-content-card { padding: 1rem; }
 }
 
 .storm-info-table {
@@ -1221,11 +1235,9 @@ html, body {
 .storm-info-row {
   display: flex;
   gap: 0.75rem;
-  padding: 0.45rem 0;
-  border-bottom: 1px solid #191919;
+  padding: 0.35rem 0;
   font-size: 0.82rem;
 }
-.storm-info-row:last-child { border-bottom: none; }
 .storm-info-label {
   color: #555;
   width: 7.5rem;
@@ -1254,37 +1266,6 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-}
-.storm-compare-row {
-  display: grid;
-  grid-template-columns: 11rem 1fr 2.5rem;
-  align-items: center;
-  gap: 0.75rem;
-}
-.storm-compare-label {
-  font-size: 0.78rem;
-  color: #777;
-}
-.storm-compare-track {
-  background: #1a1a1a;
-  border-radius: 3px;
-  height: 8px;
-  overflow: hidden;
-}
-.storm-compare-bar {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.4s ease;
-}
-.storm-compare-pct {
-  font-size: 0.75rem;
-  color: #888;
-  text-align: right;
-  font-family: 'Courier New', monospace;
-}
-@media (max-width: 640px) {
-  .storm-compare-row { grid-template-columns: 8rem 1fr 2rem; }
-  .storm-compare-label { font-size: 0.72rem; }
 }
 
 /* ── Country hover tooltip ── */

@@ -2,8 +2,6 @@
 
 import dynamic from 'next/dynamic';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
@@ -65,17 +63,18 @@ function computeStats(strikes: StormStrike[]): StrikeStats {
 }
 
 function TimelineChart({ timeline, peakMinute }: { timeline: StrikeStats['timeline']; peakMinute: number }) {
-  const maxCount = Math.max(...timeline.map(t => t.count), 1);
+  const window = timeline.slice(-60);
+  const maxCount = Math.max(...window.map(t => t.count), 1);
   const W = 800, H = 100, PX = 4, PY = 6;
-  const barW = (W - PX * 2) / Math.max(timeline.length, 1);
+  const barW = (W - PX * 2) / Math.max(window.length, 1);
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="timeline-chart" aria-label="Strike intensity chart">
-      {timeline.map((t, i) => {
+      {window.map((t, i) => {
         const h = (t.count / maxCount) * (H - PY * 2);
         const isPeak = t.minute === peakMinute;
         const alpha = (0.25 + 0.75 * (t.count / maxCount)).toFixed(2);
-        const fill = isPeak ? '#ff6b35' : `rgba(90,170,255,${alpha})`;
+        const fill = isPeak ? '#ffe566' : `rgba(255,210,50,${alpha})`;
         return (
           <rect key={i}
             x={PX + i * barW}
@@ -90,33 +89,24 @@ function TimelineChart({ timeline, peakMinute }: { timeline: StrikeStats['timeli
   );
 }
 
+
+
 function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; isRecord: boolean }) {
   const pct = Math.min(100, ratio * 100);
   return (
-    <div className="storm-compare-row">
-      <span className="storm-compare-label">{label}</span>
-      <div className="storm-compare-track">
-        <div className="storm-compare-bar"
-          style={{ width: `${pct.toFixed(1)}%`, background: isRecord ? '#ff6b35' : '#3a6fa8' }} />
+    <div className="storm-rank-bar">
+      <div className="storm-rank-bar-head">
+        <span className="storm-rank-bar-label" style={{ color: isRecord ? '#ff6b35' : '#ffe566' }}>{label}</span>
+        <span className="storm-rank-bar-next">{Math.round(pct)}%</span>
       </div>
-      <span className="storm-compare-pct">{Math.round(pct)}%</span>
+      <div className="storm-rank-bar-track">
+        <div className="storm-rank-bar-fill"
+          style={{ width: `${pct.toFixed(1)}%`, background: isRecord ? '#ff6b35' : '#ffe566' }} />
+      </div>
     </div>
   );
 }
 
-
-function rankStyle(rank: number): React.CSSProperties {
-  const t = Math.pow(Math.max(0, 1 - (rank - 1) / 99), 0.5);
-  const hue = Math.round(50 - t * 20);
-  const sat = Math.round(30 + t * 70);
-  const light = Math.round(40 + t * 35);
-  return {
-    color: `hsl(${hue}, ${sat}%, ${light}%)`,
-    background: `hsla(${hue}, ${sat}%, ${light}%, ${0.1 + t * 0.35})`,
-    borderColor: `hsla(${hue}, ${sat}%, ${light}%, ${0.25 + t * 0.65})`,
-    fontWeight: t > 0.7 ? 700 : undefined,
-  };
-}
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -153,7 +143,6 @@ export default function StormDetailClient({
   rank: number;
   nextRankThreshold: number | null;
 }) {
-  const router = useRouter();
   const ts = useTranslations('storms');
   const countryName = useCountryName();
   const { mergeMap } = useStormMerge();
@@ -306,35 +295,25 @@ export default function StormDetailClient({
   const longestRec  = records.find(r => r.category === 'longest');
   const farthestRec = records.find(r => r.category === 'farthest');
 
-  // Strikes needed to surpass the storm ranked just above; updates live per SSE strike
-  const strikesToNextRank = isLive && displayRank > 1 && displayNextThreshold != null
-    ? displayNextThreshold - stormTotal + 1
-    : null;
   const biggestRatio = biggestRec ? stormTotal / (biggestRec.totalCount ?? biggestRec.count) : null;
   const longestRatio =
     longestRec && duration != null && longestRec.startTime != null && longestRec.endTime != null
-      ? duration / (longestRec.endTime - longestRec.startTime)
-      : null;
+      ? duration / (longestRec.endTime - longestRec.startTime) : null;
   const farthestRatio =
     farthestRec?.traveledKm && liveStats.traveledKm
-      ? liveStats.traveledKm / farthestRec.traveledKm
-      : null;
-
+      ? liveStats.traveledKm / farthestRec.traveledKm : null;
   const hasCompare = biggestRatio != null || longestRatio != null || farthestRatio != null;
+
+  // Strikes needed to surpass the storm ranked just above; updates live per SSE strike
+  const strikesToNextRank = displayRank > 1 && displayNextThreshold != null
+    ? displayNextThreshold - stormTotal + 1
+    : null;
+  const rankFillPct = displayNextThreshold != null
+    ? Math.min(100, (stormTotal / displayNextThreshold) * 100)
+    : displayRank === 1 ? 100 : null;
 
   return (
     <div className="archive-page">
-      <div className="archive-toolbar">
-        <button
-          className="storm-detail-back"
-          onClick={() => window.history.length > 1 ? router.back() : router.push('/storms')}
-        >← Back</button>
-        <Link
-          href={`/?lat=${storm.lat.toFixed(3)}&lon=${storm.lon.toFixed(3)}`}
-          className="storm-detail-maplink"
-        >View on map</Link>
-      </div>
-
       <div className="storm-detail-body">
 
         {/* ── Header ── */}
@@ -356,17 +335,7 @@ export default function StormDetailClient({
               )}
           </span>
           <h1 className="storm-detail-name">{name}</h1>
-          <div className="storm-detail-date-line">{storm.date}</div>
           <div className="storm-record-badges">
-            {isLive && <span className="storm-record-badge storm-live-tag">LIVE</span>}
-            <span className="storm-record-badge storm-record-badge--rank" style={rankStyle(displayRank)}>
-              #{displayRank} biggest
-            </span>
-            {strikesToNextRank != null && strikesToNextRank > 0 && (
-              <span className="storm-rank-progress">
-                ↑ #{displayRank - 1} in {strikesToNextRank.toLocaleString()} strikes
-              </span>
-            )}
             {heldRecords.map(r => (
               <span key={r.category} className={`storm-record-badge storm-record-badge--${r.category}`}>
                 {r.category === 'biggest' ? 'Global Record — Biggest'
@@ -424,175 +393,64 @@ export default function StormDetailClient({
               <span className="storm-kpi-label">Distance traveled</span>
             </div>
           )}
-          {stats && (
-            <>
-              <div className="storm-kpi">
-                <span className="storm-kpi-value">
-                  {Math.round(stats.bboxWidthKm)}<span className="storm-kpi-unit">km</span>
-                </span>
-                <span className="storm-kpi-label">Area width</span>
-              </div>
-              <div className="storm-kpi">
-                <span className="storm-kpi-value">
-                  {Math.round(stats.bboxHeightKm)}<span className="storm-kpi-unit">km</span>
-                </span>
-                <span className="storm-kpi-label">Area height</span>
-              </div>
-            </>
-          )}
         </div>
 
-        {/* ── Strike timeline chart ── */}
-        {stats && stats.timeline.length > 1 && (
-          <div className="storm-section">
-            <div className="storm-section-title">Strike intensity over time</div>
-            <div className="storm-timeline-meta">
-              {storm.startTime != null && <span>{fmtClock(storm.startTime)}</span>}
-              <span className="storm-timeline-peak-label">
-                Peak {fmtClock(stats.peakTs)} — {fmtRate(liveStats.rate)} strikes/min
-              </span>
-              {storm.endTime != null && <span>{fmtClock(storm.endTime)}</span>}
-            </div>
-            <TimelineChart timeline={stats.timeline} peakMinute={stats.peakMinute} />
-          </div>
-        )}
-
-        {/* ── Two-column panels ── */}
-        <div className="storm-two-col">
-
-          <div className="storm-section">
-            <div className="storm-section-title">Key moments</div>
-            <div className="storm-info-table">
-              {liveStats.startTime != null && (
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Born</span>
-                  <span className="storm-info-value">{fmtClock(liveStats.startTime)}</span>
-                </div>
-              )}
-              {liveStats.originCity && (
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Origin</span>
-                  <span className="storm-info-value">{liveStats.originCity}</span>
-                </div>
-              )}
-              {stats && (
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Peak</span>
-                  <span className="storm-info-value storm-info-value--peak">
-                    {fmtClock(stats.peakTs)} · {stats.peakCount} strikes/min
-                  </span>
-                </div>
-              )}
-              {liveStats.endTime != null && (
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Ended</span>
-                  <span className="storm-info-value">{fmtClock(liveStats.endTime)}</span>
-                </div>
-              )}
-              {liveStats.city && (
-                <div className="storm-info-row">
-                  <span className="storm-info-label">{isLive ? 'Current location' : 'Final location'}</span>
-                  <span className="storm-info-value">{liveStats.city}</span>
-                </div>
-              )}
-              {duration != null && (
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Duration</span>
-                  <span className="storm-info-value">{fmtDuration(duration)}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {stats && (
+        {/* ── Strike timeline chart — last 60 minutes ── */}
+        {stats && stats.timeline.length > 1 && (() => {
+          const window = stats.timeline.slice(-60);
+          const windowStart = window[0]?.ts;
+          const windowEnd = window[window.length - 1]?.ts;
+          return (
             <div className="storm-section">
-              <div className="storm-section-title">Geography</div>
-              <div className="storm-info-table">
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Bounding box</span>
-                  <span className="storm-info-value">
-                    {Math.round(stats.bboxWidthKm)} × {Math.round(stats.bboxHeightKm)} km
-                  </span>
-                </div>
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Covered area</span>
-                  <span className="storm-info-value">
-                    {Math.round(stats.bboxWidthKm * stats.bboxHeightKm).toLocaleString()} km²
-                  </span>
-                </div>
-                {storm.traveledKm != null && storm.traveledKm >= 1 && (
-                  <div className="storm-info-row">
-                    <span className="storm-info-label">Path length</span>
-                    <span className="storm-info-value">{Math.round(storm.traveledKm)} km</span>
-                  </div>
-                )}
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Lat range</span>
-                  <span className="storm-info-value">
-                    {stats.minLat.toFixed(2)}° – {stats.maxLat.toFixed(2)}°
-                  </span>
-                </div>
-                <div className="storm-info-row">
-                  <span className="storm-info-label">Lon range</span>
-                  <span className="storm-info-value">
-                    {stats.minLon.toFixed(2)}° – {stats.maxLon.toFixed(2)}°
-                  </span>
-                </div>
+              <div className="storm-timeline-meta">
+                {windowStart != null && <span>{fmtClock(windowStart)}</span>}
+                {windowEnd != null && <span>{fmtClock(windowEnd)}</span>}
               </div>
+              <TimelineChart timeline={stats.timeline} peakMinute={stats.peakMinute} />
             </div>
-          )}
-        </div>
-
-        {/* ── Countries panel ── */}
-        {storm.countryPath && storm.countryPath.length > 0 && (
-          <div className="storm-section">
-            <div className="storm-section-title">
-              {storm.countryPath.length > 1 ? 'Countries crossed' : 'Country'}
-            </div>
-            <div className="storm-countries-list">
-              {storm.countryPath.map((cc, i) => (
-                <span key={cc} className="storm-country-chip">
-                  {i > 0 && <span className="storm-country-arrow">→</span>}
-                  <CountryFlag code={cc} name={countryName(cc)} />
-                  <span>{countryName(cc)}</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ── Record comparison ── */}
-        {hasCompare && (
-          <div className="storm-section">
-            <div className="storm-section-title">Compared to global records</div>
-            <div className="storm-compare-list">
-              {biggestRatio != null && (
-                <CompareBar
-                  label="Biggest (total strikes)"
-                  ratio={biggestRatio}
-                  isRecord={heldRecords.some(r => r.category === 'biggest')}
-                />
-              )}
-              {longestRatio != null && (
-                <CompareBar
-                  label="Longest (duration)"
-                  ratio={longestRatio}
-                  isRecord={heldRecords.some(r => r.category === 'longest')}
-                />
-              )}
-              {farthestRatio != null && (
-                <CompareBar
-                  label="Farthest (distance)"
-                  ratio={farthestRatio}
-                  isRecord={heldRecords.some(r => r.category === 'farthest')}
-                />
-              )}
-            </div>
+        {(rankFillPct != null || hasCompare) && (
+          <div className="storm-compare-list">
+            {rankFillPct != null && (
+              <div className="storm-rank-bar">
+                <div className="storm-rank-bar-head">
+                  <span className="storm-rank-bar-label" style={{ color: '#ffe566' }}>
+                    #{displayRank} globally
+                  </span>
+                  {strikesToNextRank != null && strikesToNextRank > 0 && (
+                    <span className="storm-rank-bar-next">
+                      ↑ #{displayRank - 1} in {strikesToNextRank.toLocaleString()} strikes
+                    </span>
+                  )}
+                </div>
+                <div className="storm-rank-bar-track">
+                  <div className="storm-rank-bar-fill" style={{
+                    width: `${rankFillPct.toFixed(1)}%`,
+                    background: '#ffe566',
+                  }} />
+                </div>
+              </div>
+            )}
+            {biggestRatio != null && (
+              <CompareBar label="Biggest" ratio={biggestRatio}
+                isRecord={heldRecords.some(r => r.category === 'biggest')} />
+            )}
+            {longestRatio != null && (
+              <CompareBar label="Longest" ratio={longestRatio}
+                isRecord={heldRecords.some(r => r.category === 'longest')} />
+            )}
+            {farthestRatio != null && (
+              <CompareBar label="Farthest" ratio={farthestRatio}
+                isRecord={heldRecords.some(r => r.category === 'farthest')} />
+            )}
           </div>
         )}
 
         {/* ── Replay map / Live map ── */}
-        <div className="storm-section">
+        <div className="storm-section storm-section--map">
           <div className="storm-section-title">{isLive ? 'Live map' : 'Strike replay'}</div>
           {storm.strikes && storm.strikes.length > 0
             ? (

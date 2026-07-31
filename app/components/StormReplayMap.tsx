@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
+import { useSound } from '../context/SoundContext';
 import 'leaflet/dist/leaflet.css';
 import type { Map as LeafletMap } from 'leaflet';
 import type { StormStrike } from '../lib/db';
@@ -27,6 +28,22 @@ const TARGET_RING_COUNT = 60;
 // shift on the live map) instead of cycling the full spectrum per replay
 const GRADIENT_REF_MS = 4 * 60 * 60 * 1000;
 
+function playTick(ctx: AudioContext) {
+  const duration = 0.018;
+  const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 10);
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const gain = ctx.createGain();
+  gain.gain.value = 0.5;
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+}
+
 interface Projected { x: number; y: number; time: number }
 interface Ring { x: number; y: number; start: number }
 
@@ -50,6 +67,11 @@ export default function StormReplayMap({
   const liveRafRef = useRef<number | null>(null);
   const appendedLengthRef = useRef(0);
   const maxTimeRef = useRef(-Infinity);
+  const { sound } = useSound();
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastTickRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const t = useTranslations('stats');
 
@@ -223,6 +245,20 @@ export default function StormReplayMap({
     }
     projectedRef.current.sort((a, b) => a.time - b.time);
     draw(maxTimeRef.current, now);
+
+    if (soundRef.current && newBatch.length > 0) {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+      const toPlay = Math.min(newBatch.length, 12);
+      for (let i = 0; i < toPlay; i++) {
+        setTimeout(() => {
+          const t = performance.now();
+          if (t - lastTickRef.current > 30) {
+            lastTickRef.current = t;
+            playTick(audioCtxRef.current!);
+          }
+        }, Math.random() * 700);
+      }
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appendedStrikes]);
 
