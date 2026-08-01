@@ -93,6 +93,8 @@ function TimelineChart({ timeline, peakMinute }: { timeline: StrikeStats['timeli
 
 function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; isRecord: boolean }) {
   const pct = Math.min(100, ratio * 100);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   return (
     <div className="storm-rank-bar">
       <div className="storm-rank-bar-head">
@@ -101,7 +103,7 @@ function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; 
       </div>
       <div className="storm-rank-bar-track">
         <div className="storm-rank-bar-fill"
-          style={{ width: `${pct.toFixed(1)}%`, background: isRecord ? '#ff6b35' : '#ffe566' }} />
+          style={{ width: mounted ? `${pct.toFixed(1)}%` : '0%', background: isRecord ? '#ff6b35' : '#ffe566' }} />
       </div>
     </div>
   );
@@ -308,9 +310,15 @@ export default function StormDetailClient({
   const strikesToNextRank = displayRank > 1 && displayNextThreshold != null
     ? displayNextThreshold - stormTotal + 1
     : null;
+
   const rankFillPct = displayNextThreshold != null
     ? Math.min(100, (stormTotal / displayNextThreshold) * 100)
     : displayRank === 1 ? 100 : null;
+
+  // Animate bar from 0 on every page load: render 0 first, then transition to
+  // the real value once the component has mounted and the CSS transition is active.
+  const [rankMounted, setRankMounted] = useState(false);
+  useEffect(() => { setRankMounted(true); }, []);
 
   return (
     <div className="archive-page">
@@ -428,7 +436,7 @@ export default function StormDetailClient({
                 </div>
                 <div className="storm-rank-bar-track">
                   <div className="storm-rank-bar-fill" style={{
-                    width: `${rankFillPct.toFixed(1)}%`,
+                    width: rankMounted ? `${rankFillPct.toFixed(1)}%` : '0%',
                     background: '#ffe566',
                   }} />
                 </div>
