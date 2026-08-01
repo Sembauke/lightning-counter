@@ -558,6 +558,19 @@ export function getStormRanks(stormKeys: string[]): Record<string, number> {
   return Object.fromEntries(rows.map(r => [r.stormKey, r.rank]));
 }
 
+/** Total count of the nearest storm ranked just below `currentTotal` (the rank this storm just passed) */
+export function getPrevRankThreshold(stormKey: string, currentTotal: number): number | null {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT COALESCE(total_count, count) AS threshold
+    FROM storms
+    WHERE storm_key != ? AND COALESCE(total_count, count) < ?
+    ORDER BY COALESCE(total_count, count) DESC
+    LIMIT 1
+  `).get(stormKey, currentTotal) as { threshold: number } | undefined;
+  return row?.threshold ?? null;
+}
+
 /** Total count of the nearest storm ranked above `currentTotal` for the rank-progress tag */
 export function getNextRankThreshold(stormKey: string, currentTotal: number): number | null {
   const db = getDb();

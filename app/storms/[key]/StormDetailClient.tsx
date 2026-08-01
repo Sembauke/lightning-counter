@@ -94,7 +94,12 @@ function TimelineChart({ timeline, peakMinute }: { timeline: StrikeStats['timeli
 function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; isRecord: boolean }) {
   const pct = Math.min(100, ratio * 100);
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const [animDone, setAnimDone] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+    const t = setTimeout(() => setAnimDone(true), 700);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <div className="storm-rank-bar">
       <div className="storm-rank-bar-head">
@@ -103,7 +108,7 @@ function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; 
       </div>
       <div className="storm-rank-bar-track">
         <div className="storm-rank-bar-fill"
-          style={{ width: mounted ? `${pct.toFixed(1)}%` : '0%', background: isRecord ? '#ff6b35' : '#ffe566' }} />
+          style={{ width: mounted ? `${pct.toFixed(1)}%` : '0%', background: isRecord ? '#ff6b35' : '#ffe566', transition: animDone ? 'none' : undefined }} />
       </div>
     </div>
   );
@@ -124,6 +129,7 @@ interface PollResponse {
   originCity: string | null;
   rank: number;
   nextRankThreshold: number | null;
+  prevRankThreshold: number | null;
 }
 
 interface LiveStats {
@@ -138,12 +144,13 @@ interface LiveStats {
 }
 
 export default function StormDetailClient({
-  storm, records, rank, nextRankThreshold,
+  storm, records, rank, nextRankThreshold, prevRankThreshold,
 }: {
   storm: BiggestStorm;
   records: GlobalStormRecord[];
   rank: number;
   nextRankThreshold: number | null;
+  prevRankThreshold: number | null;
 }) {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -182,6 +189,7 @@ export default function StormDetailClient({
   // Live rank + threshold — start from server-rendered values, updated by each KPI poll
   const [displayRank, setDisplayRank] = useState(rank);
   const [displayNextThreshold, setDisplayNextThreshold] = useState(nextRankThreshold);
+  const [displayPrevThreshold, setDisplayPrevThreshold] = useState(prevRankThreshold);
   // Refs so the crossing-detection effect can call poll() and read stormTotal without stale closures
   const pollNowRef = useRef<(() => Promise<void>) | null>(null);
   const stormTotalRef = useRef(0);
@@ -216,6 +224,11 @@ export default function StormDetailClient({
         const res = await fetch(url);
         if (!res.ok || cancelled) return;
         const data = await res.json() as PollResponse;
+        // Preserve SSE strikes not yet flushed to DB. The poll was sent with
+        // liveTotal so thresholds are based on that value — resetting to 0
+        // drops stormTotal below displayPrevThreshold and makes rankFillPct negative.
+        const dbTotal = data.totalCount ?? data.count;
+        setAppendedSinceFlush(Math.max(0, liveTotal - dbTotal));
         setLiveStats({
           endTime: data.endTime,
           totalCount: data.totalCount,
@@ -226,10 +239,13 @@ export default function StormDetailClient({
           city: data.city,
           originCity: data.originCity,
         });
-        setAppendedSinceFlush(0); // DB total now includes these strikes
         // Take the better (lower-number) rank — never regress an optimistic advance
         if (data.rank) setDisplayRank(prev => Math.min(prev, data.rank));
         if ('nextRankThreshold' in data) setDisplayNextThreshold(data.nextRankThreshold);
+        // displayPrevThreshold is intentionally NOT updated from polls — only set
+        // on page load (SSR prop) and threshold crossings. Updating it here would
+        // advance the slot floor each time a new storm appears below stormTotal,
+        // causing the bar to shrink/reset between crossings.
         // Backfill any strikes between SSR and EventSource connect
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
@@ -259,11 +275,14 @@ export default function StormDetailClient({
   // 3. Poll with the live total so the server returns the correct next threshold
   const prevTotalRef = useRef(0);
   useEffect(() => {
-    if (displayNextThreshold == null) return;
+    // Always keep ref fresh — if we skip updating while nextThreshold is null,
+    // the stale value causes a spurious re-crossing the moment the poll returns.
     const prev = prevTotalRef.current;
     prevTotalRef.current = stormTotal;
+    if (displayNextThreshold == null) return;
     if (prev < displayNextThreshold && stormTotal >= displayNextThreshold) {
       setDisplayRank(r => r - 1);
+      setDisplayPrevThreshold(displayNextThreshold);
       setDisplayNextThreshold(null);
       pollNowRef.current?.();
     }
@@ -311,14 +330,20 @@ export default function StormDetailClient({
     ? displayNextThreshold - stormTotal + 1
     : null;
 
+  // Progress between the rank just passed (0%) and the rank being targeted (100%).
+  // When nextThreshold is null (crossing in flight, or rank #1) hold at 100%
+  // so the bar never disappears and triggers the re-crossing cascade.
   const rankFillPct = displayNextThreshold != null
-    ? Math.min(100, (stormTotal / displayNextThreshold) * 100)
-    : displayRank === 1 ? 100 : null;
+    ? Math.max(0, Math.min(100, ((stormTotal - (displayPrevThreshold ?? 0)) / (displayNextThreshold - (displayPrevThreshold ?? 0))) * 100))
+    : 100;
 
-  // Animate bar from 0 on every page load: render 0 first, then transition to
-  // the real value once the component has mounted and the CSS transition is active.
   const [rankMounted, setRankMounted] = useState(false);
-  useEffect(() => { setRankMounted(true); }, []);
+  const [rankAnimDone, setRankAnimDone] = useState(false);
+  useEffect(() => {
+    setRankMounted(true);
+    const t = setTimeout(() => setRankAnimDone(true), 700);
+    return () => clearTimeout(t);
+  }, []);
 
   return (
     <div className="archive-page">
@@ -438,6 +463,7 @@ export default function StormDetailClient({
                   <div className="storm-rank-bar-fill" style={{
                     width: rankMounted ? `${rankFillPct.toFixed(1)}%` : '0%',
                     background: '#ffe566',
+                    transition: rankAnimDone ? 'none' : undefined,
                   }} />
                 </div>
               </div>

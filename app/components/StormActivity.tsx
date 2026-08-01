@@ -9,6 +9,7 @@ import { fmtRate } from '../lib/format';
 import CountryFlag from './CountryFlag';
 
 const WINDOW_MS = 5 * 60 * 1000;
+const RATE_WINDOW_MS = 60 * 1000; // rate uses last 1 min for responsiveness
 const TOP_N = 15;
 
 const SEA = '--';
@@ -60,16 +61,24 @@ export default function StormActivity() {
   const storms = useMemo<StormEntry[]>(() => {
     const now = Date.now();
     const cutoff = now - WINDOW_MS;
+    const rateCutoff = now - RATE_WINDOW_MS;
     const counts: Record<string, number> = {};
+    const rateCounts: Record<string, number> = {};
     let seaCount = 0;
+    let seaRateCount = 0;
     for (const s of strikes) {
       if (s.time <= cutoff) continue;
-      if (s.cc) counts[s.cc] = (counts[s.cc] ?? 0) + 1;
-      else seaCount++;
+      if (s.cc) {
+        counts[s.cc] = (counts[s.cc] ?? 0) + 1;
+        if (s.time > rateCutoff) rateCounts[s.cc] = (rateCounts[s.cc] ?? 0) + 1;
+      } else {
+        seaCount++;
+        if (s.time > rateCutoff) seaRateCount++;
+      }
     }
     const list: StormEntry[] = Object.entries(counts)
-      .map(([cc, count]) => ({ cc, count, rate: count / 5 }));
-    if (seaCount > 0) list.push({ cc: SEA, count: seaCount, rate: seaCount / 5 });
+      .map(([cc, count]) => ({ cc, count, rate: rateCounts[cc] ?? 0 }));
+    if (seaCount > 0) list.push({ cc: SEA, count: seaCount, rate: seaRateCount });
     return list.sort((a, b) => b.count - a.count).slice(0, TOP_N);
   }, [strikes]);
 

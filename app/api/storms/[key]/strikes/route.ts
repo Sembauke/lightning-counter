@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStormByKey, getStormRank, getNextRankThreshold } from '../../../../lib/db';
+import { getStormByKey, getStormRank, getNextRankThreshold, getPrevRankThreshold } from '../../../../lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +17,7 @@ export async function GET(
   const total = liveTotalParam ? parseInt(liveTotalParam, 10) : (storm.totalCount ?? storm.count);
   const rank = getStormRank(total);
   const nextRankThreshold = storm.stormKey ? getNextRankThreshold(storm.stormKey, total) : null;
+  const prevRankThreshold = storm.stormKey ? getPrevRankThreshold(storm.stormKey, total) : null;
   return NextResponse.json({
     strikes: storm.strikes ?? [],
     endTime: storm.endTime,
@@ -29,5 +30,6 @@ export async function GET(
     originCity: storm.originCity,
     rank,
     nextRankThreshold,
+    prevRankThreshold,
   });
 }

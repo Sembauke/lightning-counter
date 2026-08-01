@@ -164,3 +164,75 @@ server.listen(port, '0.0.0.0', () => {
     fetch(`http://127.0.0.1:${port}/`).catch(() => {});
   }, 500);
 });
+
+// ── Dev storm ──────────────────────────────────────────────────────────────
+// Always-live fake storm so the storm detail page can be inspected in dev
+// without waiting for real activity. Kept alive by refreshing end_time and
+// dripping one fake strike per 30 s through the normal SSE pipeline.
+if (dev) {
+  // Delay so the pre-warm request has time to fire and initialize the DB schema
+  setTimeout(async () => {
+    const { createRequire } = await import('module');
+    const load = createRequire(import.meta.url);
+    const Database = load('better-sqlite3');
+    const { existsSync, mkdirSync } = await import('fs');
+    const { join } = await import('path');
+
+    const DB_DIR = process.env.DB_PATH ?? (existsSync('/data') ? '/data' : './tmp');
+    mkdirSync(DB_DIR, { recursive: true });
+    const devDb = new Database(join(DB_DIR, 'lightning.db'));
+
+    const DEV_KEY = '__dev__';
+    const DEV_LAT = 52.3;
+    const DEV_LON = 4.9;
+    const now = Date.now();
+    const startTime = now - 90 * 60_000;
+
+    // 250 fake strikes spread over the last 90 min around Amsterdam
+    // Cap timestamps to now - 2s so latestTsRef never blocks incoming SSE strikes
+    const strikes = Array.from({ length: 250 }, (_, i) => {
+      const t = Math.min(now - 2_000, startTime + (i / 249) * 90 * 60_000 + (Math.random() - 0.5) * 60_000);
+      return [
+        DEV_LAT + (Math.random() - 0.5) * 0.8,
+        DEV_LON + (Math.random() - 0.5) * 1.2,
+        Math.round(t),
+      ];
+    }).sort((a, b) => a[2] - b[2]);
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    devDb.prepare(`
+      INSERT INTO storms (storm_key, code, count, rate, lat, lon, city, date,
+                          start_time, end_time, total_count, strikes)
+      VALUES (?, 'NL', 250, 48, ?, ?, 'Amsterdam (Dev)', ?, ?, ?, 250, ?)
+      ON CONFLICT(storm_key) DO UPDATE SET
+        end_time   = excluded.end_time,
+        start_time = COALESCE(start_time, excluded.start_time)
+    `).run(DEV_KEY, DEV_LAT, DEV_LON, today, startTime, now, JSON.stringify(strikes));
+
+    console.log(`[dev] storm ready → http://localhost:${port}/storms/${encodeURIComponent(DEV_KEY)}`);
+
+    // Keep end_time within the "live" window (< 10 min old)
+    setInterval(() => {
+      devDb.prepare('UPDATE storms SET end_time = ? WHERE storm_key = ?').run(Date.now(), DEV_KEY);
+    }, 5 * 60_000);
+
+    // Drip fake strikes at 2/s — dispatch directly to open storm SSE subscribers
+    // (bypasses _processStrike which only loads when /api/strikes is first hit)
+    setInterval(() => {
+      const lat = DEV_LAT + (Math.random() - 0.5) * 0.6;
+      const lon = DEV_LON + (Math.random() - 0.5) * 0.9;
+      const time = Date.now();
+      const subs = globalThis._stormStrikeSubscribers;
+      if (subs?.size > 0) {
+        for (const sub of subs.values()) {
+          const dLat = (lat - sub.lat) * 111.32;
+          const dLon = (lon - sub.lon) * 111.32 * Math.cos(((lat + sub.lat) / 2) * Math.PI / 180);
+          if (Math.hypot(dLat, dLon) <= sub.radiusKm) {
+            try { sub.send([lat, lon, time]); } catch {}
+          }
+        }
+      }
+    }, 500);
+  }, 3_000);
+}

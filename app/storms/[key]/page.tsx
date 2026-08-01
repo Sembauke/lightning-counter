@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getStormByKey, getStormRecords, getStormRank, getNextRankThreshold } from '../../lib/db';
+import { getStormByKey, getStormRecords, getStormRank, getNextRankThreshold, getPrevRankThreshold } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
 
@@ -35,8 +35,8 @@ export default async function StormDetailPage({ params }: Props) {
   if (!storm) notFound();
   const records = getStormRecords();
   const rank = getStormRank(storm.totalCount ?? storm.count);
-  const nextRankThreshold = storm.stormKey
-    ? getNextRankThreshold(storm.stormKey, storm.totalCount ?? storm.count)
-    : null;
-  return <StormDetailClient storm={storm} records={records} rank={rank} nextRankThreshold={nextRankThreshold} />;
+  const total = storm.totalCount ?? storm.count;
+  const nextRankThreshold = storm.stormKey ? getNextRankThreshold(storm.stormKey, total) : null;
+  const prevRankThreshold = storm.stormKey ? getPrevRankThreshold(storm.stormKey, total) : null;
+  return <StormDetailClient storm={storm} records={records} rank={rank} nextRankThreshold={nextRankThreshold} prevRankThreshold={prevRankThreshold} />;
 }
