@@ -8,6 +8,7 @@ import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { BiggestStorm, GlobalStormRecord, StormStrike } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
+import StormEventsWidget from '../../components/StormEventsWidget';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
 
@@ -481,6 +482,11 @@ export default function StormDetailClient({
                 isRecord={heldRecords.some(r => r.category === 'farthest')} />
             )}
           </div>
+        )}
+
+        {/* ── Storm events log ── */}
+        {storm.stormKey && (
+          <StormEventsWidget stormKey={storm.stormKey} isLive={isLive} />
         )}
 
         {/* ── Replay map / Live map ── */}

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
@@ -172,6 +172,20 @@ interface TrackedStorm {
   appendSeq: number;
   // Ordered list of every country code the storm has passed through
   countryCodes: string[];
+  // Ordered ancestry chain of storm keys this storm split from, closest ancestor
+  // last. Empty for storms that formed independently. Example: if A split into B
+  // and B split into C, C.splitLineage = ['A', 'B'].
+  // Using a chain instead of a single key handles cascading splits (A→B→C) and
+  // lets absorbInto apply the double-count correction whenever ANY ancestor
+  // re-absorbs a descendant, not just the immediate parent.
+  // Key-adoption (big.key = small.key) patches entries in-place so the chain
+  // stays valid even when a storm's identity key changes.
+  splitLineage: string[];
+  // Strike count at the moment this storm was first created (after the initial
+  // accumulateStrikes call). These strikes may overlap with an ancestor storm's
+  // count when a split occurs; they are excluded from the net-new calculation
+  // in absorbInto whenever an ancestor re-absorbs this storm.
+  initialTotalStrikes: number;
 }
 // Maximum match window — a cell within this distance of a tracked storm's last
 // centroid is a candidate. The effective window is further capped by velocity:
@@ -203,6 +217,8 @@ const trackedStorms: TrackedStorm[] = (() => {
     const minLastSeen = Date.now() - 4 * 60 * 1000;
     for (const st of loaded) {
       st.inDb = dbKeys.has(st.key);
+      st.splitLineage = st.splitLineage ?? [];
+      st.initialTotalStrikes = st.initialTotalStrikes ?? 0;
       if (st.lastSeen < minLastSeen) st.lastSeen = minLastSeen;
       // If allStrikes is missing or unusually short (e.g. lost on prev restart),
       // seed from the DB strikes blob which has the full historical coverage.
@@ -376,6 +392,8 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     // that cross borders or move offshore are tracked as one continuous system.
     const allRecentStrikes = recentStrikes.filter(s => s.time > cutoff5m);
     const matched = new Set<TrackedStorm>();
+    // Storms created for the first time this pass — used for split detection below
+    const freshThisPass = new Set<TrackedStorm>();
     for (const cell of detectStorms(allRecentStrikes, WINDOW_MS)) {
       const sample = sampleCell(cell.members);
       // A backlog flush can masquerade as a huge storm — never track those
@@ -467,10 +485,16 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           inDb: false,
           allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
           countryCodes: Object.keys(ccCounts),
+          splitLineage: [],
+          initialTotalStrikes: 0,
         };
         accumulateStrikes(fresh, cell.members);
+        // Capture the initial member count — used in absorbInto to avoid double-counting
+        // strikes that were already attributed to a parent storm if this turns out to be a split.
+        fresh.initialTotalStrikes = fresh.totalStrikes;
         trackedStorms.push(fresh);
         matched.add(fresh);
+        freshThisPass.add(fresh);
       }
     }
 
@@ -482,14 +506,33 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     //    and remove the smaller from `matched` so it won't be written back to the DB.
     // 2. Unmatched strays: an old identity that didn't get a cluster this pass but
     //    is still within range of a matched winner — fold it in and delete from DB.
-    function absorbInto(big: TrackedStorm, small: TrackedStorm) {
+    // Returns the net-new strike count added to big (used by call sites to record
+    // the merge event under the correct canonical key after any key adoption).
+    function absorbInto(big: TrackedStorm, small: TrackedStorm): number {
       if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
       if (small.startTime < big.startTime) {
         big.startTime = small.startTime;
         big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
       }
       big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
-      big.totalStrikes += small.totalStrikes;
+      // If small's ancestry chain includes big's key it is a descendant of big
+      // (direct child, grandchild, etc.). Its initialTotalStrikes came from big's
+      // territory and were already counted there, so only the net-new strikes
+      // accumulated after the split are added to avoid double-counting.
+      const netNew = small.splitLineage.includes(big.key)
+        ? Math.max(0, small.totalStrikes - small.initialTotalStrikes)
+        : small.totalStrikes;
+      big.totalStrikes += netNew;
+      // Propagate ancestry when the correction didn't apply this merge (sibling
+      // merges and third-party absorptions). If big later re-merges into any
+      // ancestor that was in small's lineage, the combined initialTotalStrikes
+      // baseline ensures the double-count correction covers the full overlap.
+      if (!small.splitLineage.includes(big.key) && small.splitLineage.length > 0) {
+        big.initialTotalStrikes += small.initialTotalStrikes;
+        for (const ancestor of small.splitLineage) {
+          if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+        }
+      }
       for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
       for (const s of small.allStrikes) big.allStrikes.push(s);
       if (big.allStrikes.length > ALL_STRIKES_MAX) {
@@ -497,6 +540,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);
         big.keepEvery *= 2;
       }
+      return netNew;
     }
 
     // Phase 1: merge matched pairs — avoids the cycle where removing one matched
@@ -512,7 +556,12 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             if (kmBetween(a.lat, a.lon, b.lat, b.lon) >= TRACKER_MERGE_KM) continue;
             const big = a.peakCount >= b.peakCount ? a : b;
             const small = a.peakCount >= b.peakCount ? b : a;
-            absorbInto(big, small);
+            // Capture small's identity before absorption in case the event needs it.
+            const smallKey1 = small.key, smallCity1 = small.city, smallCc1 = small.cc;
+            // Capture big's pre-adoption identity (city/cc won't change inside absorbInto,
+            // but key may change below, so capture here for the event payload).
+            const bigKey1 = big.key, bigCity1 = big.city, bigCc1 = big.cc;
+            const netNew1 = absorbInto(big, small);
             matched.delete(small);
             trackedStorms.splice(trackedStorms.indexOf(small), 1);
             // If the loser had a DB entry but the winner doesn't, adopt its key so
@@ -520,9 +569,19 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             if (small.inDb && !big.inDb) {
               big.key = small.key;
               big.inDb = true;
-              // small.key is now big's key — don't delete the DB row
+              // Patch every storm whose splitLineage references big's old key so
+              // the ancestry chain stays valid after the identity change.
+              for (const st of trackedStorms) {
+                const i = st.splitLineage.indexOf(bigKey1);
+                if (i !== -1) st.splitLineage[i] = big.key;
+              }
+              // small.key is now big's key — don't delete the DB row.
+              // Record merge on the new canonical key; the "other" storm was big's old identity.
+              try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, netNew1); } catch { /* non-fatal */ }
             } else {
               if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
+              // big.key is already the canonical key.
+              try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, netNew1); } catch { /* non-fatal */ }
             }
             anyMerged = true;
             break outer;
@@ -536,18 +595,55 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       if (matched.has(st) || nowMs - st.lastSeen > STORM_DROP_MS) continue;
       for (const m of matched) {
         if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= TRACKER_MERGE_KM) continue;
-        absorbInto(m, st);
+        // Capture identities before absorption, same rationale as Phase 1.
+        const stKey2 = st.key, stCity2 = st.city, stCc2 = st.cc;
+        const mKey2 = m.key, mCity2 = m.city, mCc2 = m.cc;
+        const netNew2 = absorbInto(m, st);
         trackedStorms.splice(trackedStorms.indexOf(st), 1);
         // If the absorbed stray had a DB entry but the winner doesn't, adopt its key
         // so the existing TRACKING link continues to work without a 404 gap.
         if (st.inDb && !m.inDb) {
           m.key = st.key;
           m.inDb = true;
-          // st.key is now m's key — don't delete the DB row
+          // Patch splitLineage refs so the ancestry chain stays valid.
+          for (const survivor of trackedStorms) {
+            const i = survivor.splitLineage.indexOf(mKey2);
+            if (i !== -1) survivor.splitLineage[i] = m.key;
+          }
+          // st.key is now m's key — don't delete the DB row.
+          // Record merge on the new canonical key; the "other" storm was m's old identity.
+          try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, netNew2); } catch { /* non-fatal */ }
         } else {
           if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
+          // m.key is already the canonical key.
+          try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, netNew2); } catch { /* non-fatal */ }
         }
         break;
+      }
+    }
+
+    // Split detection: a fresh storm that survived Phase 1/2 consolidation and is
+    // within SPLIT_DETECT_KM of an existing (pre-existing) matched storm is likely
+    // a cluster that physically split off from that system.
+    // We record a split event on the parent and mark the fresh storm so that if it
+    // later re-merges back into the parent, only its net-new strikes are added.
+    const SPLIT_DETECT_KM = 200;
+    for (const freshSt of freshThisPass) {
+      if (!matched.has(freshSt) || freshSt.splitLineage.length > 0) continue;
+      let nearestParent: TrackedStorm | null = null;
+      let nearestKm = Infinity;
+      for (const st of matched) {
+        if (st === freshSt || freshThisPass.has(st)) continue;
+        const km = kmBetween(freshSt.lat, freshSt.lon, st.lat, st.lon);
+        if (km < nearestKm && km < SPLIT_DETECT_KM) { nearestKm = km; nearestParent = st; }
+      }
+      if (nearestParent) {
+        // Inherit the parent's full ancestry chain and append the parent's key,
+        // so this storm can be recognised as a descendant of any ancestor in the chain.
+        freshSt.splitLineage = [...nearestParent.splitLineage, nearestParent.key];
+        try {
+          recordStormEvent(nearestParent.key, 'split', nowMs, freshSt.key, freshSt.city, freshSt.cc, null);
+        } catch { /* non-fatal */ }
       }
     }
 
@@ -615,6 +711,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   try {
     pruneGridStrikes();
     pruneStormStrikes();
+    pruneStormEvents();
   } catch (err) { console.error('[db] prune failed:', err); }
 }, 60 * 60 * 1000);
 

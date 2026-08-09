@@ -110,6 +110,17 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_gs_latlon ON grid_strikes(lat, lon);
     CREATE INDEX IF NOT EXISTS idx_gs_time ON grid_strikes(strike_time);
     DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-3 days') * 1000;
+    CREATE TABLE IF NOT EXISTS storm_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      storm_key TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      related_key TEXT,
+      related_city TEXT,
+      related_cc TEXT,
+      strikes_absorbed INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_storm_events_key ON storm_events(storm_key, ts DESC);
   `);
   // Migrations for databases created before the replay / storm-tracking features
   const migrations = [
@@ -946,4 +957,51 @@ export function getGridAreaPage(
     'SELECT id, strike_time, lat, lon FROM grid_strikes WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? ORDER BY strike_time DESC LIMIT ? OFFSET ?'
   ).all(minLat, maxLat, minLon, maxLon, limit, offset) as Array<{ id: number; strike_time: number; lat: number; lon: number }>;
   return { strikes, total: n };
+}
+
+// ── Storm events (merge / split log) ──────────────────────────────────────
+export interface StormEvent {
+  id: number;
+  stormKey: string;
+  eventType: 'merge' | 'split';
+  ts: number;
+  relatedKey: string | null;
+  relatedCity: string | null;
+  relatedCc: string | null;
+  strikesAbsorbed: number | null;
+}
+
+export function recordStormEvent(
+  stormKey: string,
+  eventType: 'merge' | 'split',
+  ts: number,
+  relatedKey: string | null = null,
+  relatedCity: string | null = null,
+  relatedCc: string | null = null,
+  strikesAbsorbed: number | null = null,
+): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO storm_events (storm_key, event_type, ts, related_key, related_city, related_cc, strikes_absorbed)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(stormKey, eventType, ts, relatedKey, relatedCity, relatedCc, strikesAbsorbed);
+}
+
+export function getStormEvents(stormKey: string, limit = 100): StormEvent[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT id, storm_key AS stormKey, event_type AS eventType, ts,
+           related_key AS relatedKey, related_city AS relatedCity,
+           related_cc AS relatedCc, strikes_absorbed AS strikesAbsorbed
+    FROM storm_events
+    WHERE storm_key = ?
+    ORDER BY ts DESC
+    LIMIT ?
+  `).all(stormKey, limit) as StormEvent[];
+}
+
+/** Prune storm_events rows older than 30 days (called from hourly maintenance) */
+export function pruneStormEvents(): void {
+  const db = getDb();
+  db.prepare('DELETE FROM storm_events WHERE ts < ?').run(Date.now() - 30 * 24 * 60 * 60 * 1000);
 }
