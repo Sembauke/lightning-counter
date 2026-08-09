@@ -425,8 +425,8 @@ export function upsertStorms(storms: BiggestStorm[]): void {
       strikes = CASE
         WHEN excluded.strikes IS NULL THEN storms.strikes
         WHEN storms.strikes IS NULL THEN excluded.strikes
-        WHEN CAST(json_extract(excluded.strikes,'$[0][2]') AS INTEGER) <=
-             CAST(json_extract(storms.strikes,'$[0][2]') AS INTEGER) THEN excluded.strikes
+        WHEN json_array_length(excluded.strikes) >= json_array_length(COALESCE(storms.strikes, '[]'))
+             THEN excluded.strikes
         ELSE storms.strikes
       END,
       country_path = excluded.country_path
@@ -497,7 +497,7 @@ export function getBiggestStormPerDay(): StormLogRow[] {
       FROM storms
     )
     WHERE rn = 1
-    ORDER BY date DESC
+    ORDER BY COALESCE(totalCount, count) DESC
   `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }

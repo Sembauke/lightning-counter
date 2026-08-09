@@ -839,6 +839,7 @@ html, body {
 .records-body {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 1.25rem 1.5rem 2rem;
 }
 
@@ -899,6 +900,386 @@ html, body {
 }
 
 /* ── Daily best storms ── */
+/* ── Records list (rl-*) ─────────────────────────────────────────────── */
+.rl-list {
+  display: flex;
+  flex-direction: column;
+  max-width: 980px;
+}
+
+.rl-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  /* [flag+rank] [name] [meta] */
+  align-items: center;
+  column-gap: 0.8rem;
+  padding: 0.65rem 0.25rem;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s;
+}
+.rl-row:first-child { border-top: 1px solid rgba(255,255,255,0.07); }
+.rl-row:hover { background: rgba(255,220,0,0.04); }
+
+/* when rank is shown: [rank] [flag] [name] [meta] */
+.rl-row:has(.rl-rank) {
+  grid-template-columns: 2.75rem auto 1fr auto;
+}
+
+.rl-rank {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.rl-flag {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.rl-name {
+  font-size: 0.88rem;
+  color: #e0e0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.rl-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.08rem;
+  flex-shrink: 0;
+}
+
+.rl-date {
+  font-family: 'Courier New', monospace;
+  font-size: 0.7rem;
+  color: #555;
+  white-space: nowrap;
+}
+
+.rl-stats {
+  font-size: 0.75rem;
+  color: #888;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .rl-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "flag name"
+      "flag stats";
+    row-gap: 0.12rem;
+    column-gap: 0.55rem;
+    align-items: start;
+  }
+  .rl-row:has(.rl-rank) {
+    grid-template-columns: 2.25rem auto 1fr;
+    grid-template-areas:
+      "rank flag name"
+      "rank flag stats";
+  }
+  .rl-rank  { grid-area: rank; padding-top: 0.1rem; }
+  .rl-flag  { grid-area: flag; padding-top: 0.15rem; }
+  .rl-name  { grid-area: name; }
+  .rl-meta  { grid-area: stats; align-items: flex-start; flex-direction: row; gap: 0.4rem; flex-wrap: wrap; }
+  .rl-date  { display: none; }
+  .rl-stats { font-size: 0.72rem; color: #777; white-space: normal; }
+}
+
+/* ── Storm list (sl-*) — shared hof-* layout with expand ────────────── */
+.sl-item { display: flex; flex-direction: column; }
+
+.sl-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-left: 3px solid transparent;
+  transition: background 0.12s;
+}
+.sl-row:hover { background: rgba(255,220,0,0.04); }
+.sl-row--live {
+  border-left-color: rgba(255,220,0,0.55);
+  background: rgba(255,220,0,0.02);
+}
+.sl-row--live:hover { background: rgba(255,220,0,0.06); }
+
+.sl-item.flash .sl-row { animation: flash-row 1s ease-out; }
+
+.sl-head {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  text-decoration: none;
+  padding: 0.85rem 1.5rem 0.85rem 1.25rem;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.hof-name-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.22rem;
+}
+
+.sl-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.sl-expand { padding: 0 1.5rem 1.25rem; }
+
+@media (max-width: 640px) {
+  .sl-head { padding: 0.75rem 0.75rem 0.75rem 0.85rem; gap: 0.75rem; }
+  .sl-expand { padding: 0 0.75rem 1rem; }
+}
+
+/* ── Records filter bar ──────────────────────────────────────────────── */
+.hof-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  padding: 0.65rem 1.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.015);
+}
+
+.hof-filter-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: default;
+}
+
+.hof-filter-label {
+  font-size: 0.7rem;
+  font-family: 'Courier New', monospace;
+  color: rgba(255,220,0,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.hof-filter-unit {
+  font-size: 0.7rem;
+  font-family: 'Courier New', monospace;
+  color: rgba(255,255,255,0.3);
+}
+
+.hof-filter-input {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  color: rgba(255,220,0,0.9);
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  width: 5rem;
+  outline: none;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.hof-filter-input::-webkit-outer-spin-button,
+.hof-filter-input::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; }
+.hof-filter-input:focus {
+  border-color: rgba(255,220,0,0.35);
+}
+.hof-filter-input::placeholder { color: rgba(255,255,255,0.2); }
+
+.hof-filter-clear {
+  background: rgba(255,80,80,0.1);
+  border: 1px solid rgba(255,80,80,0.25);
+  border-radius: 4px;
+  color: rgba(255,120,120,0.8);
+  font-family: 'Courier New', monospace;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.hof-filter-clear:hover {
+  background: rgba(255,80,80,0.2);
+}
+
+.hof-filter-count {
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  color: rgba(255,220,0,0.5);
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .hof-filters {
+    padding: 0.55rem 0.75rem;
+    gap: 0.45rem 1rem;
+  }
+  .hof-filter-label { font-size: 0.65rem; }
+  .hof-filter-input { width: 4rem; font-size: 0.72rem; }
+}
+
+/* ── Hall of Fame leaderboard (records page) ─────────────────────────── */
+.hof-list {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 3rem;
+}
+
+.hof-row {
+  display: grid;
+  grid-template-columns: 3rem 1fr auto;
+  align-items: center;
+  column-gap: 1.25rem;
+  padding: 0.85rem 1.5rem 0.85rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.12s;
+  outline: none;
+}
+.hof-list--norank .hof-row { grid-template-columns: 1fr auto; }
+.hof-row:hover { background: rgba(255,220,0,0.04); }
+
+.hof-row--gold   { border-left-color: hsl(45,100%,55%);  background: rgba(255,210,0,0.035); }
+.hof-row--silver { border-left-color: hsl(0,0%,68%); }
+.hof-row--bronze { border-left-color: hsl(28,65%,50%); }
+.hof-row--top10  { border-left-color: rgba(255,220,0,0.22); }
+
+.hof-row--gold:hover   { background: rgba(255,210,0,0.07); }
+.hof-row--silver:hover { background: rgba(200,200,200,0.04); }
+.hof-row--bronze:hover { background: rgba(200,140,80,0.05); }
+
+.hof-rank {
+  font-family: 'Courier New', monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: right;
+  color: rgba(255,220,0,0.3);
+  white-space: nowrap;
+  user-select: none;
+}
+.hof-row--gold   .hof-rank { color: hsl(45,100%,62%); font-size: 0.95rem; }
+.hof-row--silver .hof-rank { color: hsl(0,0%,70%); }
+.hof-row--bronze .hof-rank { color: hsl(28,65%,58%); }
+.hof-row--top10  .hof-rank { color: rgba(255,220,0,0.5); }
+
+.hof-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.hof-name {
+  font-size: 0.9rem;
+  color: rgba(255,255,255,0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hof-row--gold .hof-name { color: #fff; font-weight: 700; font-size: 0.95rem; }
+
+.hof-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.3);
+  min-width: 0;
+}
+
+.hof-flags {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.hof-arrow {
+  color: rgba(255,220,0,0.35);
+  font-size: 0.65rem;
+}
+
+.hof-sub-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.55);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hof-sub-date { color: rgba(255,255,255,0.3); }
+
+.hof-count-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.hof-count {
+  font-family: 'Courier New', monospace;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: rgba(255,220,0,0.82);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.hof-row--gold .hof-count { font-size: 1.2rem; color: hsl(45,100%,68%); }
+
+.hof-count-label {
+  font-size: 0.62rem;
+  color: rgba(255,255,255,0.22);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .hof-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.75rem 0.75rem 0.75rem 0;
+  }
+  .hof-main { flex: 1; min-width: 0; }
+  .hof-rank { flex-shrink: 0; width: 2.4rem; text-align: right; font-size: 0.75rem; }
+  .hof-row--gold .hof-rank { font-size: 0.85rem; }
+  .hof-count-wrap { flex-shrink: 0; align-items: flex-end; }
+  .hof-name { font-size: 0.85rem; }
+  .hof-row--gold .hof-name { font-size: 0.88rem; }
+  .hof-count { font-size: 0.92rem; }
+  .hof-row--gold .hof-count { font-size: 1rem; }
+}
+
 /* ── Unified storm table (daily best / all-time) ─────────────────────── */
 .storm-table-section { margin-top: 2rem; }
 
@@ -911,7 +1292,7 @@ html, body {
 }
 
 .storm-table-select {
-  background: rgba(255,255,255,0.06);
+  background: #1a1a1a;
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 6px;
   color: #ddd;
@@ -925,17 +1306,20 @@ html, body {
   outline: none;
   transition: border-color 0.15s;
 }
+.storm-table-select option { background: #1a1a1a; color: #ddd; }
 .storm-table-select:hover { border-color: rgba(255,220,0,0.4); }
 .storm-table-select:focus { border-color: rgba(255,220,0,0.6); }
 
 .storm-table { display: flex; flex-direction: column; }
 
+/* day view:      [flags] [name─────────────] [meta] */
+/* alltime view:  [rank] [flags] [name──────] [meta] */
 .storm-table-row {
   display: grid;
-  grid-template-columns: 6rem 1fr;
-  align-items: start;
-  gap: 0.85rem;
-  padding: 0.65rem 0.3rem;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 0.75rem;
+  padding: 0.6rem 0.4rem;
   border-bottom: 1px solid rgba(255,255,255,0.06);
   text-decoration: none;
   color: inherit;
@@ -944,20 +1328,14 @@ html, body {
 .storm-table-row:hover { background: rgba(255,255,255,0.05); }
 
 .storm-table-row.has-rank {
-  grid-template-columns: 2.5rem 6rem 1fr;
+  grid-template-columns: 2.5rem auto 1fr auto;
 }
 
 .storm-table-rank {
   font-family: 'Courier New', monospace;
-  font-size: 0.78rem;
-  color: #666;
+  font-size: 0.75rem;
+  color: #555;
   text-align: right;
-}
-
-.storm-table-date {
-  font-family: 'Courier New', monospace;
-  font-size: 0.78rem;
-  color: #888;
   white-space: nowrap;
 }
 
@@ -965,33 +1343,61 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.2rem;
-  flex-wrap: wrap;
-}
-
-.storm-table-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.18rem;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .storm-table-name {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: #e0e0e0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.storm-table-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  flex-shrink: 0;
+}
+
+.storm-table-date {
+  font-family: 'Courier New', monospace;
+  font-size: 0.72rem;
+  color: #666;
+  white-space: nowrap;
 }
 
 .storm-table-stats {
-  font-size: 0.78rem;
-  color: #999;
+  font-size: 0.75rem;
+  color: #888;
+  white-space: nowrap;
 }
 
 @media (max-width: 640px) {
-  .storm-table-row { grid-template-columns: 1fr; }
-  .storm-table-row.has-rank { grid-template-columns: 2rem 1fr; }
-  .storm-table-date { display: none; }
+  .storm-table-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "flags name"
+      "flags meta";
+    row-gap: 0.15rem;
+    column-gap: 0.6rem;
+    align-items: start;
+  }
+  .storm-table-row.has-rank {
+    grid-template-columns: 2rem auto 1fr;
+    grid-template-areas:
+      "rank flags name"
+      "rank flags meta";
+  }
+  .storm-table-flags { grid-area: flags; padding-top: 0.15rem; flex-shrink: 0; }
+  .storm-table-name  { grid-area: name; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .storm-table-meta  { grid-area: meta; flex-direction: row; align-items: baseline; justify-content: flex-start; gap: 0; flex-wrap: nowrap; min-width: 0; }
+  .storm-table-rank  { grid-area: rank; }
+  .storm-table-date  { display: none; }
+  .storm-table-stats { white-space: nowrap; font-size: 0.72rem; color: #777; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 }
 
 /* ── Storm detail page ── */
@@ -1350,27 +1756,6 @@ html, body {
   border-color: rgba(255,80,80,0.7);
   background: rgba(255,60,60,0.09);
 }
-.storm-log-row.pinned {
-  border-color: rgba(255,180,0,0.5);
-  background: rgba(255,180,0,0.07);
-}
-.storm-pin-btn {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.4rem;
-  background: none;
-  border: none;
-  border-right: 1px solid rgba(255,220,0,0.1);
-  cursor: pointer;
-  font-size: 0.95rem;
-  opacity: 0.35;
-  transition: opacity 0.15s;
-  padding: 0;
-}
-.storm-log-row:hover .storm-pin-btn,
-.storm-log-row.pinned .storm-pin-btn { opacity: 1; }
 .storm-log-body {
   flex: 1 1 auto;
   min-width: 0;
@@ -1446,21 +1831,22 @@ html, body {
   color: rgba(255,220,120,0.6);
   font-variant-numeric: tabular-nums;
 }
+/* ── LIVE badge ──────────────────────────────────────────────────────── */
 .storm-live-tag {
   display: inline-flex;
   align-items: center;
-  gap: 0.32rem;
-  padding: 0.2rem 0.52rem;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem 0.2rem 0.45rem;
+  background: rgba(255, 200, 0, 0.08);
+  border: 1px solid rgba(255, 210, 0, 0.3);
   border-radius: 3px;
-  background: rgba(215, 35, 35, 0.12);
-  border: 1px solid rgba(215, 35, 35, 0.3);
-  color: #f07070;
-  font-size: 0.7rem;
+  color: rgba(255, 225, 0, 0.9);
+  font-family: 'Courier New', monospace;
+  font-size: 0.64rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  text-decoration: none;
+  letter-spacing: 0.13em;
   white-space: nowrap;
-  animation: live-pulse 1.8s ease-in-out infinite;
+  text-decoration: none;
 }
 .storm-live-tag::before {
   content: '';
@@ -1469,24 +1855,34 @@ html, body {
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
+  animation: live-breathe 1.5s ease-in-out infinite;
 }
-.storm-live-tag:hover { background: rgba(215, 35, 35, 0.22); }
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+@keyframes live-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.25; transform: scale(0.55); }
 }
+
+/* ── Rank — right-side column above strike count ─────────────────────── */
 .storm-log-rank {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.12rem 0.44rem;
-  border-radius: 3px;
-  font-size: 0.7rem;
-  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.22rem;
+  margin-bottom: 0.18rem;
+  font-family: 'Courier New', monospace;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
   white-space: nowrap;
-  /* color, background, borderColor supplied by rankStyle() inline */
-  border: 1px solid transparent;
+}
+.storm-log-rank-num {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 220, 0, 0.75);
+  letter-spacing: 0.01em;
+}
+.storm-log-rank-label {
+  font-size: 0.57rem;
+  color: rgba(255, 255, 255, 0.25);
+  letter-spacing: 0.05em;
 }
 .storm-log-badges .storm-chevron { color: rgba(255,220,0,0.4); font-size: 0.85rem; }
 
@@ -1851,13 +2247,15 @@ html, body {
 .storm-row-open td { background: rgba(255,220,0,0.05); }
 
 .storm-chevron {
-  margin-left: 0.35rem;
-  font-size: 0.6rem;
-  color: rgba(255,220,0,0.3);
+  flex-shrink: 0;
+  font-size: 1rem;
+  color: rgba(255,220,0,0.4);
   display: inline-block;
-  transition: transform 0.15s;
+  transition: transform 0.18s, color 0.18s;
+  line-height: 1;
+  padding-left: 1rem;
 }
-.storm-chevron.open { transform: rotate(180deg); color: #ffe040; }
+.storm-chevron.open { transform: rotate(180deg); color: rgba(255,220,0,0.85); }
 
 .storm-detail-row td {
   padding: 0;
