@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, type ChangeEvent, type SyntheticEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { useSound } from '../context/SoundContext';
 import 'leaflet/dist/leaflet.css';
@@ -9,12 +9,8 @@ import type { StormStrike } from '../lib/db';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
 import { ageColor } from '../lib/ageGradient';
 import { fmtClock } from '../lib/format';
+import { computeReplayDurationMs, computeFreshMs, cutoffForProgress, progressForCutoff } from '../lib/replayTiming';
 
-// Playback lasts ~2 s per storm-minute, clamped so short storms stay watchable
-// and multi-hour storms don't drag
-const REPLAY_MS_MIN = 10_000;
-const REPLAY_MS_MAX = 40_000;
-const REPLAY_MS_PER_STORM_MIN = 2_000;
 // In the static view, strikes from the storm's last 20 s are drawn bright with
 // a red border, matching the fresh-strike treatment on the live map. During
 // playback freshness follows real time instead (see play()).
@@ -47,6 +43,18 @@ function playTick(ctx: AudioContext) {
 interface Projected { x: number; y: number; time: number }
 interface Ring { x: number; y: number; start: number }
 
+// `proj` is sorted ascending by time — binary search for the first entry
+// strictly after `cutoff` so seeking can resync ring bookkeeping in O(log n)
+// instead of rescanning from the start on every drag event.
+function firstIndexAfter(proj: Projected[], cutoff: number): number {
+  let lo = 0, hi = proj.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (proj[mid].time <= cutoff) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
 export default function StormReplayMap({
   strikes,
   appendedStrikes,
@@ -60,6 +68,7 @@ export default function StormReplayMap({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef<HTMLSpanElement>(null);
   const timeTextRef = useRef<HTMLSpanElement>(null);
+  const progressInputRef = useRef<HTMLInputElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const projectedRef = useRef<Projected[]>([]);
   const ringsRef = useRef<Ring[]>([]);
@@ -67,6 +76,13 @@ export default function StormReplayMap({
   const liveRafRef = useRef<number | null>(null);
   const appendedLengthRef = useRef(0);
   const maxTimeRef = useRef(-Infinity);
+  // Index into projectedRef.current of the next strike that hasn't yet triggered
+  // a ring burst during forward playback; resynced (without bursting) on seek.
+  const nextIdxRef = useRef(0);
+  const startRef = useRef(0);
+  // Whether playback was running when the user grabbed the scrubber, so
+  // releasing it resumes instead of leaving the replay paused.
+  const wasPlayingRef = useRef(false);
   const { sound } = useSound();
   const soundRef = useRef(sound);
   soundRef.current = sound;
@@ -89,6 +105,27 @@ export default function StormReplayMap({
   // strikes are visible even when the storm lasted longer than GRADIENT_REF_MS.
   // The floor ensures ageColor(t) is never called with t<0.12 (near-invisible).
   const gradientRef = Math.max(GRADIENT_REF_MS, maxTime - minTime);
+
+  // Playback timing, derived once per strike set so the scrubber can seek
+  // before the user ever presses play, not just while play() is running.
+  const replayMeta = useMemo(() => {
+    const times = strikes.map(s => s[2]).sort((a, b) => a - b);
+    // Skip isolated early strikes: find the first index where the gap to the
+    // NEXT strike is less than 2 hours — the storm is "continuous" from there.
+    // This prevents a single outlier strike 11 hours before the main activity
+    // from padding the replay with empty screen.
+    let replayMinTime = times[0] ?? minTime;
+    const GAP_MS = 2 * 60 * 60 * 1000;
+    for (let i = 0; i < times.length - 1; i++) {
+      if (times[i + 1] - times[i] < GAP_MS) { replayMinTime = times[i]; break; }
+    }
+    const spanMs = Math.max(1, maxTime - replayMinTime);
+    const replayMs = computeReplayDurationMs(spanMs);
+    const freshMs = computeFreshMs(spanMs, replayMs);
+    // Sample rings evenly across the storm instead of ringing every strike
+    const ringEvery = Math.max(1, Math.round(times.length / TARGET_RING_COUNT));
+    return { replayMinTime, spanMs, replayMs, freshMs, ringEvery };
+  }, [strikes, minTime, maxTime]);
 
   // The storm's 5-minute window in the viewer's local time
   const timeRange = `${fmtClock(minTime)} – ${fmtClock(maxTime)}`;
@@ -284,45 +321,45 @@ export default function StormReplayMap({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive]);
 
-  const play = () => {
+  // Draws the frame at `cutoff` and updates the time label + scrubber position.
+  // `spawnRings` is true only during forward auto-playback ticks — a manual
+  // seek just shows the state at that moment, it doesn't replay ring bursts
+  // for every strike jumped over.
+  const renderAt = (cutoff: number, now: number, spawnRings: boolean) => {
     const proj = projectedRef.current;
-    if (playing || proj.length === 0) return;
-    setPlaying(true);
-    ringsRef.current = [];
-
-    // Skip isolated early strikes: find the first index where the gap to the
-    // NEXT strike is less than 2 hours — the storm is "continuous" from there.
-    // This prevents a single outlier strike 11 hours before the main activity
-    // from padding the replay with ~17 s of empty screen.
-    let replayStartIdx = 0;
-    const GAP_MS = 2 * 60 * 60 * 1000;
-    for (let i = 0; i < proj.length - 1; i++) {
-      if (proj[i + 1].time - proj[i].time < GAP_MS) { replayStartIdx = i; break; }
+    const { replayMinTime, freshMs, ringEvery } = replayMeta;
+    if (spawnRings) {
+      while (nextIdxRef.current < proj.length && proj[nextIdxRef.current].time <= cutoff) {
+        const idx = nextIdxRef.current;
+        if (idx % ringEvery === 0 && ringsRef.current.length < MAX_RINGS_REPLAY) {
+          ringsRef.current.push({ x: proj[idx].x, y: proj[idx].y, start: now + Math.random() * 150 });
+        }
+        nextIdxRef.current++;
+      }
+    } else {
+      nextIdxRef.current = firstIndexAfter(proj, cutoff);
     }
-    const replayMinTime = proj[replayStartIdx].time;
+    draw(cutoff, now, freshMs, cutoff - GRADIENT_REF_MS);
+    if (timeTextRef.current) timeTextRef.current.textContent = fmtClock(cutoff, true);
+    if (progressInputRef.current) {
+      progressInputRef.current.value = String(progressForCutoff(cutoff, replayMinTime, maxTime));
+    }
+  };
 
-    let nextIdx = replayStartIdx;
-    const start = performance.now();
-    const spanMs = Math.max(1, maxTime - replayMinTime);
-    const replayMs = Math.min(REPLAY_MS_MAX, Math.max(REPLAY_MS_MIN, (spanMs / 60_000) * REPLAY_MS_PER_STORM_MIN));
-    // Sample rings evenly across the storm instead of ringing every strike
-    const ringEvery = Math.max(1, Math.round(proj.length / TARGET_RING_COUNT));
-    // During playback a strike counts as "fresh" for ~1.2 real seconds
-    const freshMs = (spanMs / replayMs) * 1200;
+  const startPlaybackFrom = (progress: number) => {
+    const proj = projectedRef.current;
+    if (proj.length === 0) return;
+    const { replayMinTime, replayMs } = replayMeta;
+    ringsRef.current = [];
+    const p0 = Math.min(1, Math.max(0, progress));
+    startRef.current = performance.now() - p0 * replayMs;
+    nextIdxRef.current = firstIndexAfter(proj, cutoffForProgress(p0, replayMinTime, maxTime));
+    setPlaying(true);
 
     const tick = (now: number) => {
-      const p = Math.min(1, (now - start) / replayMs);
-      const cutoff = replayMinTime + p * (maxTime - replayMinTime);
-
-      while (nextIdx < proj.length && proj[nextIdx].time <= cutoff) {
-        if (nextIdx % ringEvery === 0 && ringsRef.current.length < MAX_RINGS_REPLAY) {
-          ringsRef.current.push({ x: proj[nextIdx].x, y: proj[nextIdx].y, start: now + Math.random() * 150 });
-        }
-        nextIdx++;
-      }
-
-      draw(cutoff, now, freshMs, cutoff - GRADIENT_REF_MS);
-      if (timeTextRef.current) timeTextRef.current.textContent = fmtClock(cutoff, true);
+      const p = Math.min(1, (now - startRef.current) / replayMs);
+      const cutoff = cutoffForProgress(p, replayMinTime, maxTime);
+      renderAt(cutoff, now, true);
 
       if (p < 1 || ringsRef.current.length > 0) {
         rafRef.current = requestAnimationFrame(tick);
@@ -330,10 +367,33 @@ export default function StormReplayMap({
         rafRef.current = null;
         draw(maxTime, performance.now());
         if (timeTextRef.current) timeTextRef.current.textContent = timeRange;
+        if (progressInputRef.current) progressInputRef.current.value = '1';
         setPlaying(false);
       }
     };
     rafRef.current = requestAnimationFrame(tick);
+  };
+
+  const play = () => {
+    if (playing) return;
+    const current = progressInputRef.current ? Number(progressInputRef.current.value) : 0;
+    startPlaybackFrom(current >= 1 ? 0 : current);
+  };
+
+  // Scrubbing: grabbing the handle pauses auto-playback (remembering whether
+  // it was running); dragging redraws the map live; releasing resumes
+  // playback from the dropped position if it had been running.
+  const scrubStart = () => {
+    wasPlayingRef.current = playing;
+    if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  };
+  const scrubInput = (e: ChangeEvent<HTMLInputElement>) => {
+    const { replayMinTime } = replayMeta;
+    const cutoff = cutoffForProgress(Number(e.target.value), replayMinTime, maxTime);
+    renderAt(cutoff, performance.now(), false);
+  };
+  const scrubEnd = (e: SyntheticEvent<HTMLInputElement>) => {
+    if (wasPlayingRef.current) startPlaybackFrom(Number((e.target as HTMLInputElement).value));
   };
 
   return (
@@ -346,7 +406,26 @@ export default function StormReplayMap({
       </span>
       {isLive
         ? <span className="bsc-live-badge">● LIVE</span>
-        : <button className="bsc-replay-btn" onClick={play} disabled={playing}>▶ {t('replay')}</button>
+        : (
+          <div className="bsc-replay-controls">
+            <button className="bsc-replay-btn" onClick={play} disabled={playing}>▶ {t('replay')}</button>
+            <input
+              ref={progressInputRef}
+              className="bsc-replay-scrub"
+              type="range"
+              min={0}
+              max={1}
+              step={0.0005}
+              defaultValue={0}
+              aria-label={t('replay')}
+              onPointerDown={scrubStart}
+              onKeyDown={scrubStart}
+              onChange={scrubInput}
+              onPointerUp={scrubEnd}
+              onKeyUp={scrubEnd}
+            />
+          </div>
+        )
       }
     </div>
   );

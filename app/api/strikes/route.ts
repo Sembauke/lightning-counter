@@ -163,13 +163,10 @@ interface TrackedStorm {
   currentRate: number;
   inDb: boolean;
   // Full-life strike accumulation for the replay: passes overlap, so only
-  // strikes newer than lastStrikeTime get appended; keepEvery thins the
-  // stream once the array would outgrow ALL_STRIKES_MAX
+  // strikes newer than lastStrikeTime get appended
   allStrikes: StormStrike[];
   lastStrikeTime: number;
   totalStrikes: number;
-  keepEvery: number;
-  appendSeq: number;
   // Ordered list of every country code the storm has passed through
   countryCodes: string[];
   // Ordered ancestry chain of storm keys this storm split from, closest ancestor
@@ -280,8 +277,6 @@ function meanPos(points: Array<{ lat: number; lon: number }>): { lat: number; lo
   return { lat: lat / points.length, lon: lon / points.length };
 }
 const STRIKE_SAMPLE_MAX = 4000;
-// Cap on a storm's accumulated replay strikes; halved (and thinned) on overflow
-const ALL_STRIKES_MAX = 24_000;
 // Persisted on globalThis so hot-reloads in dev don't reset it and create
 // duplicate in-memory identities for the same physical storm.
 let stormSeq: number = (globalThis as any)._stormSeq ?? 0;
@@ -338,17 +333,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   for (const m of members) {
     if (m.time < st.lastStrikeTime) continue;
     st.totalStrikes++;
-    if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
+    st.allStrikes.push(roundPt(m));
     if (m.time > newest) newest = m.time;
   }
   st.lastStrikeTime = newest;
-  if (st.allStrikes.length > ALL_STRIKES_MAX) {
-    // Thin to a uniform temporal spread: sort by time, keep every other,
-    // preserving even density across the storm's full life.
-    st.allStrikes.sort((a, b) => a[2] - b[2]);
-    st.allStrikes = st.allStrikes.filter((_, i) => i % 2 === 0);
-    st.keepEvery *= 2;
-  }
 }
 
 (globalThis as any)._iv_dbFlush = setInterval(() => {
@@ -483,7 +471,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           lastSeen: nowMs,
           currentRate: cell.rate,
           inDb: false,
-          allStrikes: [], lastStrikeTime: 0, totalStrikes: 0, keepEvery: 1, appendSeq: 0,
+          allStrikes: [], lastStrikeTime: 0, totalStrikes: 0,
           countryCodes: Object.keys(ccCounts),
           splitLineage: [],
           initialTotalStrikes: 0,
@@ -515,19 +503,46 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
       }
       big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
-      // If small's ancestry chain includes big's key it is a descendant of big
-      // (direct child, grandchild, etc.). Its initialTotalStrikes came from big's
-      // territory and were already counted there, so only the net-new strikes
-      // accumulated after the split are added to avoid double-counting.
-      const netNew = small.splitLineage.includes(big.key)
-        ? Math.max(0, small.totalStrikes - small.initialTotalStrikes)
-        : small.totalStrikes;
+      // Three ancestry cases:
+      //
+      // 1. Normal re-merge — small is a descendant of big (small.splitLineage
+      //    contains big.key). The overlap already counted in big equals
+      //    small.initialTotalStrikes; add only what small accumulated after the split.
+      //
+      // 2. Reverse re-merge — big is a descendant of small (big.splitLineage
+      //    contains small.key, e.g. a child that outgrew its parent). Big's territory
+      //    was carved from small's; the overlap equals big.initialTotalStrikes
+      //    (which may have been bumped by prior sibling absorptions). Subtract that.
+      //
+      // 3. No ancestry — independent, sibling, or third-party. Add everything, then
+      //    propagate small's lineage into big so a future re-merge into any shared
+      //    ancestor still carries the correct combined baseline.
+      const isDescendantOfBig = small.splitLineage.includes(big.key);
+      const isAncestorOfBig   = big.splitLineage.includes(small.key);
+      let netNew: number;
+      if (isDescendantOfBig) {
+        netNew = Math.max(0, small.totalStrikes - small.initialTotalStrikes);
+      } else if (isAncestorOfBig) {
+        netNew = Math.max(0, small.totalStrikes - big.initialTotalStrikes);
+        // After absorbing the parent, big's overlap baseline with the grandparent
+        // level becomes the parent's own initTotal (what the grandparent counted in
+        // the parent's territory). Overwrite rather than bump — any excess already in
+        // big.initialTotalStrikes came from sibling absorptions at the parent level,
+        // which the grandparent has NOT counted and should receive as net-new.
+        big.initialTotalStrikes = small.initialTotalStrikes;
+        // Inherit the absorbed ancestor's own lineage so any great-grandparent
+        // that later absorbs big can still apply the correction. Also remove
+        // small.key from big's lineage — it's now consumed, not a live ancestor.
+        for (const ancestor of small.splitLineage) {
+          if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+        }
+        const consumedIdx = big.splitLineage.indexOf(small.key);
+        if (consumedIdx !== -1) big.splitLineage.splice(consumedIdx, 1);
+      } else {
+        netNew = small.totalStrikes;
+      }
       big.totalStrikes += netNew;
-      // Propagate ancestry when the correction didn't apply this merge (sibling
-      // merges and third-party absorptions). If big later re-merges into any
-      // ancestor that was in small's lineage, the combined initialTotalStrikes
-      // baseline ensures the double-count correction covers the full overlap.
-      if (!small.splitLineage.includes(big.key) && small.splitLineage.length > 0) {
+      if (!isDescendantOfBig && !isAncestorOfBig && small.splitLineage.length > 0) {
         big.initialTotalStrikes += small.initialTotalStrikes;
         for (const ancestor of small.splitLineage) {
           if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
@@ -535,11 +550,6 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       }
       for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
       for (const s of small.allStrikes) big.allStrikes.push(s);
-      if (big.allStrikes.length > ALL_STRIKES_MAX) {
-        big.allStrikes.sort((a, b) => a[2] - b[2]);
-        big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);
-        big.keepEvery *= 2;
-      }
       return netNew;
     }
 
@@ -580,6 +590,12 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
               try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, netNew1); } catch { /* non-fatal */ }
             } else {
               if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
+              // Patch any surviving storm that references the absorbed storm's key in
+              // its splitLineage — it is now carried by big, so redirect to big.key.
+              for (const st of trackedStorms) {
+                const i = st.splitLineage.indexOf(smallKey1);
+                if (i !== -1) st.splitLineage[i] = big.key;
+              }
               // big.key is already the canonical key.
               try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, netNew1); } catch { /* non-fatal */ }
             }
@@ -615,6 +631,11 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, netNew2); } catch { /* non-fatal */ }
         } else {
           if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
+          // Patch surviving storms that referenced the absorbed stray's key.
+          for (const survivor of trackedStorms) {
+            const i = survivor.splitLineage.indexOf(stKey2);
+            if (i !== -1) survivor.splitLineage[i] = m.key;
+          }
           // m.key is already the canonical key.
           try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, netNew2); } catch { /* non-fatal */ }
         }

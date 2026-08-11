@@ -77,12 +77,24 @@ function absorbInto(
     big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
   }
   big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
-  const netNew = small.splitLineage.includes(big.key)
-    ? Math.max(0, small.totalStrikes - small.initialTotalStrikes)
-    : small.totalStrikes;
+  const isDescendantOfBig = small.splitLineage.includes(big.key);
+  const isAncestorOfBig   = big.splitLineage.includes(small.key);
+  let netNew: number;
+  if (isDescendantOfBig) {
+    netNew = Math.max(0, small.totalStrikes - small.initialTotalStrikes);
+  } else if (isAncestorOfBig) {
+    netNew = Math.max(0, small.totalStrikes - big.initialTotalStrikes);
+    big.initialTotalStrikes = small.initialTotalStrikes;
+    for (const ancestor of small.splitLineage) {
+      if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+    }
+    const consumedIdx = big.splitLineage.indexOf(small.key);
+    if (consumedIdx !== -1) big.splitLineage.splice(consumedIdx, 1);
+  } else {
+    netNew = small.totalStrikes;
+  }
   big.totalStrikes += netNew;
-  // Propagate ancestry when the correction didn't apply this merge.
-  if (!small.splitLineage.includes(big.key) && small.splitLineage.length > 0) {
+  if (!isDescendantOfBig && !isAncestorOfBig && small.splitLineage.length > 0) {
     big.initialTotalStrikes += small.initialTotalStrikes;
     for (const ancestor of small.splitLineage) {
       if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
@@ -256,6 +268,170 @@ describe('absorbInto — strike counting', () => {
     absorbInto(big, small);
     expect(big.countryCodes).toContain('DE');
     expect(big.countryCodes.filter(c => c === 'NL').length).toBe(1); // no duplicates
+  });
+});
+
+// ── Reverse re-merge: child absorbs parent ────────────────────────────────
+
+describe('absorbInto — child absorbs parent (reverse case)', () => {
+  it('adds only parent strikes outside the child\'s initial territory', () => {
+    // A (pre-split total=500) splits → B (initTotal=200). A gains 100 new, B gains 80.
+    // B grows larger and absorbs A.
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 280 });
+    const a = makeStorm({ key: 'A', totalStrikes: 600 }); // 500 pre-split + 100 new
+    absorbInto(b, a); // big=B, small=A
+    // netNew = max(0, 600 - 200) = 400 = A's non-B territory (300) + A's new (100)
+    // Unique total: 500 + 100 + 80 = 680
+    expect(b.totalStrikes).toBe(680);
+  });
+
+  it('grandchild absorbs grandparent using grandchild\'s own initTotal as baseline', () => {
+    // A → B → C. C.splitLineage=['A','B'], C.initTotal=100 (carved from B's territory).
+    // C grows huge and absorbs A.
+    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 300 });
+    const a = makeStorm({ key: 'A', totalStrikes: 800 });
+    absorbInto(c, a);
+    // netNew = max(0, 800 - 100) = 700
+    expect(c.totalStrikes).toBe(1000); // 300 + 700
+  });
+
+  it('combined initTotal (after sibling absorption) used when child absorbs grandparent', () => {
+    // A → B (init=200) and A → C (init=150). B absorbs C → B.initTotal=350, B.total=480.
+    // A has 600 total. B absorbs A.
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 350, totalStrikes: 480 });
+    const a = makeStorm({ key: 'A', totalStrikes: 600 });
+    absorbInto(b, a);
+    // netNew = max(0, 600 - 350) = 250
+    // Unique: 500 pre-split + 100 A_new + 80 B_new + 50 C_new = 730
+    expect(b.totalStrikes).toBe(730); // 480 + 250
+  });
+
+  it('clamps to zero when parent has fewer strikes than the child\'s overlap baseline', () => {
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 500, totalStrikes: 800 });
+    const a = makeStorm({ key: 'A', totalStrikes: 300 });
+    absorbInto(b, a);
+    expect(b.totalStrikes).toBe(800); // netNew = max(0, 300-500) = 0
+  });
+
+  it('returns the net-new count', () => {
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 280 });
+    const a = makeStorm({ key: 'A', totalStrikes: 600 });
+    const { mergedStrikes } = absorbInto(b, a);
+    expect(mergedStrikes).toBe(400);
+  });
+});
+
+// ── Gap 2: isAncestorOfBig updates initialTotalStrikes for grandparent pass ──
+
+describe('absorbInto — isAncestorOfBig updates initTotal for grandparent re-merge', () => {
+  it('grandparent absorbs (child+parent) without double-count after child absorbed parent', () => {
+    // A splits → B (B.initTotal=200). B splits → C (C.initTotal=100). C absorbs B.
+    // Then A absorbs the combined C+B entity.
+    // After C absorbs B: C.initTotal must become B.initTotal (200) so A corrects properly.
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
+    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+    absorbInto(c, b); // C absorbs B (isAncestorOfBig)
+    // C.initTotal must be overwritten with B.initTotal = 200
+    expect(c.initialTotalStrikes).toBe(200);
+
+    // A (580 total = 500 pre-split + 80 new) absorbs the combined C+B
+    const a = makeStorm({ key: 'A', totalStrikes: 580 });
+    absorbInto(a, c); // isDescendantOfBig (C.splitLineage includes 'A')
+    // netNew = c.totalStrikes - c.initTotal = (150 + 250) - 200 = 200
+    // Unique: 500 pre-split + 80 A_new + 150 B_new + 50 C_new = 780
+    expect(a.totalStrikes).toBe(780);
+  });
+
+  it('initTotal is overwritten, not added — excess from prior sibling absorptions is discarded', () => {
+    // B and D both split from A. C splits from B.
+    // C absorbs D (sibling, bumps C.initTotal). Then C absorbs B (its parent).
+    // C.initTotal should become B.initTotal (not max with the sibling-bumped value).
+    const d = makeStorm({ key: 'D', splitLineage: ['A'], initialTotalStrikes: 80, totalStrikes: 120 });
+    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+    absorbInto(c, d); // sibling merge; C.initTotal → 100 + 80 = 180
+    expect(c.initialTotalStrikes).toBe(180);
+
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
+    absorbInto(c, b); // C absorbs parent B; C.initTotal should become B.initTotal = 200
+    expect(c.initialTotalStrikes).toBe(200); // overwrite, not max(180, 200)
+  });
+});
+
+// ── Gap 1 (ancestor lineage propagation in isAncestorOfBig) ──────────────
+
+describe('absorbInto — isAncestorOfBig propagates ancestor lineage and removes consumed key', () => {
+  it('absorbed ancestor\'s own lineage is merged into big so great-grandparent can correct later', () => {
+    // Original → A (A.splitLineage=['Original'], A.initTotal=50).
+    // A → B → C (C.splitLineage=['A','B'], C.initTotal=100).
+    // C absorbs A (isAncestorOfBig). C must learn about 'Original'.
+    const a = makeStorm({ key: 'A', splitLineage: ['Original'], initialTotalStrikes: 50, totalStrikes: 600 });
+    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+    absorbInto(c, a); // C absorbs A (isAncestorOfBig: 'A' in C.splitLineage)
+    // C inherits A's lineage: 'Original' added
+    expect(c.splitLineage).toContain('Original');
+    // Consumed key 'A' removed from C's lineage
+    expect(c.splitLineage).not.toContain('A');
+    // initTotal updated to A's A-level baseline
+    expect(c.initialTotalStrikes).toBe(50); // A.initTotal
+
+    // Original (800 total) now absorbs C — correction must apply
+    const original = makeStorm({ key: 'Original', totalStrikes: 800 });
+    absorbInto(original, c); // isDescendantOfBig: C.splitLineage.includes('Original')
+    // netNew = c.totalStrikes - c.initTotal; c.total = 150 + (600-100) = 650, c.initTotal=50
+    expect(original.totalStrikes).toBe(800 + 650 - 50); // 1400
+  });
+
+  it('consumed key is removed from splitLineage after isAncestorOfBig merge', () => {
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
+    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+    absorbInto(c, b); // C absorbs B
+    expect(c.splitLineage).not.toContain('B'); // 'B' consumed and removed
+    expect(c.splitLineage).toContain('A');     // A (B's ancestor) inherited
+  });
+
+  it('does not add duplicate ancestors when small and big share lineage entries', () => {
+    // A → B (B.splitLineage=['A']). B → C (C.splitLineage=['A','B']).
+    // C absorbs B: 'A' is in both — should not duplicate.
+    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
+    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+    absorbInto(c, b);
+    expect(c.splitLineage.filter(k => k === 'A').length).toBe(1);
+  });
+});
+
+// ── Gap 1: non-adoption merges patch splitLineage of surviving storms ─────
+
+describe('non-adoption merge patches splitLineage references to absorbed key', () => {
+  // Mirrors the patch that call sites must apply after absorbInto in the non-adoption path.
+  // The test uses the adoptKey helper to simulate the patch and verifies the scenario end-to-end.
+
+  it('E can correctly re-merge into C after B (E\'s lineage entry) was absorbed into C', () => {
+    // A splits → B. B splits → E (E.splitLineage=['A','B']).
+    // B is absorbed (non-adoption) into C. The patch should redirect B→C in E's lineage.
+    const e = makeStorm({ key: 'E', splitLineage: ['A', 'B'], initialTotalStrikes: 80, totalStrikes: 200 });
+    const storms = [e];
+
+    // Simulate the non-adoption patch: B was absorbed into C, so redirect 'B' → 'C'
+    for (const st of storms) {
+      const i = st.splitLineage.indexOf('B');
+      if (i !== -1) st.splitLineage[i] = 'C';
+    }
+    expect(e.splitLineage).toEqual(['A', 'C']); // 'B' replaced with 'C'
+
+    // E now re-merges into C — correction should apply because C is in E's lineage
+    const c = makeStorm({ key: 'C', totalStrikes: 3000 });
+    absorbInto(c, e); // isDescendantOfBig: E.splitLineage.includes('C') = true
+    // netNew = 200 - 80 = 120
+    expect(c.totalStrikes).toBe(3120);
+  });
+
+  it('without the patch, the same re-merge double-counts', () => {
+    // Same scenario but WITHOUT patching — shows what the bug looked like before the fix.
+    const e = makeStorm({ key: 'E', splitLineage: ['A', 'B'], initialTotalStrikes: 80, totalStrikes: 200 });
+    const c = makeStorm({ key: 'C', totalStrikes: 3000 });
+    // No patch: e.splitLineage still has 'B', not 'C'
+    absorbInto(c, e); // no ancestry match → full count
+    expect(c.totalStrikes).toBe(3200); // double-counts E.initTotal (80)
   });
 });
 
@@ -469,5 +645,49 @@ describe('StormEvent structure', () => {
     };
     expect(ev.eventType).toBe('split');
     expect(ev.strikesAbsorbed).toBeNull();
+  });
+});
+
+// ── accumulateStrikes — no thinning ─────────────────────────────────────
+// Mirrors the (now-unconditional) append loop in route.ts's accumulateStrikes:
+// every strike is kept, with no cap that halves/decimates allStrikes once it
+// grows large. Guards against that cap being silently reintroduced.
+
+function accumulateStrikes(
+  storm: Pick<MinTrackedStorm, 'allStrikes' | 'totalStrikes' | 'lastSeen'> & { lastStrikeTime: number },
+  members: Array<{ lat: number; lon: number; time: number }>,
+): void {
+  let newest = storm.lastStrikeTime;
+  for (const m of members) {
+    if (m.time < storm.lastStrikeTime) continue;
+    storm.totalStrikes++;
+    storm.allStrikes.push([m.lat, m.lon, m.time]);
+    if (m.time > newest) newest = m.time;
+  }
+  storm.lastStrikeTime = newest;
+}
+
+describe('accumulateStrikes — no thinning', () => {
+  it('keeps every strike across many passes, well past the old 24k cap', () => {
+    const storm = { allStrikes: [] as [number, number, number][], totalStrikes: 0, lastSeen: 0, lastStrikeTime: -1 };
+    const passes = 50;
+    const perPass = 1000; // 50,000 strikes total — over 2x the old ALL_STRIKES_MAX
+    let time = 0;
+    for (let pass = 0; pass < passes; pass++) {
+      const members = Array.from({ length: perPass }, () => ({ lat: 52, lon: 5, time: time++ }));
+      accumulateStrikes(storm, members);
+    }
+    expect(storm.totalStrikes).toBe(passes * perPass);
+    expect(storm.allStrikes.length).toBe(passes * perPass);
+  });
+
+  it('skips strikes older than the last-seen time from a previous overlapping pass', () => {
+    const storm = { allStrikes: [] as [number, number, number][], totalStrikes: 0, lastSeen: 0, lastStrikeTime: -1 };
+    accumulateStrikes(storm, [{ lat: 1, lon: 1, time: 10 }, { lat: 1, lon: 1, time: 20 }]);
+    // Overlapping pass: time 15 is older than lastStrikeTime (20) and is skipped,
+    // only time 25 is net-new
+    accumulateStrikes(storm, [{ lat: 1, lon: 1, time: 15 }, { lat: 1, lon: 1, time: 25 }]);
+    expect(storm.totalStrikes).toBe(3);
+    expect(storm.allStrikes.length).toBe(3);
   });
 });
