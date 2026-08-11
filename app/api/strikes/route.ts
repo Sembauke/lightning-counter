@@ -335,7 +335,7 @@ function sampleCell(members: Array<{ lat: number; lon: number; time: number }>):
 function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>): void {
   let newest = st.lastStrikeTime;
   for (const m of members) {
-    if (m.time < st.lastStrikeTime) continue;
+    if (m.time <= st.lastStrikeTime) continue;
     st.totalStrikes++;
     if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
     if (m.time > newest) newest = m.time;

@@ -75,6 +75,9 @@ export default function StormReplayMap({
   const rafRef = useRef<number | null>(null);
   const liveRafRef = useRef<number | null>(null);
   const appendedLengthRef = useRef(0);
+  // Raw [lat, lon, time] tuples for every appended live strike, kept so
+  // reprojectStrikes (called on zoom/pan) can include them alongside strikes.
+  const appendedRawRef = useRef<StormStrike[]>([]);
   const maxTimeRef = useRef(-Infinity);
   // Index into projectedRef.current of the next strike that hasn't yet triggered
   // a ring burst during forward playback; resynced (without bursting) on seek.
@@ -225,7 +228,10 @@ export default function StormReplayMap({
       };
 
       const reprojectStrikes = () => {
-        projectedRef.current = strikes
+        const all = appendedRawRef.current.length
+          ? [...strikes, ...appendedRawRef.current]
+          : strikes;
+        projectedRef.current = all
           .map(([lat, lon, time]) => {
             const p = map.latLngToContainerPoint([lat, lon]);
             return { x: p.x, y: p.y, time };
@@ -273,6 +279,7 @@ export default function StormReplayMap({
 
     const now = performance.now();
     for (const [lat, lon, time] of newBatch) {
+      appendedRawRef.current.push([lat, lon, time]);
       const p = map.latLngToContainerPoint([lat, lon]);
       projectedRef.current.push({ x: p.x, y: p.y, time });
       // Live mode: every real-time strike gets a ring (they expire in 600 ms so
