@@ -183,9 +183,11 @@ export default function StormDetailClient({
   const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
   // Counts SSE strikes since last DB flush so the counter ticks in real-time
   const [appendedSinceFlush, setAppendedSinceFlush] = useState(0);
-  const latestTsRef = useRef(
-    storm.strikes?.length ? Math.max(...storm.strikes.map(s => s[2])) : 0,
-  );
+  const latestTsRef = useRef((() => {
+    let max = 0;
+    if (storm.strikes) for (const s of storm.strikes) if (s[2] > max) max = s[2];
+    return max;
+  })());
 
   // Live rank + threshold — start from server-rendered values, updated by each KPI poll
   const [displayRank, setDisplayRank] = useState(rank);
@@ -250,7 +252,7 @@ export default function StormDetailClient({
         // Backfill any strikes between SSR and EventSource connect
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
-          latestTsRef.current = Math.max(...fresh.map(s => s[2]));
+          for (const s of fresh) if (s[2] > latestTsRef.current) latestTsRef.current = s[2];
           setAppendedStrikes(prev => [...prev, ...fresh]);
         }
       } catch { /* network blip — skip */ }

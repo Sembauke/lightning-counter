@@ -205,12 +205,14 @@ export default function StormReplayMap({
       // Fit the full extent of all strikes — the zoom cap prevents over-zooming
       // on compact storms, so we no longer need percentile trimming (which was
       // cutting off the trailing end of traveling storms).
-      const lats = strikes.map(s => s[0]);
-      const lons = strikes.map(s => s[1]);
-      const bounds = L.latLngBounds(
-        [Math.min(...lats), Math.min(...lons)],
-        [Math.max(...lats), Math.max(...lons)],
-      );
+      let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+      for (const s of strikes) {
+        if (s[0] < minLat) minLat = s[0];
+        if (s[0] > maxLat) maxLat = s[0];
+        if (s[1] < minLon) minLon = s[1];
+        if (s[1] > maxLon) maxLon = s[1];
+      }
+      const bounds = L.latLngBounds([minLat, minLon], [maxLat, maxLon]);
       // 20% padding keeps strikes away from the frame edge; zoom cap stops
       // single-cell storms from zooming in to street level.
       map.fitBounds(bounds.pad(0.2), { animate: false, maxZoom: 8 });

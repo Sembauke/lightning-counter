@@ -668,6 +668,19 @@ export function consolidateNearbyStorms(mergeKm = 75): void {
         // Update in-memory row so subsequent passes use updated values
         big.startTime = newStart; big.originLat = newOriginLat; big.originLon = newOriginLon;
         big.originCity = newOriginCity; big.traveledKm = newTravel; big.totalCount = newTotal;
+        // Preserve strikes: if the absorbed storm has a longer blob, copy it to
+        // the survivor so the replay doesn't lose geographic/temporal coverage.
+        const strikeLens = db.prepare(`
+          SELECT
+            json_array_length(COALESCE((SELECT strikes FROM storms WHERE storm_key = ?), '[]')) AS bigLen,
+            json_array_length(COALESCE((SELECT strikes FROM storms WHERE storm_key = ?), '[]')) AS smallLen
+        `).get(big.stormKey, small.stormKey) as { bigLen: number; smallLen: number } | undefined;
+        if (strikeLens && strikeLens.smallLen > strikeLens.bigLen) {
+          db.prepare(`
+            UPDATE storms SET strikes = (SELECT strikes FROM storms WHERE storm_key = ?)
+            WHERE storm_key = ?
+          `).run(small.stormKey, big.stormKey);
+        }
         // Delete the absorbed storm from all tables
         db.prepare('DELETE FROM storms WHERE storm_key = ?').run(small.stormKey);
         db.prepare('DELETE FROM storm_records WHERE storm_key = ?').run(small.stormKey);
