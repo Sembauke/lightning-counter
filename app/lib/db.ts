@@ -1000,17 +1000,53 @@ export function recordStormEvent(
   `).run(stormKey, eventType, ts, relatedKey, relatedCity, relatedCc, strikesAbsorbed);
 }
 
-export function getStormEvents(stormKey: string, limit = 100): StormEvent[] {
+// Aggregate consecutive absorptions from the same city in 10-minute windows so
+// rapid cluster churn (the same storm absorbed/re-detected every 30s) collapses
+// into one entry. Splits are always kept individually.
+const EVENT_BUCKET_MS = 10 * 60 * 1000;
+// Aggregated merge entries below this threshold are noise (cluster churn); hide
+// them. Splits are always shown regardless of their strike count.
+const EVENT_MIN_STRIKES = 500;
+
+export function getStormEvents(stormKey: string, limit = 15): StormEvent[] {
   const db = getDb();
-  return db.prepare(`
+  // Fetch up to 500 raw rows; we collapse them in JS below.
+  const raw = db.prepare(`
     SELECT id, storm_key AS stormKey, event_type AS eventType, ts,
            related_key AS relatedKey, related_city AS relatedCity,
            related_cc AS relatedCc, strikes_absorbed AS strikesAbsorbed
     FROM storm_events
     WHERE storm_key = ?
     ORDER BY ts DESC
-    LIMIT ?
-  `).all(stormKey, limit) as StormEvent[];
+    LIMIT 500
+  `).all(stormKey) as StormEvent[];
+
+  const buckets = new Map<string, StormEvent>();
+  const result: StormEvent[] = [];
+
+  for (const ev of raw) {
+    if (ev.eventType === 'split') {
+      result.push(ev);
+      continue;
+    }
+    const bucket = Math.floor(ev.ts / EVENT_BUCKET_MS);
+    const city = ev.relatedCity ?? ev.relatedKey ?? '';
+    const bucketKey = `${city}:${bucket}`;
+    if (buckets.has(bucketKey)) {
+      const existing = buckets.get(bucketKey)!;
+      existing.strikesAbsorbed = (existing.strikesAbsorbed ?? 0) + (ev.strikesAbsorbed ?? 0);
+      // Keep the latest ts (bucket shows the most recent event in the window)
+      if (ev.ts > existing.ts) existing.ts = ev.ts;
+    } else {
+      const copy = { ...ev };
+      buckets.set(bucketKey, copy);
+      result.push(copy);
+    }
+  }
+
+  return result
+    .filter(ev => ev.eventType === 'split' || (ev.strikesAbsorbed ?? 0) >= EVENT_MIN_STRIKES)
+    .slice(0, limit);
 }
 
 /** Prune storm_events rows older than 30 days (called from hourly maintenance) */
