@@ -169,20 +169,21 @@ interface TrackedStorm {
   totalStrikes: number;
   // Ordered list of every country code the storm has passed through
   countryCodes: string[];
-  // Ordered ancestry chain of storm keys this storm split from, closest ancestor
-  // last. Empty for storms that formed independently. Example: if A split into B
-  // and B split into C, C.splitLineage = ['A', 'B'].
-  // Using a chain instead of a single key handles cascading splits (A→B→C) and
-  // lets absorbInto apply the double-count correction whenever ANY ancestor
-  // re-absorbs a descendant, not just the immediate parent.
-  // Key-adoption (big.key = small.key) patches entries in-place so the chain
-  // stays valid even when a storm's identity key changes.
-  splitLineage: string[];
-  // Strike count at the moment this storm was first created (after the initial
-  // accumulateStrikes call). These strikes may overlap with an ancestor storm's
-  // count when a split occurs; they are excluded from the net-new calculation
-  // in absorbInto whenever an ancestor re-absorbs this storm.
-  initialTotalStrikes: number;
+  // Per-ancestor overlap map: ancestorKey → number of strikes that ancestor
+  // already counted from this storm's territory at the time of the split.
+  // Empty for storms that formed independently.
+  // Used by absorbInto to apply the exact double-count correction for any
+  // ancestor that re-absorbs this storm, regardless of how many intermediate
+  // merges or key-adoptions occurred in between.
+  initialStrikesByAncestor: Record<string, number>;
+  // allStrikes thinning: once allStrikes exceeds ALL_STRIKES_MAX, keepEvery
+  // doubles and the array is halved so memory stays bounded for long storms.
+  keepEvery: number;
+  appendSeq: number;
+  // Set to true the first time split detection assigns a parent. Used as the
+  // split-detection guard so Phase 1/2 absorptions (which also populate
+  // initialStrikesByAncestor) don't incorrectly suppress re-detection.
+  splitDetected: boolean;
 }
 // Maximum match window — a cell within this distance of a tracked storm's last
 // centroid is a candidate. The effective window is further capped by velocity:
@@ -214,8 +215,10 @@ const trackedStorms: TrackedStorm[] = (() => {
     const minLastSeen = Date.now() - 4 * 60 * 1000;
     for (const st of loaded) {
       st.inDb = dbKeys.has(st.key);
-      st.splitLineage = st.splitLineage ?? [];
-      st.initialTotalStrikes = st.initialTotalStrikes ?? 0;
+      st.initialStrikesByAncestor = st.initialStrikesByAncestor ?? {};
+      st.keepEvery = st.keepEvery ?? 1;
+      st.appendSeq = st.appendSeq ?? (st.allStrikes?.length ?? 0);
+      st.splitDetected = st.splitDetected ?? false;
       if (st.lastSeen < minLastSeen) st.lastSeen = minLastSeen;
       // If allStrikes is missing or unusually short (e.g. lost on prev restart),
       // seed from the DB strikes blob which has the full historical coverage.
@@ -277,6 +280,7 @@ function meanPos(points: Array<{ lat: number; lon: number }>): { lat: number; lo
   return { lat: lat / points.length, lon: lon / points.length };
 }
 const STRIKE_SAMPLE_MAX = 4000;
+const ALL_STRIKES_MAX = 24_000;
 // Persisted on globalThis so hot-reloads in dev don't reset it and create
 // duplicate in-memory identities for the same physical storm.
 let stormSeq: number = (globalThis as any)._stormSeq ?? 0;
@@ -333,10 +337,14 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   for (const m of members) {
     if (m.time < st.lastStrikeTime) continue;
     st.totalStrikes++;
-    st.allStrikes.push(roundPt(m));
+    if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
     if (m.time > newest) newest = m.time;
   }
   st.lastStrikeTime = newest;
+  if (st.allStrikes.length > ALL_STRIKES_MAX) {
+    st.keepEvery *= 2;
+    st.allStrikes = st.allStrikes.filter((_, i) => i % 2 === 0);
+  }
 }
 
 (globalThis as any)._iv_dbFlush = setInterval(() => {
@@ -473,13 +481,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           inDb: false,
           allStrikes: [], lastStrikeTime: 0, totalStrikes: 0,
           countryCodes: Object.keys(ccCounts),
-          splitLineage: [],
-          initialTotalStrikes: 0,
+          initialStrikesByAncestor: {},
+          keepEvery: 1, appendSeq: 0, splitDetected: false,
         };
         accumulateStrikes(fresh, cell.members);
-        // Capture the initial member count — used in absorbInto to avoid double-counting
-        // strikes that were already attributed to a parent storm if this turns out to be a split.
-        fresh.initialTotalStrikes = fresh.totalStrikes;
         trackedStorms.push(fresh);
         matched.add(fresh);
         freshThisPass.add(fresh);
@@ -503,53 +508,51 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
       }
       big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
-      // Three ancestry cases:
-      //
-      // 1. Normal re-merge — small is a descendant of big (small.splitLineage
-      //    contains big.key). The overlap already counted in big equals
-      //    small.initialTotalStrikes; add only what small accumulated after the split.
-      //
-      // 2. Reverse re-merge — big is a descendant of small (big.splitLineage
-      //    contains small.key, e.g. a child that outgrew its parent). Big's territory
-      //    was carved from small's; the overlap equals big.initialTotalStrikes
-      //    (which may have been bumped by prior sibling absorptions). Subtract that.
-      //
-      // 3. No ancestry — independent, sibling, or third-party. Add everything, then
-      //    propagate small's lineage into big so a future re-merge into any shared
-      //    ancestor still carries the correct combined baseline.
-      const isDescendantOfBig = small.splitLineage.includes(big.key);
-      const isAncestorOfBig   = big.splitLineage.includes(small.key);
+
+      // Per-ancestor overlap map lookup:
+      // overlapInBig   = strikes big already counted from small's territory (normal re-merge)
+      // overlapInSmall = strikes small already counted from big's territory (reverse re-merge)
+      const overlapInBig   = small.initialStrikesByAncestor[big.key];
+      const overlapInSmall = big.initialStrikesByAncestor[small.key];
+
       let netNew: number;
-      if (isDescendantOfBig) {
-        netNew = Math.max(0, small.totalStrikes - small.initialTotalStrikes);
-      } else if (isAncestorOfBig) {
-        netNew = Math.max(0, small.totalStrikes - big.initialTotalStrikes);
-        // After absorbing the parent, big's overlap baseline with the grandparent
-        // level becomes the parent's own initTotal (what the grandparent counted in
-        // the parent's territory). Overwrite rather than bump — any excess already in
-        // big.initialTotalStrikes came from sibling absorptions at the parent level,
-        // which the grandparent has NOT counted and should receive as net-new.
-        big.initialTotalStrikes = small.initialTotalStrikes;
-        // Inherit the absorbed ancestor's own lineage so any great-grandparent
-        // that later absorbs big can still apply the correction. Also remove
-        // small.key from big's lineage — it's now consumed, not a live ancestor.
-        for (const ancestor of small.splitLineage) {
-          if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+      if (overlapInBig !== undefined) {
+        // Normal re-merge: small is a descendant of big.
+        netNew = Math.max(0, small.totalStrikes - overlapInBig);
+        // Merge small's other ancestor overlaps into big by adding (they represent
+        // independent territory neither storm has fully reconciled yet).
+        for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
+          if (k === big.key) continue;
+          big.initialStrikesByAncestor[k] = (big.initialStrikesByAncestor[k] ?? 0) + v;
         }
-        const consumedIdx = big.splitLineage.indexOf(small.key);
-        if (consumedIdx !== -1) big.splitLineage.splice(consumedIdx, 1);
+        // Clean up any stale reverse-ancestry entry (small is being consumed).
+        delete big.initialStrikesByAncestor[small.key];
+      } else if (overlapInSmall !== undefined) {
+        // Reverse re-merge: big is a descendant of small (child outgrew parent).
+        netNew = Math.max(0, small.totalStrikes - overlapInSmall);
+        // Remove the consumed parent entry and inherit small's ancestor overlaps
+        // so any grandparent that later re-absorbs big gets the right correction.
+        delete big.initialStrikesByAncestor[small.key];
+        for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
+          big.initialStrikesByAncestor[k] = v;
+        }
       } else {
+        // No direct ancestry (independent, sibling, or third-party).
         netNew = small.totalStrikes;
-      }
-      big.totalStrikes += netNew;
-      if (!isDescendantOfBig && !isAncestorOfBig && small.splitLineage.length > 0) {
-        big.initialTotalStrikes += small.initialTotalStrikes;
-        for (const ancestor of small.splitLineage) {
-          if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+        // Accumulate small's ancestor overlaps into big by adding so any shared
+        // ancestor that re-absorbs big applies the combined correction.
+        for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
+          big.initialStrikesByAncestor[k] = (big.initialStrikesByAncestor[k] ?? 0) + v;
         }
       }
+
+      big.totalStrikes += netNew;
       for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
       for (const s of small.allStrikes) big.allStrikes.push(s);
+      if (big.allStrikes.length > ALL_STRIKES_MAX) {
+        big.keepEvery *= 2;
+        big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);
+      }
       return netNew;
     }
 
@@ -579,22 +582,25 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             if (small.inDb && !big.inDb) {
               big.key = small.key;
               big.inDb = true;
-              // Patch every storm whose splitLineage references big's old key so
-              // the ancestry chain stays valid after the identity change.
+              // Patch every storm whose ancestor map references big's old key.
               for (const st of trackedStorms) {
-                const i = st.splitLineage.indexOf(bigKey1);
-                if (i !== -1) st.splitLineage[i] = big.key;
+                if (bigKey1 in st.initialStrikesByAncestor) {
+                  st.initialStrikesByAncestor[big.key] = st.initialStrikesByAncestor[bigKey1];
+                  delete st.initialStrikesByAncestor[bigKey1];
+                }
               }
               // small.key is now big's key — don't delete the DB row.
               // Record merge on the new canonical key; the "other" storm was big's old identity.
               try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, netNew1); } catch { /* non-fatal */ }
             } else {
               if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
-              // Patch any surviving storm that references the absorbed storm's key in
-              // its splitLineage — it is now carried by big, so redirect to big.key.
+              // Patch any surviving storm that references the absorbed storm's key
+              // in its ancestor map — it is now carried by big, so redirect to big.key.
               for (const st of trackedStorms) {
-                const i = st.splitLineage.indexOf(smallKey1);
-                if (i !== -1) st.splitLineage[i] = big.key;
+                if (smallKey1 in st.initialStrikesByAncestor) {
+                  st.initialStrikesByAncestor[big.key] = st.initialStrikesByAncestor[smallKey1];
+                  delete st.initialStrikesByAncestor[smallKey1];
+                }
               }
               // big.key is already the canonical key.
               try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, netNew1); } catch { /* non-fatal */ }
@@ -621,10 +627,12 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         if (st.inDb && !m.inDb) {
           m.key = st.key;
           m.inDb = true;
-          // Patch splitLineage refs so the ancestry chain stays valid.
+          // Patch ancestor maps that reference m's old key.
           for (const survivor of trackedStorms) {
-            const i = survivor.splitLineage.indexOf(mKey2);
-            if (i !== -1) survivor.splitLineage[i] = m.key;
+            if (mKey2 in survivor.initialStrikesByAncestor) {
+              survivor.initialStrikesByAncestor[m.key] = survivor.initialStrikesByAncestor[mKey2];
+              delete survivor.initialStrikesByAncestor[mKey2];
+            }
           }
           // st.key is now m's key — don't delete the DB row.
           // Record merge on the new canonical key; the "other" storm was m's old identity.
@@ -633,8 +641,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
           // Patch surviving storms that referenced the absorbed stray's key.
           for (const survivor of trackedStorms) {
-            const i = survivor.splitLineage.indexOf(stKey2);
-            if (i !== -1) survivor.splitLineage[i] = m.key;
+            if (stKey2 in survivor.initialStrikesByAncestor) {
+              survivor.initialStrikesByAncestor[m.key] = survivor.initialStrikesByAncestor[stKey2];
+              delete survivor.initialStrikesByAncestor[stKey2];
+            }
           }
           // m.key is already the canonical key.
           try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, netNew2); } catch { /* non-fatal */ }
@@ -650,7 +660,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     // later re-merges back into the parent, only its net-new strikes are added.
     const SPLIT_DETECT_KM = 200;
     for (const freshSt of freshThisPass) {
-      if (!matched.has(freshSt) || freshSt.splitLineage.length > 0) continue;
+      if (!matched.has(freshSt) || freshSt.splitDetected) continue;
       let nearestParent: TrackedStorm | null = null;
       let nearestKm = Infinity;
       for (const st of matched) {
@@ -659,9 +669,14 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         if (km < nearestKm && km < SPLIT_DETECT_KM) { nearestKm = km; nearestParent = st; }
       }
       if (nearestParent) {
-        // Inherit the parent's full ancestry chain and append the parent's key,
-        // so this storm can be recognised as a descendant of any ancestor in the chain.
-        freshSt.splitLineage = [...nearestParent.splitLineage, nearestParent.key];
+        // Record the direct-parent overlap: how many strikes the parent already counted
+        // in this storm's territory at birth. Cap inherited grandparent overlaps to the
+        // fresh storm's own total (it cannot owe more than it has).
+        freshSt.initialStrikesByAncestor[nearestParent.key] = freshSt.totalStrikes;
+        for (const [k, v] of Object.entries(nearestParent.initialStrikesByAncestor)) {
+          freshSt.initialStrikesByAncestor[k] = Math.min(freshSt.totalStrikes, v);
+        }
+        freshSt.splitDetected = true;
         try {
           recordStormEvent(nearestParent.key, 'split', nowMs, freshSt.key, freshSt.city, freshSt.cc, null);
         } catch { /* non-fatal */ }

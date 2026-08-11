@@ -46,8 +46,7 @@ interface MinTrackedStorm {
   totalStrikes: number;
   allStrikes: [number, number, number][];
   countryCodes: string[];
-  splitLineage: string[];
-  initialTotalStrikes: number;
+  initialStrikesByAncestor: Record<string, number>;
   lastSeen: number;
 }
 
@@ -60,7 +59,7 @@ function makeStorm(overrides: Partial<MinTrackedStorm> = {}): MinTrackedStorm {
     peakCount: 100, peakRate: 20,
     startTime: 1000, originLat: 52, originLon: 5, originCity: 'Amsterdam',
     traveledKm: 0, totalStrikes: 1000, allStrikes: [],
-    countryCodes: ['NL'], splitLineage: [], initialTotalStrikes: 0,
+    countryCodes: ['NL'], initialStrikesByAncestor: {},
     lastSeen: 1000,
     ...overrides,
   };
@@ -77,40 +76,47 @@ function absorbInto(
     big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
   }
   big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
-  const isDescendantOfBig = small.splitLineage.includes(big.key);
-  const isAncestorOfBig   = big.splitLineage.includes(small.key);
+
+  const overlapInBig   = small.initialStrikesByAncestor[big.key];
+  const overlapInSmall = big.initialStrikesByAncestor[small.key];
+
   let netNew: number;
-  if (isDescendantOfBig) {
-    netNew = Math.max(0, small.totalStrikes - small.initialTotalStrikes);
-  } else if (isAncestorOfBig) {
-    netNew = Math.max(0, small.totalStrikes - big.initialTotalStrikes);
-    big.initialTotalStrikes = small.initialTotalStrikes;
-    for (const ancestor of small.splitLineage) {
-      if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+  if (overlapInBig !== undefined) {
+    // Normal re-merge: small is a descendant of big.
+    netNew = Math.max(0, small.totalStrikes - overlapInBig);
+    for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
+      if (k === big.key) continue;
+      big.initialStrikesByAncestor[k] = (big.initialStrikesByAncestor[k] ?? 0) + v;
     }
-    const consumedIdx = big.splitLineage.indexOf(small.key);
-    if (consumedIdx !== -1) big.splitLineage.splice(consumedIdx, 1);
+  } else if (overlapInSmall !== undefined) {
+    // Reverse re-merge: big is a descendant of small (child outgrew parent).
+    netNew = Math.max(0, small.totalStrikes - overlapInSmall);
+    delete big.initialStrikesByAncestor[small.key];
+    for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
+      big.initialStrikesByAncestor[k] = v;
+    }
   } else {
+    // No direct ancestry (independent, sibling, or third-party).
     netNew = small.totalStrikes;
-  }
-  big.totalStrikes += netNew;
-  if (!isDescendantOfBig && !isAncestorOfBig && small.splitLineage.length > 0) {
-    big.initialTotalStrikes += small.initialTotalStrikes;
-    for (const ancestor of small.splitLineage) {
-      if (!big.splitLineage.includes(ancestor)) big.splitLineage.push(ancestor);
+    for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
+      big.initialStrikesByAncestor[k] = (big.initialStrikesByAncestor[k] ?? 0) + v;
     }
   }
+
+  big.totalStrikes += netNew;
   for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
   return { mergedStrikes: netNew };
 }
 
-// Mirrors the key-adoption lineage patch from route.ts Phase 1 / Phase 2
+// Mirrors the key-adoption ancestor map patch from route.ts Phase 1 / Phase 2
 function adoptKey(storms: MinTrackedStorm[], target: MinTrackedStorm, newKey: string): void {
   const oldKey = target.key;
   target.key = newKey;
   for (const st of storms) {
-    const i = st.splitLineage.indexOf(oldKey);
-    if (i !== -1) st.splitLineage[i] = newKey;
+    if (oldKey in st.initialStrikesByAncestor) {
+      st.initialStrikesByAncestor[newKey] = st.initialStrikesByAncestor[oldKey];
+      delete st.initialStrikesByAncestor[oldKey];
+    }
   }
 }
 
@@ -175,46 +181,44 @@ describe('detectStorms', () => {
 describe('absorbInto — strike counting', () => {
   it('adds all strikes when merging independent storms', () => {
     const big = makeStorm({ key: 'A', totalStrikes: 5000 });
-    const small = makeStorm({ key: 'B', totalStrikes: 2000, splitLineage: [] });
+    const small = makeStorm({ key: 'B', totalStrikes: 2000, initialStrikesByAncestor: {} });
     absorbInto(big, small);
     expect(big.totalStrikes).toBe(7000);
   });
 
   it('adds only net-new strikes when absorbing a direct split child (avoids double-counting)', () => {
-    // B was split from A; B.initialTotalStrikes are the overlapping initial members.
+    // B split from A; 300 strikes were already in A's territory when B formed.
     const big = makeStorm({ key: 'A', totalStrikes: 5000 });
     const small = makeStorm({
       key: 'B',
-      splitLineage: ['A'],      // B split from A
-      initialTotalStrikes: 300, // 300 strikes were in A's territory when B formed
-      totalStrikes: 500,        // 200 net-new strikes after the split
+      initialStrikesByAncestor: { 'A': 300 }, // overlap with A at birth
+      totalStrikes: 500,                        // 200 net-new after the split
     });
     absorbInto(big, small);
-    // Should add only 500 - 300 = 200, not 500
+    // overlapInBig = small.initialStrikesByAncestor['A'] = 300
+    // netNew = max(0, 500 - 300) = 200
     expect(big.totalStrikes).toBe(5200);
   });
 
   it('corrects cascading splits: grandchild re-merges into grandparent', () => {
-    // A splits → B (splitLineage: ['A']).
-    // B splits → C (splitLineage: ['A', 'B']).
-    // C re-merges into A: A.key is in C.splitLineage → correction applies.
+    // A splits → B. B splits → C. C.map has 'A' as a key → correction applies.
     const a = makeStorm({ key: 'A', totalStrikes: 10_000 });
     const c = makeStorm({
       key: 'C',
-      splitLineage: ['A', 'B'],
-      initialTotalStrikes: 200,
+      initialStrikesByAncestor: { 'A': 200, 'B': 200 },
       totalStrikes: 350,
     });
     absorbInto(a, c);
-    expect(a.totalStrikes).toBe(10_150); // 10000 + (350 - 200) = 10150
+    // overlapInBig = c.initialStrikesByAncestor['A'] = 200
+    // netNew = max(0, 350 - 200) = 150
+    expect(a.totalStrikes).toBe(10_150);
   });
 
   it('clamps net-new to zero when absorbed storm has no new strikes', () => {
     const big = makeStorm({ key: 'A', totalStrikes: 5000 });
     const small = makeStorm({
       key: 'B',
-      splitLineage: ['A'],
-      initialTotalStrikes: 400,
+      initialStrikesByAncestor: { 'A': 400 },
       totalStrikes: 400, // no new strikes since split
     });
     absorbInto(big, small);
@@ -225,25 +229,24 @@ describe('absorbInto — strike counting', () => {
     const big = makeStorm({ key: 'A', totalStrikes: 5000 });
     const small = makeStorm({
       key: 'B',
-      splitLineage: ['C'], // split from C, not A
-      initialTotalStrikes: 300,
+      initialStrikesByAncestor: { 'C': 300 }, // split from C, not A
       totalStrikes: 500,
     });
     absorbInto(big, small);
-    // Different ancestry → add full totalStrikes
+    // No 'A' in small.map, no 'B' in big.map → full count
     expect(big.totalStrikes).toBe(5500);
   });
 
   it('returns the count actually merged for event recording', () => {
     const big = makeStorm({ key: 'A', totalStrikes: 1000 });
-    const small = makeStorm({ key: 'B', totalStrikes: 300, splitLineage: [] });
+    const small = makeStorm({ key: 'B', totalStrikes: 300, initialStrikesByAncestor: {} });
     const { mergedStrikes } = absorbInto(big, small);
     expect(mergedStrikes).toBe(300);
   });
 
   it('returns net-new count when split child is absorbed', () => {
     const big = makeStorm({ key: 'A', totalStrikes: 1000 });
-    const small = makeStorm({ key: 'B', totalStrikes: 500, splitLineage: ['A'], initialTotalStrikes: 200 });
+    const small = makeStorm({ key: 'B', totalStrikes: 500, initialStrikesByAncestor: { 'A': 200 } });
     const { mergedStrikes } = absorbInto(big, small);
     expect(mergedStrikes).toBe(300);
   });
@@ -275,259 +278,274 @@ describe('absorbInto — strike counting', () => {
 
 describe('absorbInto — child absorbs parent (reverse case)', () => {
   it('adds only parent strikes outside the child\'s initial territory', () => {
-    // A (pre-split total=500) splits → B (initTotal=200). A gains 100 new, B gains 80.
+    // A (pre-split total=500) splits → B (B.map={'A':200}). A gains 100 new, B gains 80.
     // B grows larger and absorbs A.
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 280 });
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 280 });
     const a = makeStorm({ key: 'A', totalStrikes: 600 }); // 500 pre-split + 100 new
-    absorbInto(b, a); // big=B, small=A
-    // netNew = max(0, 600 - 200) = 400 = A's non-B territory (300) + A's new (100)
-    // Unique total: 500 + 100 + 80 = 680
+    absorbInto(b, a); // big=b, small=a
+    // overlapInSmall = b.initialStrikesByAncestor['A'] = 200
+    // netNew = max(0, 600 - 200) = 400
     expect(b.totalStrikes).toBe(680);
   });
 
-  it('grandchild absorbs grandparent using grandchild\'s own initTotal as baseline', () => {
-    // A → B → C. C.splitLineage=['A','B'], C.initTotal=100 (carved from B's territory).
-    // C grows huge and absorbs A.
-    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 300 });
+  it('grandchild absorbs grandparent using grandchild\'s overlap with grandparent as baseline', () => {
+    // A → B → C. C.map = {'A':100, 'B':100}. C grows huge and absorbs A.
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100, 'B': 100 }, totalStrikes: 300 });
     const a = makeStorm({ key: 'A', totalStrikes: 800 });
     absorbInto(c, a);
+    // overlapInSmall = c.initialStrikesByAncestor['A'] = 100
     // netNew = max(0, 800 - 100) = 700
     expect(c.totalStrikes).toBe(1000); // 300 + 700
   });
 
-  it('combined initTotal (after sibling absorption) used when child absorbs grandparent', () => {
-    // A → B (init=200) and A → C (init=150). B absorbs C → B.initTotal=350, B.total=480.
+  it('combined ancestor overlap (after sibling absorption) used when child absorbs grandparent', () => {
+    // A → B (B.map={'A':200}) and A → C (C.map={'A':150}). B absorbs C → B.map['A']=350, B.total=480.
     // A has 600 total. B absorbs A.
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 350, totalStrikes: 480 });
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 350 }, totalStrikes: 480 });
     const a = makeStorm({ key: 'A', totalStrikes: 600 });
     absorbInto(b, a);
+    // overlapInSmall = b.initialStrikesByAncestor['A'] = 350
     // netNew = max(0, 600 - 350) = 250
-    // Unique: 500 pre-split + 100 A_new + 80 B_new + 50 C_new = 730
     expect(b.totalStrikes).toBe(730); // 480 + 250
   });
 
   it('clamps to zero when parent has fewer strikes than the child\'s overlap baseline', () => {
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 500, totalStrikes: 800 });
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 500 }, totalStrikes: 800 });
     const a = makeStorm({ key: 'A', totalStrikes: 300 });
     absorbInto(b, a);
     expect(b.totalStrikes).toBe(800); // netNew = max(0, 300-500) = 0
   });
 
   it('returns the net-new count', () => {
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 280 });
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 280 });
     const a = makeStorm({ key: 'A', totalStrikes: 600 });
     const { mergedStrikes } = absorbInto(b, a);
     expect(mergedStrikes).toBe(400);
   });
+
+  it('OVERWRITEs ancestor overlaps from small\'s map (not adds) in reverse re-merge', () => {
+    // B.map={'A':200, 'X':50}. A.map={'X':100}. B absorbs A (reverse).
+    // 'X' in A's map should OVERWRITE 'X' in B's map (100 beats 50), not add (150).
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200, 'X': 50 }, totalStrikes: 300 });
+    const a = makeStorm({ key: 'A', initialStrikesByAncestor: { 'X': 100 }, totalStrikes: 500 });
+    absorbInto(b, a);
+    expect('A' in b.initialStrikesByAncestor).toBe(false); // 'A' consumed and removed
+    expect(b.initialStrikesByAncestor['X']).toBe(100);      // overwrite, not 50+100=150
+  });
 });
 
-// ── Gap 2: isAncestorOfBig updates initialTotalStrikes for grandparent pass ──
+// ── Reverse re-merge: ancestor map updated correctly ──────────────────────
 
-describe('absorbInto — isAncestorOfBig updates initTotal for grandparent re-merge', () => {
+describe('absorbInto — reverse re-merge updates ancestor map for grandparent pass', () => {
   it('grandparent absorbs (child+parent) without double-count after child absorbed parent', () => {
-    // A splits → B (B.initTotal=200). B splits → C (C.initTotal=100). C absorbs B.
-    // Then A absorbs the combined C+B entity.
-    // After C absorbs B: C.initTotal must become B.initTotal (200) so A corrects properly.
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
-    absorbInto(c, b); // C absorbs B (isAncestorOfBig)
-    // C.initTotal must be overwritten with B.initTotal = 200
-    expect(c.initialTotalStrikes).toBe(200);
+    // B.map={'A':200}, B.total=350. C.map={'A':100, 'B':100}, C.total=150.
+    // C absorbs B (reverse: overlapInSmall = C.map['B'] = 100):
+    //   netNew=250. C.total=400. Delete 'B'. Overwrite from B.map: C.map['A']=200.
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 350 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100, 'B': 100 }, totalStrikes: 150 });
+    absorbInto(c, b);
+    // 'B' consumed, 'A' updated to B's value (200)
+    expect(c.initialStrikesByAncestor).toEqual({ 'A': 200 });
 
-    // A (580 total = 500 pre-split + 80 new) absorbs the combined C+B
+    // A (580 total) absorbs the combined C+B
     const a = makeStorm({ key: 'A', totalStrikes: 580 });
-    absorbInto(a, c); // isDescendantOfBig (C.splitLineage includes 'A')
-    // netNew = c.totalStrikes - c.initTotal = (150 + 250) - 200 = 200
-    // Unique: 500 pre-split + 80 A_new + 150 B_new + 50 C_new = 780
+    absorbInto(a, c);
+    // overlapInBig = c.initialStrikesByAncestor['A'] = 200
+    // netNew = (150+250) - 200 = 200
     expect(a.totalStrikes).toBe(780);
   });
 
-  it('initTotal is overwritten, not added — excess from prior sibling absorptions is discarded', () => {
+  it('ancestor overlap is overwritten (not added) when child absorbs its parent', () => {
     // B and D both split from A. C splits from B.
-    // C absorbs D (sibling, bumps C.initTotal). Then C absorbs B (its parent).
-    // C.initTotal should become B.initTotal (not max with the sibling-bumped value).
-    const d = makeStorm({ key: 'D', splitLineage: ['A'], initialTotalStrikes: 80, totalStrikes: 120 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
-    absorbInto(c, d); // sibling merge; C.initTotal → 100 + 80 = 180
-    expect(c.initialTotalStrikes).toBe(180);
+    // D.map={'A':80}. C.map={'A':100, 'B':100}.
+    // C absorbs D (sibling, no ancestry → ADD: C.map['A'] = 180).
+    // C absorbs B (reverse: overlapInSmall = C.map['B'] = 100 → overwrite from B.map: C.map['A']=200).
+    const d = makeStorm({ key: 'D', initialStrikesByAncestor: { 'A': 80 }, totalStrikes: 120 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100, 'B': 100 }, totalStrikes: 150 });
+    absorbInto(c, d); // sibling → ADD: C.map['A'] = 180
+    expect(c.initialStrikesByAncestor['A']).toBe(180);
 
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
-    absorbInto(c, b); // C absorbs parent B; C.initTotal should become B.initTotal = 200
-    expect(c.initialTotalStrikes).toBe(200); // overwrite, not max(180, 200)
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 350 });
+    absorbInto(c, b); // reverse: C absorbs parent B → overwrite C.map['A'] = 200
+    expect(c.initialStrikesByAncestor['A']).toBe(200); // overwrite, not max(180, 200)
+    expect('B' in c.initialStrikesByAncestor).toBe(false); // 'B' removed
   });
 });
 
-// ── Gap 1 (ancestor lineage propagation in isAncestorOfBig) ──────────────
+// ── Ancestor map propagation after reverse re-merge ───────────────────────
 
-describe('absorbInto — isAncestorOfBig propagates ancestor lineage and removes consumed key', () => {
-  it('absorbed ancestor\'s own lineage is merged into big so great-grandparent can correct later', () => {
-    // Original → A (A.splitLineage=['Original'], A.initTotal=50).
-    // A → B → C (C.splitLineage=['A','B'], C.initTotal=100).
-    // C absorbs A (isAncestorOfBig). C must learn about 'Original'.
-    const a = makeStorm({ key: 'A', splitLineage: ['Original'], initialTotalStrikes: 50, totalStrikes: 600 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
-    absorbInto(c, a); // C absorbs A (isAncestorOfBig: 'A' in C.splitLineage)
-    // C inherits A's lineage: 'Original' added
-    expect(c.splitLineage).toContain('Original');
-    // Consumed key 'A' removed from C's lineage
-    expect(c.splitLineage).not.toContain('A');
-    // initTotal updated to A's A-level baseline
-    expect(c.initialTotalStrikes).toBe(50); // A.initTotal
+describe('absorbInto — reverse re-merge propagates ancestor map and removes consumed key', () => {
+  it('inherited ancestor map allows great-grandparent correction later', () => {
+    // Original → A (A.map={'Original':50}). A → B → C (C.map={'A':100, 'B':100}).
+    // C absorbs A (reverse: C.map['A']=100 → delete 'A', overwrite from A.map: C.map['Original']=50).
+    const a = makeStorm({ key: 'A', initialStrikesByAncestor: { 'Original': 50 }, totalStrikes: 600 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100, 'B': 100 }, totalStrikes: 150 });
+    absorbInto(c, a);
+    // 'Original' inherited from A's map
+    expect('Original' in c.initialStrikesByAncestor).toBe(true);
+    // Consumed key 'A' removed
+    expect('A' in c.initialStrikesByAncestor).toBe(false);
+    // 'B' still present (not in A's map, not overwritten)
+    expect('B' in c.initialStrikesByAncestor).toBe(true);
 
-    // Original (800 total) now absorbs C — correction must apply
+    // Original (800 total) absorbs C — correction must apply
     const original = makeStorm({ key: 'Original', totalStrikes: 800 });
-    absorbInto(original, c); // isDescendantOfBig: C.splitLineage.includes('Original')
-    // netNew = c.totalStrikes - c.initTotal; c.total = 150 + (600-100) = 650, c.initTotal=50
-    expect(original.totalStrikes).toBe(800 + 650 - 50); // 1400
+    absorbInto(original, c); // overlapInBig = c.initialStrikesByAncestor['Original'] = 50
+    // C.total after absorbing A: 150 + (600-100) = 650. netNew = 650-50 = 600.
+    expect(original.totalStrikes).toBe(1400); // 800 + 600
   });
 
-  it('consumed key is removed from splitLineage after isAncestorOfBig merge', () => {
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+  it('consumed ancestor key is removed from the map after reverse re-merge', () => {
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 350 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100, 'B': 100 }, totalStrikes: 150 });
     absorbInto(c, b); // C absorbs B
-    expect(c.splitLineage).not.toContain('B'); // 'B' consumed and removed
-    expect(c.splitLineage).toContain('A');     // A (B's ancestor) inherited
+    expect('B' in c.initialStrikesByAncestor).toBe(false); // 'B' consumed and removed
+    expect('A' in c.initialStrikesByAncestor).toBe(true);  // A (B's ancestor) inherited
   });
 
-  it('does not add duplicate ancestors when small and big share lineage entries', () => {
-    // A → B (B.splitLineage=['A']). B → C (C.splitLineage=['A','B']).
-    // C absorbs B: 'A' is in both — should not duplicate.
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A', 'B'], initialTotalStrikes: 100, totalStrikes: 150 });
+  it('map key appears exactly once even when both storm have the same ancestor', () => {
+    // A → B (B.map={'A':200}). B → C (C.map={'A':100, 'B':100}).
+    // C absorbs B: 'A' from B.map overwrites C.map['A']. Still just one entry.
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 350 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100, 'B': 100 }, totalStrikes: 150 });
     absorbInto(c, b);
-    expect(c.splitLineage.filter(k => k === 'A').length).toBe(1);
+    expect(Object.keys(c.initialStrikesByAncestor).filter(k => k === 'A').length).toBe(1);
   });
 });
 
-// ── Gap 1: non-adoption merges patch splitLineage of surviving storms ─────
+// ── Non-adoption merges patch ancestor map of surviving storms ────────────
 
-describe('non-adoption merge patches splitLineage references to absorbed key', () => {
-  // Mirrors the patch that call sites must apply after absorbInto in the non-adoption path.
-  // The test uses the adoptKey helper to simulate the patch and verifies the scenario end-to-end.
-
-  it('E can correctly re-merge into C after B (E\'s lineage entry) was absorbed into C', () => {
-    // A splits → B. B splits → E (E.splitLineage=['A','B']).
-    // B is absorbed (non-adoption) into C. The patch should redirect B→C in E's lineage.
-    const e = makeStorm({ key: 'E', splitLineage: ['A', 'B'], initialTotalStrikes: 80, totalStrikes: 200 });
+describe('non-adoption merge patches ancestor map references to absorbed key', () => {
+  it('E can correctly re-merge into C after B (E\'s ancestor entry) was absorbed into C', () => {
+    // E.map={'A':80, 'B':80}. B absorbed (non-adoption) into C.
+    // The patch renames 'B' → 'C' in E's map.
+    const e = makeStorm({ key: 'E', initialStrikesByAncestor: { 'A': 80, 'B': 80 }, totalStrikes: 200 });
     const storms = [e];
 
-    // Simulate the non-adoption patch: B was absorbed into C, so redirect 'B' → 'C'
+    // Simulate the non-adoption patch: B was absorbed into C
     for (const st of storms) {
-      const i = st.splitLineage.indexOf('B');
-      if (i !== -1) st.splitLineage[i] = 'C';
+      if ('B' in st.initialStrikesByAncestor) {
+        st.initialStrikesByAncestor['C'] = st.initialStrikesByAncestor['B'];
+        delete st.initialStrikesByAncestor['B'];
+      }
     }
-    expect(e.splitLineage).toEqual(['A', 'C']); // 'B' replaced with 'C'
+    expect('C' in e.initialStrikesByAncestor).toBe(true);
+    expect('B' in e.initialStrikesByAncestor).toBe(false);
 
-    // E now re-merges into C — correction should apply because C is in E's lineage
+    // E now re-merges into C — correction should apply
     const c = makeStorm({ key: 'C', totalStrikes: 3000 });
-    absorbInto(c, e); // isDescendantOfBig: E.splitLineage.includes('C') = true
+    absorbInto(c, e); // overlapInBig = e.initialStrikesByAncestor['C'] = 80
     // netNew = 200 - 80 = 120
     expect(c.totalStrikes).toBe(3120);
   });
 
   it('without the patch, the same re-merge double-counts', () => {
-    // Same scenario but WITHOUT patching — shows what the bug looked like before the fix.
-    const e = makeStorm({ key: 'E', splitLineage: ['A', 'B'], initialTotalStrikes: 80, totalStrikes: 200 });
+    // Same scenario but WITHOUT patching — shows what the bug looks like.
+    const e = makeStorm({ key: 'E', initialStrikesByAncestor: { 'A': 80, 'B': 80 }, totalStrikes: 200 });
     const c = makeStorm({ key: 'C', totalStrikes: 3000 });
-    // No patch: e.splitLineage still has 'B', not 'C'
-    absorbInto(c, e); // no ancestry match → full count
-    expect(c.totalStrikes).toBe(3200); // double-counts E.initTotal (80)
+    // No patch: 'C' not in e's map, no ancestry → full count
+    absorbInto(c, e);
+    expect(c.totalStrikes).toBe(3200); // double-counts the 80 overlap
   });
 });
 
-// ── Lineage propagation through intermediate merges ───────────────────────
+// ── Ancestor map propagation through intermediate merges ──────────────────
 
-describe('absorbInto — lineage propagation', () => {
-  it('sibling merge: B absorbs C (both from A) → combined initialTotalStrikes used when re-merging into A', () => {
-    // A splits into B (initial=200) and C (initial=150).
-    // B accumulates 80 new, C accumulates 50 new.
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 280 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A'], initialTotalStrikes: 150, totalStrikes: 200 });
-    // B absorbs C — correction doesn't apply (C.splitLineage doesn't include B.key)
+describe('absorbInto — ancestor map propagation', () => {
+  it('sibling merge: B absorbs C (both from A) → combined overlap used when re-merging into A', () => {
+    // B.map={'A':200}, C.map={'A':150}.
+    // B absorbs C (no ancestry → ADD: B.map['A']=350). B.total=480.
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 280 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 150 }, totalStrikes: 200 });
     absorbInto(b, c);
-    // Full count added: 280 + 200 = 480
     expect(b.totalStrikes).toBe(480);
-    // Lineage propagated: B's initialTotalStrikes now covers both overlap slices
-    expect(b.initialTotalStrikes).toBe(350); // 200 + 150
-    expect(b.splitLineage).toEqual(['A']);    // 'A' already present, no duplicate
+    expect(b.initialStrikesByAncestor['A']).toBe(350); // 200 + 150
 
     // B (now carrying C) re-merges into A
     const a = makeStorm({ key: 'A', totalStrikes: 5000 });
     absorbInto(a, b);
-    // Net-new = 480 - 350 = 130 (= 80 new from B + 50 new from C)
+    // overlapInBig = b.initialStrikesByAncestor['A'] = 350
+    // netNew = 480 - 350 = 130 (= 80 new from B + 50 new from C)
     expect(a.totalStrikes).toBe(5130);
   });
 
-  it('third-party absorption: C absorbs B (B from A) → C inherits lineage and corrects on re-merge into A', () => {
-    // B split from A (initial=200). C is unrelated.
-    // B has grown to 350 (150 net-new). C stands at 1000.
-    const c = makeStorm({ key: 'C', splitLineage: [], initialTotalStrikes: 0, totalStrikes: 1000 });
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 200, totalStrikes: 350 });
-    // C absorbs B — correction doesn't apply
+  it('third-party absorption: C absorbs B (B from A) → C inherits ancestor map and corrects on re-merge into A', () => {
+    // B.map={'A':200}. C.map={}.
+    // C absorbs B (no ancestry → ADD: C.map['A']=200). C.total=1350.
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: {}, totalStrikes: 1000 });
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 350 });
     absorbInto(c, b);
-    expect(c.totalStrikes).toBe(1350);         // 1000 + 350 full
-    expect(c.splitLineage).toEqual(['A']);      // inherited from B
-    expect(c.initialTotalStrikes).toBe(200);   // inherited from B
+    expect(c.totalStrikes).toBe(1350);
+    expect(c.initialStrikesByAncestor['A']).toBe(200); // inherited from B
 
     // C re-merges into A
     const a = makeStorm({ key: 'A', totalStrikes: 5000 });
     absorbInto(a, c);
-    // Net-new = 1350 - 200 = 1150 (1000 from C itself + 150 net-new from B)
+    // overlapInBig = c.initialStrikesByAncestor['A'] = 200
+    // netNew = 1350 - 200 = 1150
     expect(a.totalStrikes).toBe(6150);
   });
 
-  it('lineage union: merging two storms from different ancestors merges both lineages', () => {
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 100, totalStrikes: 300 });
-    const c = makeStorm({ key: 'C', splitLineage: ['D'], initialTotalStrikes: 80,  totalStrikes: 200 });
+  it('merging two storms from different ancestors accumulates both entries into the map', () => {
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 100 }, totalStrikes: 300 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'D': 80  }, totalStrikes: 200 });
     absorbInto(b, c);
-    expect(b.splitLineage).toContain('A');
-    expect(b.splitLineage).toContain('D');
-    expect(b.initialTotalStrikes).toBe(180); // 100 + 80
+    // ADD each of c's entries into b's map
+    expect(b.initialStrikesByAncestor['A']).toBe(100);
+    expect(b.initialStrikesByAncestor['D']).toBe(80);
   });
 
-  it('no duplicate ancestors when siblings share the same lineage entry', () => {
-    const b = makeStorm({ key: 'B', splitLineage: ['A'], initialTotalStrikes: 100, totalStrikes: 300 });
-    const c = makeStorm({ key: 'C', splitLineage: ['A'], initialTotalStrikes: 80,  totalStrikes: 200 });
+  it('shared ancestor key ADDs when merging siblings (no duplicate map entries)', () => {
+    const b = makeStorm({ key: 'B', initialStrikesByAncestor: { 'A': 100 }, totalStrikes: 300 });
+    const c = makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 80  }, totalStrikes: 200 });
     absorbInto(b, c);
-    expect(b.splitLineage.filter(k => k === 'A').length).toBe(1); // 'A' appears once
+    // ADD: B.map['A'] = 100+80=180. Map is a plain object — only one 'A' key.
+    expect(Object.keys(b.initialStrikesByAncestor).filter(k => k === 'A').length).toBe(1);
+    expect(b.initialStrikesByAncestor['A']).toBe(180);
   });
 });
 
-// ── Key adoption: splitLineage patch ─────────────────────────────────────
+// ── Key adoption: ancestor map patch ─────────────────────────────────────
 
-describe('key adoption patches splitLineage references', () => {
-  it('updates splitLineage entries that pointed at the old key', () => {
+describe('key adoption patches ancestor map references', () => {
+  it('updates ancestor map entries that pointed at the old key', () => {
     const storms: MinTrackedStorm[] = [
       makeStorm({ key: 'A', totalStrikes: 5000 }),
-      makeStorm({ key: 'C', splitLineage: ['A'], totalStrikes: 300 }),
-      makeStorm({ key: 'D', splitLineage: ['A', 'X'], totalStrikes: 200 }),
+      makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 200 }, totalStrikes: 300 }),
+      makeStorm({ key: 'D', initialStrikesByAncestor: { 'A': 150, 'X': 80 }, totalStrikes: 200 }),
     ];
-    // A adopts key 'B' (small had DB entry, big didn't)
     adoptKey(storms, storms[0], 'B');
     expect(storms[0].key).toBe('B');
-    expect(storms[1].splitLineage).toEqual(['B']); // updated
-    expect(storms[2].splitLineage).toEqual(['B', 'X']); // first entry updated
+    // 'A' → 'B' in C's map, value preserved
+    expect('B' in storms[1].initialStrikesByAncestor).toBe(true);
+    expect('A' in storms[1].initialStrikesByAncestor).toBe(false);
+    expect(storms[1].initialStrikesByAncestor['B']).toBe(200);
+    // 'A' → 'B' in D's map; unrelated 'X' entry preserved
+    expect('B' in storms[2].initialStrikesByAncestor).toBe(true);
+    expect('A' in storms[2].initialStrikesByAncestor).toBe(false);
+    expect(storms[2].initialStrikesByAncestor['X']).toBe(80);
   });
 
-  it('does not affect unrelated splitLineage entries', () => {
+  it('does not affect unrelated ancestor map entries', () => {
     const storms: MinTrackedStorm[] = [
       makeStorm({ key: 'A', totalStrikes: 5000 }),
-      makeStorm({ key: 'E', splitLineage: ['X', 'Y'], totalStrikes: 100 }),
+      makeStorm({ key: 'E', initialStrikesByAncestor: { 'X': 100, 'Y': 50 }, totalStrikes: 100 }),
     ];
     adoptKey(storms, storms[0], 'B');
-    expect(storms[1].splitLineage).toEqual(['X', 'Y']); // unchanged
+    expect(storms[1].initialStrikesByAncestor).toEqual({ 'X': 100, 'Y': 50 }); // unchanged
   });
 
   it('correction still applies after key adoption', () => {
     // A absorbs small, adopts small's DB key 'DB-key'
     const storms: MinTrackedStorm[] = [
       makeStorm({ key: 'A', totalStrikes: 8000 }),
-      makeStorm({ key: 'C', splitLineage: ['A'], initialTotalStrikes: 100, totalStrikes: 400 }),
+      makeStorm({ key: 'C', initialStrikesByAncestor: { 'A': 100 }, totalStrikes: 400 }),
     ];
     adoptKey(storms, storms[0], 'DB-key');
-    // Now C.splitLineage = ['DB-key'], big.key = 'DB-key'
+    // C.map = { 'DB-key': 100 }, big.key = 'DB-key'
     const { mergedStrikes } = absorbInto(storms[0], storms[1]);
-    // Net-new = 400 - 100 = 300 (correction still applied correctly)
+    // overlapInBig = c.initialStrikesByAncestor['DB-key'] = 100
+    // netNew = 400 - 100 = 300
     expect(mergedStrikes).toBe(300);
     expect(storms[0].totalStrikes).toBe(8300);
   });
@@ -539,7 +557,7 @@ describe('split detection heuristic', () => {
   const TRACKER_MERGE_KM = 100;
   const SPLIT_DETECT_KM = 200;
 
-  interface ExistingStorm { lat: number; lon: number; key: string; splitLineage: string[] }
+  interface ExistingStorm { lat: number; lon: number; key: string; initialStrikesByAncestor: Record<string, number> }
 
   // Mirrors the detection logic from route.ts
   function detectSplitParent(
@@ -557,13 +575,19 @@ describe('split detection heuristic', () => {
     return nearestParent;
   }
 
-  function buildLineage(parent: ExistingStorm): string[] {
-    return [...parent.splitLineage, parent.key];
+  // Mirrors split detection ancestor map population from route.ts
+  function buildAncestorMap(parent: ExistingStorm, freshTotal: number): Record<string, number> {
+    const map: Record<string, number> = {};
+    map[parent.key] = freshTotal; // direct parent overlap = fresh storm's entire total
+    for (const [k, v] of Object.entries(parent.initialStrikesByAncestor)) {
+      map[k] = Math.min(freshTotal, v); // grandparent overlaps capped at fresh total
+    }
+    return map;
   }
 
   it('returns null when no existing storms are within SPLIT_DETECT_KM', () => {
     const parent = detectSplitParent(52, 5, [
-      { lat: 48, lon: 5, key: 'far-storm', splitLineage: [] }, // ~444 km away
+      { lat: 48, lon: 5, key: 'far-storm', initialStrikesByAncestor: {} }, // ~444 km away
     ]);
     expect(parent).toBeNull();
   });
@@ -571,7 +595,7 @@ describe('split detection heuristic', () => {
   it('detects split when fresh storm is within SPLIT_DETECT_KM but beyond TRACKER_MERGE_KM', () => {
     // ~167 km north — inside split window (100–200 km)
     const parent = detectSplitParent(52, 5, [
-      { lat: 50.5, lon: 5, key: 'parent-storm', splitLineage: [] },
+      { lat: 50.5, lon: 5, key: 'parent-storm', initialStrikesByAncestor: {} },
     ]);
     expect(parent?.key).toBe('parent-storm');
   });
@@ -579,38 +603,44 @@ describe('split detection heuristic', () => {
   it('returns null when fresh storm is within TRACKER_MERGE_KM (would be merged by Phase 1)', () => {
     // ~55 km — Phase 1 consolidation would absorb this
     const parent = detectSplitParent(52, 5, [
-      { lat: 51.5, lon: 5, key: 'too-close-storm', splitLineage: [] },
+      { lat: 51.5, lon: 5, key: 'too-close-storm', initialStrikesByAncestor: {} },
     ]);
     expect(parent).toBeNull();
   });
 
   it('picks the closest eligible parent', () => {
     const parent = detectSplitParent(52, 5, [
-      { lat: 50.5, lon: 5, key: 'closer-parent', splitLineage: [] },  // ~167 km
-      { lat: 49, lon: 5, key: 'farther-parent', splitLineage: [] },   // ~333 km — outside window
+      { lat: 50.5, lon: 5, key: 'closer-parent', initialStrikesByAncestor: {} },  // ~167 km
+      { lat: 49, lon: 5, key: 'farther-parent', initialStrikesByAncestor: {} },   // ~333 km — outside window
     ]);
     expect(parent?.key).toBe('closer-parent');
   });
 
-  it('propagates grandparent ancestry into the grandchild lineage', () => {
-    // A splits → B (B.splitLineage = ['A']).
-    // B splits → C: C should get lineage ['A', 'B'].
-    const parentB: ExistingStorm = { lat: 52, lon: 5, key: 'B', splitLineage: ['A'] };
-    const lineage = buildLineage(parentB);
-    expect(lineage).toEqual(['A', 'B']);
+  it('records direct parent overlap and inherits grandparent overlaps with cap', () => {
+    // A (parent) has map={'Original':300}. Fresh storm (total=150) splits from A.
+    // Fresh.map = { 'A': 150, 'Original': min(150, 300) = 150 }.
+    const parentA: ExistingStorm = {
+      lat: 52, lon: 5, key: 'A',
+      initialStrikesByAncestor: { 'Original': 300 },
+    };
+    const freshTotal = 150;
+    const map = buildAncestorMap(parentA, freshTotal);
+    expect(map['A']).toBe(freshTotal);    // direct parent overlap = freshTotal
+    expect(map['Original']).toBe(150);    // capped at freshTotal (not 300)
   });
 
-  it('grandchild lineage includes grandparent key for absorbInto correction', () => {
-    // Verify that when A.key appears in C.splitLineage, absorbInto applies the fix
-    const a = makeStorm({ key: 'A', totalStrikes: 10_000 });
+  it('grandchild ancestor map includes grandparent key — absorbInto applies correction', () => {
+    // When 'Original' appears in C's map, absorbInto must correct on re-merge.
+    const original = makeStorm({ key: 'Original', totalStrikes: 10_000 });
     const c = makeStorm({
       key: 'C',
-      splitLineage: ['A', 'B'],
-      initialTotalStrikes: 150,
+      initialStrikesByAncestor: { 'Original': 150, 'B': 400 },
       totalStrikes: 400,
     });
-    absorbInto(a, c);
-    expect(a.totalStrikes).toBe(10_250); // 10000 + (400 - 150)
+    absorbInto(original, c);
+    // overlapInBig = c.initialStrikesByAncestor['Original'] = 150
+    // netNew = 400 - 150 = 250
+    expect(original.totalStrikes).toBe(10_250);
   });
 });
 
