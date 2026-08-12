@@ -715,46 +715,6 @@ export function rebuildStormRecords(): void {
   upsertStormRecords(candidates);
 }
 
-export function repairTaintedStormData(): void {
-  const db = getDb();
-
-  // Only run once — flag stored in the counters table.
-  const done = db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v1_done') as { value: string } | undefined;
-  if (done) {
-    // repair_v1 already ran but wiped storm_records without rebuilding them.
-    // Rebuild once more (repair_v2) to restore the records from surviving storms.
-    const rebuilt = db.prepare('SELECT value FROM counters WHERE key = ?').get('repair_v2_done') as { value: string } | undefined;
-    if (!rebuilt) {
-      rebuildStormRecords();
-      db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v2_done', '1');
-    }
-    return;
-  }
-
-  const sixHoursMs = 6 * 60 * 60 * 1000;
-
-  // Delete log rows whose tracked duration exceeds 6 hours — these are the
-  // ones most likely to be two storms merged by the old 6-hour re-match window.
-  db.prepare(`
-    DELETE FROM storms
-    WHERE start_time IS NOT NULL
-      AND end_time IS NOT NULL
-      AND (end_time - start_time) > ?
-  `).run(sixHoursMs);
-
-  // Remove country-biggest entries whose referenced storm was just deleted.
-  db.prepare(`
-    DELETE FROM country_biggest_storms
-    WHERE storm_key IS NOT NULL
-      AND storm_key NOT IN (SELECT storm_key FROM storms WHERE storm_key IS NOT NULL)
-  `).run();
-
-  // Rebuild global records from the surviving clean storm rows.
-  rebuildStormRecords();
-
-  db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('repair_v1_done', '1');
-}
-
 /** Returns lat/lon for all recent (within 1 hour) DB storm entries, keyed by storm_key. */
 export function getRecentStormPositions(): Map<string, { lat: number; lon: number }> {
   const db = getDb();
