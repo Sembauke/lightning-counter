@@ -56,6 +56,7 @@ export default function StormEventsWidget({ stormKey, isLive, stormTotal }: Prop
                 </span>
                 <span className="storm-event-label">
                   {isMerge ? 'Absorbed' : 'Split off'}
+                  {ev.fragmentLabel ? ` · ${ev.fragmentLabel}` : ''}
                   {ev.relatedCity ? ` · ${ev.relatedCity}` : ''}
                 </span>
                 {showCount

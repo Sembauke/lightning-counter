@@ -15,6 +15,7 @@ import { useTornado } from '../context/TornadoContext';
 import { useStormOutline } from '../context/StormOutlineContext';
 import { useStormMerge, type MergeStatus } from '../context/StormMergeContext';
 import { useCountryName } from '../hooks/useCountryName';
+import { densityCore, rasteriseBuffer, marchingSquares } from '../lib/stormOutline';
 
 interface FlashRing {
   nx: number;
@@ -518,10 +519,15 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
           const countStr = cell.totalStrikes >= 1000 ? `${(cell.totalStrikes / 1000).toFixed(1)}k` : String(cell.totalStrikes);
           const trackTag = cell.hasPage ? `<span class="storm-track-tag">tracking</span>` : '';
+          const _cellMergeStatus = mergeMapRef.current.get(_cellKeyS);
+          const mergeTag = _cellMergeStatus?.type === 'merging'
+            ? `<span class="storm-merge-tag">merging</span>` : '';
+          const splitTag = _cellMergeStatus?.type === 'splitting' && cell.rate >= 20
+            ? `<span class="storm-split-tag">splitting?</span>` : '';
           const inner = `<span class="storm-rank-num">⚡ #${cell.rank}</span>`
             + `<span class="storm-rank-total">${countStr} strikes</span>`
             + `<span class="storm-rank-rate">${rateStr}</span>`
-            + trackTag;
+            + trackTag + mergeTag + splitTag;
           // Offset the label by 80 km east so it clears the storm cluster at any zoom.
           // Project a point 80 km east of the centroid; the pixel difference scales
           // automatically with zoom (≈130 px at z8, ≈30 px at z4).
@@ -840,8 +846,10 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           const HULL_KM = 55;
           // Collect strikes within a wider radius so a drifted server centroid still catches nearby activity
           const COLLECT_KM = 120;
+          // Per-strike expansion radius: each strike adds this buffer to the storm region
+          const BUFFER_KM = 10;
           const allPts = [...heatmapBufferRef.current, ...dbBufferRef.current];
-          const outlineCutoff = Date.now() - WINDOW_MS;
+          const outlineCutoff = Date.now() - 10 * 60 * 1000;
 
           // Phase 1: compute per-storm canvas coords + nearby strike points
           const stormData = s.stormRankCells.map(cell => {
@@ -880,7 +888,18 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             maxDistPx = Math.max(minHullPx, maxDistPx);
             const _cellKey = cell.stormKey ?? `rank-${cell.rank}`;
             const vel = stormVelocitiesRef.current.get(_cellKey) ?? null;
-            return { cx, cy, radiusPx, hullPts, maxDistPx, lat: cell.lat, lon: cell.lon, vel, rate: cell.rate, rank: cell.rank, hasPage: cell.hasPage };
+            // Buffer extent: farthest strike from centroid + BUFFER_KM. Used by
+            // the union-find and convergence timers instead of the old hull radius.
+            let maxScreenDistPx = 0;
+            for (const p of screenPts) {
+              const d = Math.hypot(p.x - cx, p.y - cy);
+              if (d > maxScreenDistPx) maxScreenDistPx = d;
+            }
+            const bufLonDeg = BUFFER_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
+            const bufExtNx = mercNX(cell.lon + bufLonDeg);
+            const _bufPx = Math.max(12, Math.abs((bufExtNx * drawScale + heatDrawOx) - cx));
+            const bufferExtentPx = maxScreenDistPx + _bufPx;
+            return { cx, cy, radiusPx, hullPts, screenPts, maxDistPx, bufferExtentPx, lat: cell.lat, lon: cell.lon, vel, rate: cell.rate, rank: cell.rank, hasPage: cell.hasPage };
           });
 
           const timeToThresholdMin = (
@@ -923,9 +942,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 Math.pow((sj.lon - si.lon) * 111.32 * cosLat, 2) +
                 Math.pow((sj.lat - si.lat) * 111.32, 2)
               );
-              const iHullKm = (si.maxDistPx / si.radiusPx) * OUTLINE_KM;
-              const jHullKm = (sj.maxDistPx / sj.radiusPx) * OUTLINE_KM;
-              if (distKm < iHullKm + jHullKm) {
+              const iExtentKm = (si.bufferExtentPx / si.radiusPx) * OUTLINE_KM;
+              const jExtentKm = (sj.bufferExtentPx / sj.radiusPx) * OUTLINE_KM;
+              if (distKm < iExtentKm + jExtentKm) {
                 parent[findRoot(i)] = findRoot(j);
               }
             }
@@ -991,6 +1010,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             // Merged groups (size > 1): check if diverging → splitting
             for (const group of groups.values()) {
               if (group.length <= 1) continue;
+              const groupPeakRate2 = Math.max(...group.map(d => d.rate));
               // Check if any pair within the group is diverging
               let isSplitting = false;
               let splitMinMin = Infinity;
@@ -1013,7 +1033,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                   }
                 }
               }
-              isSplitting = splitMinMin >= 5 && splitMinMin < 60;
+              isSplitting = splitMinMin >= 5 && splitMinMin < 60 && groupPeakRate2 >= 20;
               if (isSplitting) {
                 const splitEstMin = Math.round(splitMinMin);
                 const splitStatus: MergeStatus = { type: 'splitting', estimatedMinutes: splitEstMin };
@@ -1037,8 +1057,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 const _curDistKm2 = Math.sqrt(Math.pow((gbLon2 - gaLon2) * 111.32 * _cosLat2, 2) + Math.pow((gbLat2 - gaLat2) * 111.32, 2));
                 if (_curDistKm2 > OUTLINE_KM * 3) continue; // too far apart to credibly predict merging
                 // Threshold = sum of actual hull extents — timer reaches 0 when green edges touch
-                const gaHullKm = Math.max(...ga2.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
-                const gbHullKm = Math.max(...gb2.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
+                const gaHullKm = Math.max(...ga2.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
+                const gbHullKm = Math.max(...gb2.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
                 const hullTouchKm = gaHullKm + gbHullKm;
                 const tMin2 = timeToThresholdMin(gaLat2, gaLon2, ga2[0].vel, gbLat2, gbLon2, gb2[0].vel, hullTouchKm);
                 const isConverging2 = tMin2 !== null && tMin2 >= 0 && tMin2 < 120;
@@ -1092,8 +1112,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
               const _cosLat = Math.cos(((gaLat + gbLat) / 2) * Math.PI / 180);
               const _curDistKm = Math.sqrt(Math.pow((gbLon - gaLon) * 111.32 * _cosLat, 2) + Math.pow((gbLat - gaLat) * 111.32, 2));
               if (_curDistKm > OUTLINE_KM * 3) continue;
-              const _gaHullKm = Math.max(...ga.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
-              const _gbHullKm = Math.max(...gb.map(d => (d.maxDistPx / d.radiusPx) * OUTLINE_KM));
+              const _gaHullKm = Math.max(...ga.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
+              const _gbHullKm = Math.max(...gb.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
               const tMin = timeToThresholdMin(gaLat, gaLon, ga[0].vel, gbLat, gbLon, gb[0].vel, _gaHullKm + _gbHullKm);
               const isConverging = tMin !== null && tMin >= 0 && tMin < 120;
               if (!isConverging) continue;
@@ -1124,48 +1144,45 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             }
           }
 
-          // PCA ellipse: fits the principal axes of the strike distribution
-          const fitEllipse = (pts: Array<{ x: number; y: number }>, fallbackR: number, fcx: number, fcy: number, sigma: number) => {
-            if (pts.length < 5) return { ex: fcx, ey: fcy, rx: fallbackR, ry: Math.max(fallbackR * 0.4, 15), angle: 0 };
-            const mx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-            const my = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-            let vxx = 0, vyy = 0, vxy = 0;
-            for (const p of pts) { const dx = p.x - mx, dy = p.y - my; vxx += dx*dx; vyy += dy*dy; vxy += dx*dy; }
-            vxx /= pts.length; vyy /= pts.length; vxy /= pts.length;
-            const trace = vxx + vyy;
-            const disc = Math.sqrt(Math.max(0, (trace / 2) ** 2 - (vxx * vyy - vxy * vxy)));
-            const l1 = trace / 2 + disc;
-            const l2 = Math.max(0, trace / 2 - disc);
-            const angle = Math.atan2(l1 - vxx, vxy);
-            const rx = Math.max(fallbackR * 0.4, sigma * Math.sqrt(l1));
-            const ry = Math.max(fallbackR * 0.2, sigma * Math.sqrt(l2));
-            return { ex: mx, ey: my, rx, ry, angle };
-          };
-
           for (const group of groups.values()) {
-            const mergedPts = group.flatMap(d => d.hullPts);
+            const mergedPts = group.flatMap(d => d.screenPts);
             const gcx = group.reduce((sum, d) => sum + d.cx, 0) / group.length;
             const gcy = group.reduce((sum, d) => sum + d.cy, 0) / group.length;
             const gRadiusPx = Math.max(...group.map(d => d.radiusPx));
             const peakRate = Math.max(...group.map(d => d.rate));
             const isWeak = peakRate < 20;
 
-            const ellipse = fitEllipse(mergedPts, gRadiusPx, gcx, gcy, 2.5);
+            // Buffer radius in pixels corresponding to BUFFER_KM on the ground
+            const bufferPx = Math.max(12, gRadiusPx * BUFFER_KM / OUTLINE_KM);
+
+            // Density core: grid cell with the highest strike count
+            const coreCellPx = Math.max(8, Math.round(bufferPx));
+            const coreGrid = new Map<string, { sx: number; sy: number; n: number }>();
+            for (const p of mergedPts) {
+              const k = `${Math.floor(p.x / coreCellPx)}:${Math.floor(p.y / coreCellPx)}`;
+              const c = coreGrid.get(k);
+              if (c) { c.sx += p.x; c.sy += p.y; c.n++; }
+              else coreGrid.set(k, { sx: p.x, sy: p.y, n: 1 });
+            }
+            let coreCX = gcx, coreCY = gcy, bestN = 0;
+            for (const c of coreGrid.values()) {
+              if (c.n > bestN) { bestN = c.n; coreCX = c.sx / c.n; coreCY = c.sy / c.n; }
+            }
 
             hCtx.save();
+
             if (isWeak) {
-              // Red neon ellipse — tight PCA fit around weak untracked cluster
+              // Red circle for weak untracked clusters
+              const weakPrimaryRank = Math.min(...group.map(d => d.rank));
+              const weakRateStr = `${Math.round(peakRate)}/m`;
               hCtx.strokeStyle = '#ff2d2d';
               hCtx.shadowColor = '#ff2d2d';
               hCtx.shadowBlur = 10;
               hCtx.lineWidth = 1.5;
               hCtx.globalAlpha = 0.85;
               hCtx.beginPath();
-              hCtx.ellipse(ellipse.ex, ellipse.ey, ellipse.rx, ellipse.ry, ellipse.angle, 0, Math.PI * 2);
+              hCtx.arc(coreCX, coreCY, bufferPx, 0, Math.PI * 2);
               hCtx.stroke();
-              // Label inside at ellipse center — outline technique for legibility
-              const weakPrimaryRank = Math.min(...group.map(d => d.rank));
-              const weakRateStr = `${Math.round(peakRate)}/m`;
               hCtx.font = 'bold 11px sans-serif';
               hCtx.textAlign = 'center';
               hCtx.textBaseline = 'middle';
@@ -1178,20 +1195,87 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 hCtx.fillStyle = '#ff6060';
                 hCtx.fillText(text, tx, ty);
               };
-              _drawWeakText(`#${weakPrimaryRank}`, ellipse.ex, ellipse.ey - 8);
-              _drawWeakText(weakRateStr, ellipse.ex, ellipse.ey + 8);
+              _drawWeakText(`#${weakPrimaryRank}`, coreCX, coreCY - 8);
+              _drawWeakText(weakRateStr, coreCX, coreCY + 8);
             } else {
-              // Green: PCA ellipse for active storms
+              // ── Connection lines: each strike → nearest neighbour within bufferPx ──
+              {
+                const bucketSz = bufferPx;
+                const spatialGrid = new Map<string, Array<{ x: number; y: number; i: number }>>();
+                mergedPts.forEach((p, i) => {
+                  const k = `${Math.floor(p.x / bucketSz)},${Math.floor(p.y / bucketSz)}`;
+                  if (!spatialGrid.has(k)) spatialGrid.set(k, []);
+                  spatialGrid.get(k)!.push({ x: p.x, y: p.y, i });
+                });
+                hCtx.strokeStyle = '#39ff14';
+                hCtx.shadowColor = '#39ff14';
+                hCtx.shadowBlur = 3;
+                hCtx.lineWidth = 0.5;
+                hCtx.globalAlpha = 0.25;
+                hCtx.beginPath();
+                const bufD2 = bufferPx * bufferPx;
+                const drawnPairs = new Set<number>();
+                mergedPts.forEach((p, i) => {
+                  const bcx = Math.floor(p.x / bucketSz);
+                  const bcy = Math.floor(p.y / bucketSz);
+                  let nearDist = bufD2 + 1, nearIdx = -1;
+                  for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                      for (const n of (spatialGrid.get(`${bcx+dx},${bcy+dy}`) ?? [])) {
+                        if (n.i === i) continue;
+                        const d2 = (n.x - p.x) ** 2 + (n.y - p.y) ** 2;
+                        if (d2 < nearDist) { nearDist = d2; nearIdx = n.i; }
+                      }
+                    }
+                  }
+                  if (nearIdx >= 0 && nearDist <= bufD2) {
+                    const lo = Math.min(i, nearIdx), hi = Math.max(i, nearIdx);
+                    const pk = lo * 1_000_000 + hi;
+                    if (!drawnPairs.has(pk)) {
+                      drawnPairs.add(pk);
+                      hCtx.moveTo(p.x, p.y);
+                      hCtx.lineTo(mergedPts[nearIdx].x, mergedPts[nearIdx].y);
+                    }
+                  }
+                });
+                hCtx.stroke();
+              }
+
+              // ── Buffer outline via utility functions ──
+              {
+                const bg = rasteriseBuffer(mergedPts, bufferPx);
+                if (bg) {
+                  const segs = marchingSquares(bg);
+                  hCtx.strokeStyle = '#39ff14';
+                  hCtx.shadowColor = '#39ff14';
+                  hCtx.shadowBlur = 12;
+                  hCtx.lineWidth = 1.5;
+                  hCtx.globalAlpha = 0.9;
+                  hCtx.beginPath();
+                  for (const [ax, ay, bx, by] of segs) {
+                    hCtx.moveTo(ax, ay); hCtx.lineTo(bx, by);
+                  }
+                  hCtx.stroke();
+                }
+              }
+
+              // ── Density core marker via utility function ──
+              {
+                const core = densityCore(mergedPts, bufferPx);
+                coreCX = core.x; coreCY = core.y;
+              }
               hCtx.strokeStyle = '#39ff14';
               hCtx.shadowColor = '#39ff14';
-              hCtx.shadowBlur = 10;
-              hCtx.lineWidth = 1.5;
-              hCtx.globalAlpha = 0.85;
+              hCtx.shadowBlur = 16;
+              hCtx.lineWidth = 2;
+              hCtx.globalAlpha = 1;
+              const cs = 6;
               hCtx.beginPath();
-              hCtx.ellipse(ellipse.ex, ellipse.ey, ellipse.rx, ellipse.ry, ellipse.angle, 0, Math.PI * 2);
+              hCtx.moveTo(coreCX - cs, coreCY); hCtx.lineTo(coreCX + cs, coreCY);
+              hCtx.moveTo(coreCX, coreCY - cs); hCtx.lineTo(coreCX, coreCY + cs);
               hCtx.stroke();
 
-              // Merge/split status text on the ellipse
+              // ── Merge/split status text ──
               const _primaryD = group.reduce((a, b) => a.rank < b.rank ? a : b);
               const _primaryIdx = stormData.indexOf(_primaryD);
               const _primaryKey = _primaryIdx >= 0 ? (s.stormRankCells[_primaryIdx].stormKey ?? `rank-${s.stormRankCells[_primaryIdx].rank}`) : null;
@@ -1212,27 +1296,14 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                   hCtx.shadowBlur = 0;
                   hCtx.lineWidth = 3;
                   hCtx.strokeStyle = 'rgba(0,0,0,0.85)';
-                  hCtx.strokeText(_statusText, ellipse.ex, ellipse.ey);
+                  hCtx.strokeText(_statusText, coreCX, coreCY + 15);
                   hCtx.fillStyle = '#ffaa00';
-                  hCtx.fillText(_statusText, ellipse.ex, ellipse.ey);
+                  hCtx.fillText(_statusText, coreCX, coreCY + 15);
                 }
               }
-
-              // Blue: expanded ellipse showing full reach
-              const blueEllipse = fitEllipse(mergedPts, gRadiusPx, gcx, gcy, 4.0);
-              hCtx.strokeStyle = '#00cfff';
-              hCtx.shadowColor = '#00cfff';
-              hCtx.shadowBlur = 10;
-              hCtx.lineWidth = 1.5;
-              hCtx.globalAlpha = 0.65;
-              hCtx.setLineDash([6, 4]);
-              hCtx.beginPath();
-              hCtx.ellipse(blueEllipse.ex, blueEllipse.ey, blueEllipse.rx, blueEllipse.ry, blueEllipse.angle, 0, Math.PI * 2);
-              hCtx.stroke();
-              hCtx.setLineDash([]);
             }
-            hCtx.restore();
 
+            hCtx.restore();
           }
         }
 

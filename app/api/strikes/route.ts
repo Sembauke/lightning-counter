@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
@@ -190,6 +190,14 @@ interface TrackedStorm {
   // split-detection guard so Phase 1/2 absorptions (which also populate
   // initialStrikesByAncestor) don't incorrectly suppress re-detection.
   splitDetected: boolean;
+  // Timestamp when this storm was first detected as a split candidate (ms).
+  // Null until split detection marks it. The split event is only recorded
+  // after SPLIT_CONFIRM_MS to filter transient clusters that re-merge quickly.
+  splitCandidateAt: number | null;
+  // Human-readable label assigned when split detection fires (e.g. "F1", "F2").
+  // Null for storms that formed independently. Carried through merges so that
+  // absorbing a known fragment can surface the label in the event log.
+  fragmentLabel: string | null;
 }
 // Maximum match window — a cell within this distance of a tracked storm's last
 // centroid is a candidate. The effective window is further capped by velocity:
@@ -225,6 +233,8 @@ const trackedStorms: TrackedStorm[] = (() => {
       st.keepEvery = st.keepEvery ?? 1;
       st.appendSeq = st.appendSeq ?? (st.allStrikes?.length ?? 0);
       st.splitDetected = st.splitDetected ?? false;
+      st.splitCandidateAt = st.splitCandidateAt ?? null;
+      st.fragmentLabel = st.fragmentLabel ?? null;
       if (st.lastSeen < minLastSeen) st.lastSeen = minLastSeen;
       // If allStrikes is missing or unusually short (e.g. lost on prev restart),
       // seed from the DB strikes blob which has the full historical coverage.
@@ -488,7 +498,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           allStrikes: [], lastStrikeTime: 0, totalStrikes: 0,
           countryCodes: Object.keys(ccCounts),
           initialStrikesByAncestor: {},
-          keepEvery: 1, appendSeq: 0, splitDetected: false,
+          keepEvery: 1, appendSeq: 0, splitDetected: false, splitCandidateAt: null, fragmentLabel: null,
         };
         accumulateStrikes(fresh, cell.members);
         trackedStorms.push(fresh);
@@ -577,9 +587,11 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             const small = a.peakCount >= b.peakCount ? b : a;
             // Capture small's identity before absorption in case the event needs it.
             const smallKey1 = small.key, smallCity1 = small.city, smallCc1 = small.cc;
+            const smallFragLabel1 = small.fragmentLabel;
             // Capture big's pre-adoption identity (city/cc won't change inside absorbInto,
             // but key may change below, so capture here for the event payload).
             const bigKey1 = big.key, bigCity1 = big.city, bigCc1 = big.cc;
+            const bigFragLabel1 = big.fragmentLabel;
             const hadAncestor1 = small.key in big.initialStrikesByAncestor || big.key in small.initialStrikesByAncestor;
             const netNew1 = absorbInto(big, small);
             // Only record a count when ancestry is tracked — Branch 1/2 give a
@@ -602,7 +614,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
               }
               // small.key is now big's key — don't delete the DB row.
               // Record merge on the new canonical key; the "other" storm was big's old identity.
-              try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, reportedNew1); } catch { /* non-fatal */ }
+              try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, reportedNew1, bigFragLabel1); } catch { /* non-fatal */ }
             } else {
               if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
               // Patch any surviving storm that references the absorbed storm's key
@@ -614,7 +626,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
                 }
               }
               // big.key is already the canonical key.
-              try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, reportedNew1); } catch { /* non-fatal */ }
+              try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, reportedNew1, smallFragLabel1); } catch { /* non-fatal */ }
             }
             anyMerged = true;
             break outer;
@@ -630,7 +642,9 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= TRACKER_MERGE_KM) continue;
         // Capture identities before absorption, same rationale as Phase 1.
         const stKey2 = st.key, stCity2 = st.city, stCc2 = st.cc;
+        const stFragLabel2 = st.fragmentLabel;
         const mKey2 = m.key, mCity2 = m.city, mCc2 = m.cc;
+        const mFragLabel2 = m.fragmentLabel;
         const hadAncestor2 = st.key in m.initialStrikesByAncestor || m.key in st.initialStrikesByAncestor;
         const netNew2 = absorbInto(m, st);
         const reportedNew2 = hadAncestor2 ? netNew2 : null;
@@ -649,7 +663,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           }
           // st.key is now m's key — don't delete the DB row.
           // Record merge on the new canonical key; the "other" storm was m's old identity.
-          try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, reportedNew2); } catch { /* non-fatal */ }
+          try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, reportedNew2, mFragLabel2); } catch { /* non-fatal */ }
         } else {
           if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
           // Patch surviving storms that referenced the absorbed stray's key.
@@ -660,20 +674,24 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             }
           }
           // m.key is already the canonical key.
-          try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, reportedNew2); } catch { /* non-fatal */ }
+          try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, reportedNew2, stFragLabel2); } catch { /* non-fatal */ }
         }
         break;
       }
     }
 
-    // Split detection: a fresh storm that survived Phase 1/2 consolidation and is
-    // within SPLIT_DETECT_KM of an existing (pre-existing) matched storm is likely
-    // a cluster that physically split off from that system.
-    // We record a split event on the parent and mark the fresh storm so that if it
-    // later re-merges back into the parent, only its net-new strikes are added.
-    const SPLIT_DETECT_KM = 200;
+    // Split detection — two-phase:
+    // Phase A (candidate): mark a fresh storm that survives near an existing storm.
+    //   Sets the ancestor overlap immediately (needed for absorbInto correctness)
+    //   but does NOT fire the event yet.
+    // Phase B (confirmation): after SPLIT_CONFIRM_MS the fragment must still be
+    //   active and near a parent. Only then is the event recorded. This filters
+    //   out transient blobs that immediately re-merge.
+    const SPLIT_DETECT_KM = 75;
+    const SPLIT_CONFIRM_MS = 5 * 60_000;
+
     for (const freshSt of freshThisPass) {
-      if (!matched.has(freshSt) || freshSt.splitDetected) continue;
+      if (!matched.has(freshSt) || freshSt.splitDetected || freshSt.splitCandidateAt != null) continue;
       let nearestParent: TrackedStorm | null = null;
       let nearestKm = Infinity;
       for (const st of matched) {
@@ -682,18 +700,41 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         if (km < nearestKm && km < SPLIT_DETECT_KM) { nearestKm = km; nearestParent = st; }
       }
       if (nearestParent) {
-        // Record the direct-parent overlap: how many strikes the parent already counted
-        // in this storm's territory at birth. Cap inherited grandparent overlaps to the
-        // fresh storm's own total (it cannot owe more than it has).
+        // Set ancestor overlap immediately so absorbInto can apply the correct
+        // double-count correction if this fragment re-merges before confirmation.
         freshSt.initialStrikesByAncestor[nearestParent.key] = freshSt.totalStrikes;
         for (const [k, v] of Object.entries(nearestParent.initialStrikesByAncestor)) {
           freshSt.initialStrikesByAncestor[k] = Math.min(freshSt.totalStrikes, v);
         }
-        freshSt.splitDetected = true;
-        try {
-          recordStormEvent(nearestParent.key, 'split', nowMs, freshSt.key, freshSt.city, freshSt.cc, null);
-        } catch { /* non-fatal */ }
+        freshSt.splitCandidateAt = nowMs;
       }
+    }
+
+    // Confirmation pass: fire the split event for candidates that have survived
+    // long enough and are still active near a parent.
+    for (const st of trackedStorms) {
+      if (st.splitDetected || st.splitCandidateAt == null) continue;
+      if (!matched.has(st)) continue;
+      if (nowMs - st.splitCandidateAt < SPLIT_CONFIRM_MS) continue;
+      let nearestParentC: TrackedStorm | null = null;
+      let nearestKmC = Infinity;
+      for (const other of matched) {
+        if (other === st || freshThisPass.has(other)) continue;
+        const km = kmBetween(st.lat, st.lon, other.lat, other.lon);
+        if (km < nearestKmC && km < SPLIT_DETECT_KM) { nearestKmC = km; nearestParentC = other; }
+      }
+      if (!nearestParentC) {
+        // Parent gone or diverged too far — cancel the candidate.
+        st.splitCandidateAt = null;
+        continue;
+      }
+      st.splitDetected = true;
+      try {
+        const splitCount = countSplitEvents(nearestParentC.key);
+        const label = `F${splitCount + 1}`;
+        st.fragmentLabel = label;
+        recordStormEvent(nearestParentC.key, 'split', nowMs, st.key, st.city, st.cc, null, label);
+      } catch { /* non-fatal */ }
     }
 
     // Offer every storm seen this pass as a record candidate; the upsert only

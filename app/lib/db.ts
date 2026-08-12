@@ -136,6 +136,7 @@ function getDb(): Database.Database {
     'ALTER TABLE country_biggest_storms ADD COLUMN storm_key TEXT',
     'ALTER TABLE country_biggest_storms ADD COLUMN traveled_km REAL',
     'ALTER TABLE country_biggest_storms ADD COLUMN total_count INTEGER',
+    'ALTER TABLE storm_events ADD COLUMN fragment_label TEXT',
   ];
   for (const m of migrations) {
     try { _db.exec(m); } catch { /* column exists */ }
@@ -942,6 +943,7 @@ export interface StormEvent {
   relatedCity: string | null;
   relatedCc: string | null;
   strikesAbsorbed: number | null;
+  fragmentLabel: string | null;
 }
 
 export function recordStormEvent(
@@ -952,12 +954,18 @@ export function recordStormEvent(
   relatedCity: string | null = null,
   relatedCc: string | null = null,
   strikesAbsorbed: number | null = null,
+  fragmentLabel: string | null = null,
 ): void {
   const db = getDb();
   db.prepare(`
-    INSERT INTO storm_events (storm_key, event_type, ts, related_key, related_city, related_cc, strikes_absorbed)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(stormKey, eventType, ts, relatedKey, relatedCity, relatedCc, strikesAbsorbed);
+    INSERT INTO storm_events (storm_key, event_type, ts, related_key, related_city, related_cc, strikes_absorbed, fragment_label)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(stormKey, eventType, ts, relatedKey, relatedCity, relatedCc, strikesAbsorbed, fragmentLabel);
+}
+
+export function countSplitEvents(stormKey: string): number {
+  const db = getDb();
+  return (db.prepare(`SELECT COUNT(*) AS n FROM storm_events WHERE storm_key = ? AND event_type = 'split'`).get(stormKey) as { n: number }).n;
 }
 
 // Aggregate consecutive absorptions from the same city in 10-minute windows so
@@ -974,7 +982,8 @@ export function getStormEvents(stormKey: string, limit = 15): StormEvent[] {
   const raw = db.prepare(`
     SELECT id, storm_key AS stormKey, event_type AS eventType, ts,
            related_key AS relatedKey, related_city AS relatedCity,
-           related_cc AS relatedCc, strikes_absorbed AS strikesAbsorbed
+           related_cc AS relatedCc, strikes_absorbed AS strikesAbsorbed,
+           fragment_label AS fragmentLabel
     FROM storm_events
     WHERE storm_key = ?
     ORDER BY ts DESC

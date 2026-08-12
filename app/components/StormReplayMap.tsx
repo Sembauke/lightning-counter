@@ -276,12 +276,18 @@ export default function StormReplayMap({
     if (!newBatch.length) return;
     appendedLengthRef.current = appendedStrikes.length;
 
+    // Always store raw coords — reprojectStrikes() uses appendedRawRef so these
+    // will be included even if the map isn't ready yet (Leaflet loads async).
+    for (const s of newBatch) {
+      appendedRawRef.current.push(s);
+      if (s[2] > maxTimeRef.current) maxTimeRef.current = s[2];
+    }
+
     const map = mapRef.current;
-    if (!map) return;
+    if (!map) return; // reprojectStrikes() will project them on map init
 
     const now = performance.now();
     for (const [lat, lon, time] of newBatch) {
-      appendedRawRef.current.push([lat, lon, time]);
       const p = map.latLngToContainerPoint([lat, lon]);
       projectedRef.current.push({ x: p.x, y: p.y, time });
       // Live mode: every real-time strike gets a ring (they expire in 600 ms so

@@ -330,7 +330,6 @@ html, body {
   }
 
   .map-container { top: 96px; }
-  .archive-page { padding-top: 96px; }
 }
 
 /* ── App shell ── */
@@ -468,6 +467,9 @@ html, body {
   font-family: 'Courier New', Courier, monospace;
   display: flex;
   flex-direction: column;
+}
+@media (max-width: 640px) {
+  .archive-page { padding-top: 96px; }
 }
 
 .archive-toolbar {
@@ -2422,6 +2424,36 @@ html, body {
   background: rgba(100, 220, 130, 0.12);
   border: 1px solid rgba(100, 220, 130, 0.3);
   color: rgba(140, 240, 160, 0.95);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+
+.storm-merge-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.06rem 0.3rem;
+  border-radius: 3px;
+  background: rgba(255, 170, 0, 0.15);
+  border: 1px solid rgba(255, 170, 0, 0.4);
+  color: rgba(255, 190, 60, 0.95);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+
+.storm-split-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.06rem 0.3rem;
+  border-radius: 3px;
+  background: rgba(57, 255, 20, 0.10);
+  border: 1px solid rgba(57, 255, 20, 0.35);
+  color: rgba(80, 255, 40, 0.95);
   font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.04em;

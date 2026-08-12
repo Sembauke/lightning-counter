@@ -201,6 +201,20 @@ export default function StormDetailClient({
   useEffect(() => {
     if (!isLive || !storm.stormKey) return;
     const es = new EventSource(`/api/storms/${encodeURIComponent(storm.stormKey)}/stream`);
+
+    // Named 'history' event: last 10 min of persisted strikes for this storm.
+    // Seed appendedStrikes without counting as new (they're already in the DB).
+    es.addEventListener('history', (e: Event) => {
+      try {
+        const batch = JSON.parse((e as MessageEvent).data) as StormStrike[];
+        if (batch.length > 0) {
+          // batch is sorted ascending; take max to guard live dupes
+          latestTsRef.current = Math.max(latestTsRef.current, batch[batch.length - 1][2]);
+          setAppendedStrikes(batch);
+        }
+      } catch {}
+    });
+
     es.onmessage = (e) => {
       try {
         const strike = JSON.parse(e.data) as StormStrike;
