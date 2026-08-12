@@ -65,17 +65,24 @@ function makeStorm(overrides: Partial<MinTrackedStorm> = {}): MinTrackedStorm {
   };
 }
 
-// Pure absorb function mirroring route.ts logic (no DB calls)
+// Pure absorb function mirroring route.ts logic (no DB calls).
+// `reported` mirrors route.ts's reportedNew: only non-null when ancestry is
+// tracked (Branch 1/2), because Branch 3 returns small.totalStrikes which is
+// the full lifetime count, not the genuine contribution since last absorption.
 function absorbInto(
   big: MinTrackedStorm,
   small: MinTrackedStorm,
-): { mergedStrikes: number } {
+): { mergedStrikes: number; reported: number | null } {
   if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
   if (small.startTime < big.startTime) {
     big.startTime = small.startTime;
     big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
   }
   big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
+
+  // Capture before any map mutations — matches route.ts hadAncestor check.
+  const hadAncestorLink = big.key in small.initialStrikesByAncestor
+    || small.key in big.initialStrikesByAncestor;
 
   const overlapInBig   = small.initialStrikesByAncestor[big.key];
   const overlapInSmall = big.initialStrikesByAncestor[small.key];
@@ -105,7 +112,7 @@ function absorbInto(
 
   big.totalStrikes += netNew;
   for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
-  return { mergedStrikes: netNew };
+  return { mergedStrikes: netNew, reported: hadAncestorLink ? netNew : null };
 }
 
 // Mirrors the key-adoption ancestor map patch from route.ts Phase 1 / Phase 2
@@ -719,5 +726,73 @@ describe('accumulateStrikes — no thinning', () => {
     accumulateStrikes(storm, [{ lat: 1, lon: 1, time: 15 }, { lat: 1, lon: 1, time: 25 }]);
     expect(storm.totalStrikes).toBe(3);
     expect(storm.allStrikes.length).toBe(3);
+  });
+});
+
+describe('reportedAbsorbed — event log count accuracy', () => {
+  it('Branch 3 (no ancestry) → reported is null, not small.totalStrikes', () => {
+    const big = makeStorm({ key: 'A', totalStrikes: 10_000 });
+    const small = makeStorm({ key: 'B', totalStrikes: 54_000 }); // fresh independent cluster
+    const { mergedStrikes, reported } = absorbInto(big, small);
+    expect(mergedStrikes).toBe(54_000); // netNew is full count
+    expect(reported).toBeNull();        // must not appear in event log
+  });
+
+  it('Branch 1 (split child re-merges) → reported equals delta, not small.totalStrikes', () => {
+    // B split from A with 1000 strikes at the time; B grew to 3500
+    const big = makeStorm({ key: 'A', totalStrikes: 20_000 });
+    const small = makeStorm({ key: 'B', totalStrikes: 3_500 });
+    small.initialStrikesByAncestor['A'] = 1_000; // overlap recorded at split time
+    const { mergedStrikes, reported } = absorbInto(big, small);
+    expect(mergedStrikes).toBe(2_500);  // 3500 - 1000
+    expect(reported).toBe(2_500);       // delta is reliable — show it
+  });
+
+  it('Branch 2 (reverse re-merge) → reported equals delta, not small.totalStrikes', () => {
+    // A was once a child of B (B absorbed A first), now B re-merges into A
+    const big = makeStorm({ key: 'A', totalStrikes: 15_000 });
+    const small = makeStorm({ key: 'B', totalStrikes: 5_000 });
+    big.initialStrikesByAncestor['B'] = 2_000; // big is a descendant of small
+    const { mergedStrikes, reported } = absorbInto(big, small);
+    expect(mergedStrikes).toBe(3_000);  // 5000 - 2000
+    expect(reported).toBe(3_000);
+  });
+
+  it('repeated Branch 3 (Batesville pattern) → reported is null every time', () => {
+    // Fresh cluster re-emerges with a large accumulated total but no ancestor link.
+    // Each absorption has no ancestry tracked — reported must stay null.
+    const host = makeStorm({ key: 'HOST', totalStrikes: 5_000 });
+    for (let i = 0; i < 3; i++) {
+      const fresh = makeStorm({ key: `FRESH-${i}`, totalStrikes: 50_000 + i * 1_000 });
+      const { reported } = absorbInto(host, fresh);
+      expect(reported).toBeNull();
+    }
+  });
+
+  it('same numbers but different ancestry → different reported values', () => {
+    // Both clusters have 10 000 strikes and will be absorbed into a 50 000-strike host.
+    // The one with an ancestor link should produce a delta; the one without should be null.
+
+    const hostWithLink = makeStorm({ key: 'HOST1', totalStrikes: 50_000 });
+    const childWithLink = makeStorm({ key: 'CHILD1', totalStrikes: 10_000 });
+    childWithLink.initialStrikesByAncestor['HOST1'] = 7_000; // was tracked from a split
+    const { reported: reportedWithLink } = absorbInto(hostWithLink, childWithLink);
+    expect(reportedWithLink).toBe(3_000); // 10000 - 7000
+
+    const hostNoLink = makeStorm({ key: 'HOST2', totalStrikes: 50_000 });
+    const childNoLink = makeStorm({ key: 'CHILD2', totalStrikes: 10_000 });
+    // no initialStrikesByAncestor entry → Branch 3
+    const { reported: reportedNoLink } = absorbInto(hostNoLink, childNoLink);
+    expect(reportedNoLink).toBeNull();
+  });
+
+  it('Branch 1 delta never exceeds small.totalStrikes', () => {
+    const big = makeStorm({ key: 'A', totalStrikes: 100_000 });
+    const small = makeStorm({ key: 'B', totalStrikes: 5_000 });
+    small.initialStrikesByAncestor['A'] = 0; // overlap is 0 (split with no strikes yet)
+    const { mergedStrikes, reported } = absorbInto(big, small);
+    expect(mergedStrikes).toBe(5_000);
+    expect(reported).toBe(5_000);
+    expect(reported!).toBeLessThanOrEqual(small.totalStrikes);
   });
 });

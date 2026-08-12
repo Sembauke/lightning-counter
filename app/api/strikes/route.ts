@@ -582,7 +582,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             const bigKey1 = big.key, bigCity1 = big.city, bigCc1 = big.cc;
             const hadAncestor1 = small.key in big.initialStrikesByAncestor || big.key in small.initialStrikesByAncestor;
             const netNew1 = absorbInto(big, small);
-            const reportedNew1 = (small.inDb && big.inDb && !hadAncestor1) ? null : netNew1;
+            // Only record a count when ancestry is tracked — Branch 1/2 give a
+            // reliable delta; Branch 3 would show small.totalStrikes (the full
+            // lifetime count, not the genuine contribution since last absorption).
+            const reportedNew1 = hadAncestor1 ? netNew1 : null;
             matched.delete(small);
             trackedStorms.splice(trackedStorms.indexOf(small), 1);
             // If the loser had a DB entry but the winner doesn't, adopt its key so
@@ -630,7 +633,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         const mKey2 = m.key, mCity2 = m.city, mCc2 = m.cc;
         const hadAncestor2 = st.key in m.initialStrikesByAncestor || m.key in st.initialStrikesByAncestor;
         const netNew2 = absorbInto(m, st);
-        const reportedNew2 = (st.inDb && m.inDb && !hadAncestor2) ? null : netNew2;
+        const reportedNew2 = hadAncestor2 ? netNew2 : null;
         trackedStorms.splice(trackedStorms.indexOf(st), 1);
         // If the absorbed stray had a DB entry but the winner doesn't, adopt its key
         // so the existing TRACKING link continues to work without a 404 gap.
