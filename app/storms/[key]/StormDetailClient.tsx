@@ -488,7 +488,7 @@ export default function StormDetailClient({
 
         {/* ── Storm events log ── */}
         {storm.stormKey && (
-          <StormEventsWidget stormKey={storm.stormKey} isLive={isLive} />
+          <StormEventsWidget stormKey={storm.stormKey} isLive={isLive} stormTotal={stormTotal} />
         )}
 
         {/* ── Replay map / Live map ── */}

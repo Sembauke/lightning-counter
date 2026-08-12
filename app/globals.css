@@ -1729,40 +1729,73 @@ html, body {
 }
 
 /* ── Storm events log widget ── */
+.storm-events-details { list-style: none; }
+.storm-events-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  margin-bottom: 0.5rem;
+}
+.storm-events-summary::-webkit-details-marker { display: none; }
+.storm-events-chevron {
+  font-size: 0.75rem;
+  color: #333;
+  transition: transform 0.15s, color 0.15s;
+  display: inline-block;
+}
+.storm-events-details[open] .storm-events-chevron {
+  transform: rotate(90deg);
+  color: #555;
+}
 .storm-events-log {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+  padding-right: 0.5rem;
 }
 .storm-event-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 2.4rem 1.25rem 1fr auto;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.45rem 0;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
   border-bottom: 1px solid #1a1a1a;
   font-size: 0.82rem;
 }
 .storm-event-row:last-child { border-bottom: none; }
+.storm-event-time {
+  font-size: 0.68rem;
+  color: #ffe566;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
 .storm-event-icon {
-  width: 1.25rem;
   text-align: center;
   flex-shrink: 0;
   font-size: 0.85rem;
 }
 .storm-event-row--merge .storm-event-icon { color: #ff8c5a; }
 .storm-event-row--split .storm-event-icon { color: #5db8ff; }
-.storm-event-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.08rem;
+.storm-event-label {
+  color: #bbb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   min-width: 0;
 }
-.storm-event-label { color: #bbb; }
-.storm-event-time {
-  font-size: 0.7rem;
-  color: #555;
+.storm-event-count {
+  font-size: 0.72rem;
+  color: #ffe566;
+  white-space: nowrap;
+  flex-shrink: 0;
   font-family: 'Courier New', monospace;
-  letter-spacing: 0.03em;
 }
 
 /* ── Country hover tooltip ── */

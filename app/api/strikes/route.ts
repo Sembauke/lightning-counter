@@ -10,6 +10,12 @@ import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormCluste
 // are far apart (large MCS can span 100+ km).
 const TRACKER_MERGE_KM = 100;
 
+// When two DB-loaded storms merge with no ancestor tracking, absorbInto falls
+// into Branch 3 and returns small.totalStrikes — the full lifetime count, not
+// the genuine new contribution. We can't distinguish a restart re-merge from a
+// first-time merge of two long-lived storms at this point, so we suppress the
+// count (record null) to avoid showing a misleading number.
+
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -574,7 +580,9 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             // Capture big's pre-adoption identity (city/cc won't change inside absorbInto,
             // but key may change below, so capture here for the event payload).
             const bigKey1 = big.key, bigCity1 = big.city, bigCc1 = big.cc;
+            const hadAncestor1 = small.key in big.initialStrikesByAncestor || big.key in small.initialStrikesByAncestor;
             const netNew1 = absorbInto(big, small);
+            const reportedNew1 = (small.inDb && big.inDb && !hadAncestor1) ? null : netNew1;
             matched.delete(small);
             trackedStorms.splice(trackedStorms.indexOf(small), 1);
             // If the loser had a DB entry but the winner doesn't, adopt its key so
@@ -591,7 +599,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
               }
               // small.key is now big's key — don't delete the DB row.
               // Record merge on the new canonical key; the "other" storm was big's old identity.
-              try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, netNew1); } catch { /* non-fatal */ }
+              try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, reportedNew1); } catch { /* non-fatal */ }
             } else {
               if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
               // Patch any surviving storm that references the absorbed storm's key
@@ -603,7 +611,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
                 }
               }
               // big.key is already the canonical key.
-              try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, netNew1); } catch { /* non-fatal */ }
+              try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, reportedNew1); } catch { /* non-fatal */ }
             }
             anyMerged = true;
             break outer;
@@ -620,7 +628,9 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         // Capture identities before absorption, same rationale as Phase 1.
         const stKey2 = st.key, stCity2 = st.city, stCc2 = st.cc;
         const mKey2 = m.key, mCity2 = m.city, mCc2 = m.cc;
+        const hadAncestor2 = st.key in m.initialStrikesByAncestor || m.key in st.initialStrikesByAncestor;
         const netNew2 = absorbInto(m, st);
+        const reportedNew2 = (st.inDb && m.inDb && !hadAncestor2) ? null : netNew2;
         trackedStorms.splice(trackedStorms.indexOf(st), 1);
         // If the absorbed stray had a DB entry but the winner doesn't, adopt its key
         // so the existing TRACKING link continues to work without a 404 gap.
@@ -636,7 +646,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           }
           // st.key is now m's key — don't delete the DB row.
           // Record merge on the new canonical key; the "other" storm was m's old identity.
-          try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, netNew2); } catch { /* non-fatal */ }
+          try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, reportedNew2); } catch { /* non-fatal */ }
         } else {
           if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
           // Patch surviving storms that referenced the absorbed stray's key.
@@ -647,7 +657,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
             }
           }
           // m.key is already the canonical key.
-          try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, netNew2); } catch { /* non-fatal */ }
+          try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, reportedNew2); } catch { /* non-fatal */ }
         }
         break;
       }
