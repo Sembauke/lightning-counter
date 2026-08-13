@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import fs from 'fs';
+import path from 'path';
 import { getStormByKey, getStormRecords, getStormRank, getNextRankThreshold, getPrevRankThreshold } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
@@ -11,6 +13,31 @@ interface Props { params: Promise<{ key: string }> }
 
 function loadStorm(key: string) {
   return getStormByKey(decodeURIComponent(key));
+}
+
+// Returns up to `max` city names within `radiusKm` of the given point,
+// sorted nearest-first. Checks all country codes the storm passed through.
+function nearbyCities(lat: number, lon: number, codes: string[], radiusKm = 150, max = 6): string[] {
+  const cosLat = Math.cos(lat * Math.PI / 180);
+  const r2 = (radiusKm / 111.32) ** 2;
+  const found: { name: string; d: number }[] = [];
+  const seen = new Set<string>();
+  for (const cc of codes) {
+    if (cc === 'XO') continue;
+    try {
+      const file = path.join(process.cwd(), 'public', 'cities', `${cc}.json`);
+      const cities = JSON.parse(fs.readFileSync(file, 'utf8')) as [string, number, number][];
+      for (const [name, cLat, cLon] of cities) {
+        if (seen.has(name)) continue;
+        const dLat = cLat - lat;
+        const dLon = (cLon - lon) * cosLat;
+        const d = dLat * dLat + dLon * dLon;
+        if (d <= r2) { seen.add(name); found.push({ name, d }); }
+      }
+    } catch { /* country file missing */ }
+  }
+  found.sort((a, b) => a.d - b.d);
+  return found.slice(0, max).map(c => c.name);
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -38,14 +65,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     storm.traveledKm && storm.traveledKm > 10 ? `${Math.round(storm.traveledKm)} km traveled` : null,
   ].filter(Boolean).join(' · ');
 
+  const codes = storm.countryPath?.length ? storm.countryPath : [storm.code];
+  const nearby = nearbyCities(storm.lat, storm.lon, codes);
+  // Exclude cities already mentioned in the journey so we don't repeat them
+  const extraCities = nearby.filter(n => n !== city && n !== origin);
+
   const title = `Lightning Storm ${journey} — ${storm.date}`;
-  const description = `Lightning storm ${journey} on ${storm.date}: ${parts}.`;
+  const nearbyStr = extraCities.length ? ` Also near: ${extraCities.slice(0, 3).join(', ')}.` : '';
+  const description = `Lightning storm ${journey} on ${storm.date}: ${parts}.${nearbyStr}`;
   const canonical = `${SITE_URL}/storms/${encodeURIComponent(key)}`;
 
   return {
     title,
     description,
-    keywords: ['lightning storm', city, ...(origin ? [origin] : []), storm.date, 'real-time lightning', 'storm tracker', 'blitzortung'],
+    keywords: [
+      'lightning storm', city, ...(origin ? [origin] : []),
+      ...extraCities, storm.date,
+      'real-time lightning', 'storm tracker', 'blitzortung',
+    ],
     alternates: { canonical },
     openGraph: {
       title: `${title} | Lightning Stats`,
