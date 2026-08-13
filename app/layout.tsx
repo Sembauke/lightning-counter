@@ -45,6 +45,10 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   alternates: { canonical: BASE },
+  icons: {
+    icon: '/favicon.svg',
+    apple: '/icon-192.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

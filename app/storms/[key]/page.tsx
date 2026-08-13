@@ -17,15 +17,44 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { key } = await params;
   const storm = loadStorm(key);
   if (!storm) return { title: 'Storm not found' };
-  const name = storm.city ?? `${storm.lat.toFixed(2)}, ${storm.lon.toFixed(2)}`;
+
+  const total = storm.totalCount ?? storm.count;
+  const city = storm.city ?? `${storm.lat.toFixed(1)}°N ${storm.lon.toFixed(1)}°E`;
+  const origin = storm.originCity;
+  const journey = origin && origin !== storm.city ? `${origin} to ${city}` : `near ${city}`;
+
+  let durationStr = '';
+  if (storm.startTime && storm.endTime) {
+    const ms = storm.endTime - storm.startTime;
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.floor((ms % 3_600_000) / 60_000);
+    durationStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  const parts = [
+    `${total.toLocaleString('en')} total strikes`,
+    `${Math.round(storm.rate)}/min peak`,
+    durationStr ? `${durationStr} duration` : null,
+    storm.traveledKm && storm.traveledKm > 10 ? `${Math.round(storm.traveledKm)} km traveled` : null,
+  ].filter(Boolean).join(' · ');
+
+  const title = `Lightning Storm ${journey} — ${storm.date}`;
+  const description = `Lightning storm ${journey} on ${storm.date}: ${parts}.`;
+  const canonical = `${SITE_URL}/storms/${encodeURIComponent(key)}`;
+
   return {
-    title: `Storm near ${name} — ${storm.date}`,
-    description: `Lightning storm tracked on ${storm.date}: ${Math.round(storm.rate)}/min peak rate, ${storm.totalCount ?? storm.count} strikes.`,
-    alternates: { canonical: `${SITE_URL}/storms/${encodeURIComponent(key)}` },
+    title,
+    description,
+    keywords: ['lightning storm', city, ...(origin ? [origin] : []), storm.date, 'real-time lightning', 'storm tracker', 'blitzortung'],
+    alternates: { canonical },
     openGraph: {
-      title: `Storm near ${name} | Lightning Stats`,
-      url: `${SITE_URL}/storms/${encodeURIComponent(key)}`,
+      title: `${title} | Lightning Stats`,
+      description,
+      url: canonical,
+      type: 'article',
+      siteName: 'Lightning Stats',
     },
+    twitter: { card: 'summary', title: `${title} | Lightning Stats`, description },
   };
 }
 
