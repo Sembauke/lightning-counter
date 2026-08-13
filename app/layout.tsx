@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { GoogleAnalytics } from '@next/third-parties/google';
 import './globals.css';
 import Navbar from './components/Navbar';
 import { SoundProvider } from './context/SoundContext';
@@ -97,6 +98,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </SoundProvider>
         </LocaleProvider>
       </body>
+      <GoogleAnalytics gaId="G-JSELCBB6HH" />
     </html>
   );
 }

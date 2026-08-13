@@ -2022,7 +2022,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: '#0a0a0f', zIndex: 9999,
         }}>
-          <span style={{ color: '#888', fontSize: '0.95rem', letterSpacing: '0.05em' }}>Loading strikes…</span>
+          <span style={{ color: 'rgba(255,220,0,0.65)', fontSize: '0.95rem', letterSpacing: '0.05em' }}>Loading strikes…</span>
         </div>
       )}
       {mapSearchEnabled && <div className="map-search" ref={searchRef}>

@@ -985,7 +985,7 @@ html, body {
 .hof-filter-unit {
   font-size: 0.7rem;
   font-family: 'Courier New', monospace;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255,220,0,0.45);
 }
 
 .hof-filter-input {
@@ -1006,7 +1006,7 @@ html, body {
 .hof-filter-input:focus {
   border-color: rgba(255,220,0,0.35);
 }
-.hof-filter-input::placeholder { color: rgba(255,255,255,0.2); }
+.hof-filter-input::placeholder { color: rgba(255,220,0,0.3); }
 
 .hof-filter-clear {
   background: rgba(255,80,80,0.1);
@@ -1107,7 +1107,7 @@ html, body {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.72rem;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255,220,0,0.5);
   min-width: 0;
 }
 
@@ -1129,14 +1129,14 @@ html, body {
   gap: 0.5rem;
   font-family: 'Courier New', monospace;
   font-size: 0.7rem;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255,220,0,0.55);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.hof-sub-date { color: rgba(255,255,255,0.3); }
+.hof-sub-date { color: rgba(255,220,0,0.45); }
 
 .hof-count-wrap {
   display: flex;
@@ -1157,7 +1157,7 @@ html, body {
 
 .hof-count-label {
   font-size: 0.62rem;
-  color: rgba(255,255,255,0.22);
+  color: rgba(255,220,0,0.4);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   text-align: right;
@@ -1196,7 +1196,7 @@ html, body {
   background: #1a1a1a;
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 6px;
-  color: #ddd;
+  color: rgba(255,220,0,0.85);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -1207,7 +1207,7 @@ html, body {
   outline: none;
   transition: border-color 0.15s;
 }
-.storm-table-select option { background: #1a1a1a; color: #ddd; }
+.storm-table-select option { background: #1a1a1a; color: rgba(255,220,0,0.85); }
 .storm-table-select:hover { border-color: rgba(255,220,0,0.4); }
 .storm-table-select:focus { border-color: rgba(255,220,0,0.6); }
 
@@ -1232,7 +1232,7 @@ html, body {
 .storm-table-rank {
   font-family: 'Courier New', monospace;
   font-size: 0.75rem;
-  color: #555;
+  color: rgba(255,220,0,0.4);
   text-align: right;
   white-space: nowrap;
 }
@@ -1246,7 +1246,7 @@ html, body {
 
 .storm-table-name {
   font-size: 0.88rem;
-  color: #e0e0e0;
+  color: rgba(255,220,0,0.9);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1264,13 +1264,13 @@ html, body {
 .storm-table-date {
   font-family: 'Courier New', monospace;
   font-size: 0.72rem;
-  color: #666;
+  color: rgba(255,220,0,0.5);
   white-space: nowrap;
 }
 
 .storm-table-stats {
   font-size: 0.75rem;
-  color: #888;
+  color: rgba(255,220,0,0.65);
   white-space: nowrap;
 }
 
@@ -1290,13 +1290,13 @@ html, body {
   .storm-table-meta  { grid-area: meta; flex-direction: row; align-items: baseline; justify-content: flex-start; gap: 0; flex-wrap: nowrap; min-width: 0; }
   .storm-table-rank  { grid-area: rank; }
   .storm-table-date  { display: none; }
-  .storm-table-stats { white-space: nowrap; font-size: 0.72rem; color: #777; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .storm-table-stats { white-space: nowrap; font-size: 0.72rem; color: rgba(255,220,0,0.65); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 }
 
 /* ── Storm detail page ── */
 .storm-detail-back {
   font-size: 0.78rem;
-  color: #888;
+  color: rgba(255,220,0,0.65);
   text-decoration: none;
   letter-spacing: 0.04em;
   background: none;
@@ -1305,7 +1305,7 @@ html, body {
   cursor: pointer;
   font-family: inherit;
 }
-.storm-detail-back:hover { color: #ccc; }
+.storm-detail-back:hover { color: rgba(255,220,0,0.9); }
 .storm-detail-maplink {
   margin-left: auto;
   font-size: 0.78rem;
@@ -1340,7 +1340,7 @@ html, body {
   gap: 0.4rem;
   flex-wrap: wrap;
   font-size: 0.85rem;
-  color: #aaa;
+  color: rgba(255,220,0,0.6);
 }
 .storm-detail-name {
   font-size: 1.4rem;
@@ -1355,15 +1355,15 @@ html, body {
   flex-wrap: wrap;
   gap: 0.4rem;
   font-size: 0.8rem;
-  color: #aaa;
+  color: rgba(255,220,0,0.6);
 }
-.storm-detail-sep { color: #444; }
-.storm-detail-date { color: #666; font-family: 'Courier New', monospace; }
+.storm-detail-sep { color: rgba(255,220,0,0.25); }
+.storm-detail-date { color: rgba(255,220,0,0.5); font-family: 'Courier New', monospace; }
 .storm-detail-map { border-radius: 8px; overflow: hidden; }
 .storm-detail-map .bsc-map { height: 520px; }
 .storm-detail-no-replay {
   text-align: center;
-  color: #555;
+  color: rgba(255,220,0,0.5);
   font-size: 0.85rem;
   padding: 3rem 0;
 }
@@ -1375,7 +1375,7 @@ html, body {
 /* ── Storm detail — extended ── */
 .storm-detail-date-line {
   font-size: 0.78rem;
-  color: #666;
+  color: rgba(255,220,0,0.5);
   font-family: 'Courier New', monospace;
   letter-spacing: 0.03em;
 }
@@ -1481,12 +1481,12 @@ html, body {
 .storm-kpi-unit {
   font-size: 0.8rem;
   font-weight: 400;
-  color: #888;
+  color: rgba(255,220,0,0.6);
   margin-left: 0.1rem;
 }
 .storm-kpi-label {
   font-size: 0.7rem;
-  color: #666;
+  color: rgba(255,220,0,0.55);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -1501,19 +1501,19 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #484848;
+  color: rgba(255,220,0,0.4);
 }
 .storm-section--map .storm-section-title {
   border-bottom: 1px solid #1e1e1e;
   padding-bottom: 0.4rem;
-  color: #555;
+  color: rgba(255,220,0,0.5);
 }
 
 .storm-timeline-meta {
   display: flex;
   justify-content: space-between;
   font-size: 0.72rem;
-  color: #555;
+  color: rgba(255,220,0,0.5);
 }
 .timeline-chart {
   width: 100%;
@@ -1539,12 +1539,12 @@ html, body {
   font-size: 0.82rem;
 }
 .storm-info-label {
-  color: #555;
+  color: rgba(255,220,0,0.5);
   width: 7.5rem;
   flex-shrink: 0;
   font-size: 0.78rem;
 }
-.storm-info-value { color: #bbb; }
+.storm-info-value { color: rgba(255,220,0,0.8); }
 .storm-info-value--peak { color: #ff8c5a; font-weight: 600; }
 
 .storm-countries-list {
@@ -1558,9 +1558,9 @@ html, body {
   align-items: center;
   gap: 0.3rem;
   font-size: 0.85rem;
-  color: #ccc;
+  color: rgba(255,220,0,0.8);
 }
-.storm-country-arrow { color: #444; }
+.storm-country-arrow { color: rgba(255,220,0,0.3); }
 
 .storm-compare-list {
   display: flex;
@@ -1582,13 +1582,13 @@ html, body {
 .storm-events-summary::-webkit-details-marker { display: none; }
 .storm-events-chevron {
   font-size: 0.75rem;
-  color: #333;
+  color: rgba(255,220,0,0.3);
   transition: transform 0.15s, color 0.15s;
   display: inline-block;
 }
 .storm-events-details[open] .storm-events-chevron {
   transform: rotate(90deg);
-  color: #555;
+  color: rgba(255,220,0,0.5);
 }
 .storm-events-log {
   display: flex;
@@ -1624,7 +1624,7 @@ html, body {
 .storm-event-row--merge .storm-event-icon { color: #ff8c5a; }
 .storm-event-row--split .storm-event-icon { color: #5db8ff; }
 .storm-event-label {
-  color: #bbb;
+  color: rgba(255,220,0,0.75);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1844,7 +1844,7 @@ html, body {
 }
 .storm-log-rank-label {
   font-size: 0.57rem;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255,220,0,0.4);
   letter-spacing: 0.05em;
 }
 .storm-log-badges .storm-chevron { color: rgba(255,220,0,0.4); font-size: 0.85rem; }
