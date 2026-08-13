@@ -8,7 +8,7 @@ interface MapSearchContextValue {
 }
 
 const MapSearchContext = createContext<MapSearchContextValue>({
-  enabled: true,
+  enabled: false,
   toggle: () => {},
 });
 
@@ -16,7 +16,7 @@ export function MapSearchProvider({ children }: { children: React.ReactNode }) {
   const [enabled, setEnabled] = useState(() => {
     if (typeof window === 'undefined') return true;
     const saved = localStorage.getItem('mapSearch');
-    return saved === null ? true : saved === 'true';
+    return saved === null ? false : saved === 'true';
   });
 
   const toggle = () => setEnabled(v => {

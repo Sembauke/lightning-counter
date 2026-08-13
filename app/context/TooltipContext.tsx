@@ -8,15 +8,15 @@ interface TooltipContextValue {
 }
 
 const TooltipContext = createContext<TooltipContextValue>({
-  enabled: true,
+  enabled: false,
   toggle: () => {},
 });
 
 export function TooltipProvider({ children }: { children: React.ReactNode }) {
-  // On by default — only an explicit opt-out disables it
   const [enabled, setEnabled] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    return localStorage.getItem('countryTooltip') !== 'false';
+    if (typeof window === 'undefined') return false;
+    const saved = localStorage.getItem('countryTooltip');
+    return saved === null ? false : saved === 'true';
   });
 
   const toggle = () => setEnabled(v => {
