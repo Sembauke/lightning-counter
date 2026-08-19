@@ -1397,38 +1397,80 @@ html, body {
   white-space: nowrap;
 }
 
-/* Rank progress bar */
-.storm-rank-bar {
+/* Rank leaderboard — closest storms above/below globally */
+.storm-leaderboard {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-}
-.storm-rank-bar-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.storm-rank-bar-label {
-  font-size: 0.78rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.storm-rank-bar-next {
-  font-size: 0.7rem;
-  color: rgba(255,170,40,0.75);
-  font-variant-numeric: tabular-nums;
-}
-.storm-rank-bar-track {
-  background: #1c1c1c;
-  border-radius: 4px;
-  height: 10px;
+  border: 1px solid #1e1e1e;
+  border-radius: 10px;
   overflow: hidden;
 }
-.storm-rank-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  opacity: 0.85;
-  transition: width 0.6s ease-out;
+.storm-leaderboard-row {
+  display: grid;
+  grid-template-columns: 2.75rem 1fr auto;
+  align-items: center;
+  column-gap: 1rem;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-left: 3px solid transparent;
+  text-decoration: none;
+  color: inherit;
+}
+.storm-leaderboard-row:last-child { border-bottom: none; }
+a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
+
+.storm-leaderboard-row--gold   { border-left-color: hsl(45,100%,55%); background: rgba(255,210,0,0.035); }
+.storm-leaderboard-row--silver { border-left-color: hsl(0,0%,68%); }
+.storm-leaderboard-row--bronze { border-left-color: hsl(28,65%,50%); }
+.storm-leaderboard-row--top10  { border-left-color: rgba(255,220,0,0.22); }
+.storm-leaderboard-row--current {
+  border-left-color: #ffe566;
+  background: rgba(255,229,102,0.09);
+  cursor: default;
+}
+.storm-leaderboard-row.flash { animation: row-flash 0.9s ease-out forwards; }
+
+.storm-leaderboard-rank {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: right;
+  color: rgba(255,220,0,0.35);
+  white-space: nowrap;
+}
+.storm-leaderboard-row--gold   .storm-leaderboard-rank { color: hsl(45,100%,62%); }
+.storm-leaderboard-row--silver .storm-leaderboard-rank { color: hsl(0,0%,70%); }
+.storm-leaderboard-row--bronze .storm-leaderboard-rank { color: hsl(28,65%,58%); }
+.storm-leaderboard-row--top10  .storm-leaderboard-rank { color: rgba(255,220,0,0.5); }
+.storm-leaderboard-row--current .storm-leaderboard-rank { color: #ffe566; }
+
+.storm-leaderboard-name {
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.storm-leaderboard-row--current .storm-leaderboard-name { color: #fff; font-weight: 700; }
+
+.storm-leaderboard-count {
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgba(255,220,0,0.7);
+  white-space: nowrap;
+}
+.storm-leaderboard-row--current .storm-leaderboard-count { color: #ffe566; }
+
+@media (max-width: 640px) {
+  .storm-leaderboard-row {
+    grid-template-columns: 2.1rem 1fr auto;
+    padding: 0.5rem 0.75rem;
+    column-gap: 0.6rem;
+  }
+  .storm-leaderboard-rank  { font-size: 0.7rem; }
+  .storm-leaderboard-name  { font-size: 0.8rem; }
+  .storm-leaderboard-count { font-size: 0.78rem; }
 }
 
 /* Global record badges */
@@ -1566,76 +1608,6 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-}
-
-/* ── Storm events log widget ── */
-.storm-events-details { list-style: none; }
-.storm-events-summary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  margin-bottom: 0.5rem;
-}
-.storm-events-summary::-webkit-details-marker { display: none; }
-.storm-events-chevron {
-  font-size: 0.75rem;
-  color: rgba(255,220,0,0.3);
-  transition: transform 0.15s, color 0.15s;
-  display: inline-block;
-}
-.storm-events-details[open] .storm-events-chevron {
-  transform: rotate(90deg);
-  color: rgba(255,220,0,0.5);
-}
-.storm-events-log {
-  display: flex;
-  flex-direction: column;
-  max-height: 220px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
-  padding-right: 0.5rem;
-}
-.storm-event-row {
-  display: grid;
-  grid-template-columns: 2.4rem 1.25rem 1fr auto;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid #1a1a1a;
-  font-size: 0.82rem;
-}
-.storm-event-row:last-child { border-bottom: none; }
-.storm-event-time {
-  font-size: 0.68rem;
-  color: #ffe566;
-  font-family: 'Courier New', monospace;
-  letter-spacing: 0.02em;
-  flex-shrink: 0;
-}
-.storm-event-icon {
-  text-align: center;
-  flex-shrink: 0;
-  font-size: 0.85rem;
-}
-.storm-event-row--merge .storm-event-icon { color: #ff8c5a; }
-.storm-event-row--split .storm-event-icon { color: #5db8ff; }
-.storm-event-label {
-  color: rgba(255,220,0,0.75);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.storm-event-count {
-  font-size: 0.72rem;
-  color: #ffe566;
-  white-space: nowrap;
-  flex-shrink: 0;
-  font-family: 'Courier New', monospace;
 }
 
 /* ── Country hover tooltip ── */

@@ -596,6 +596,35 @@ export function getNextRankThreshold(stormKey: string, currentTotal: number): nu
   return row?.threshold ?? null;
 }
 
+export interface RankedNeighbor {
+  stormKey: string;
+  rank: number;
+  code: string;
+  lat: number;
+  lon: number;
+  city: string | null;
+  originCity: string | null;
+  date: string;
+  totalCount: number;
+}
+
+/** The `radius` storms ranked immediately above and below `stormKey` (plus itself) — for a race-leaderboard view centered on this storm's global position */
+export function getNearbyRankedStorms(stormKey: string, radius = 10): RankedNeighbor[] {
+  const db = getDb();
+  return db.prepare(`
+    WITH ranked AS (
+      SELECT storm_key AS stormKey, code, lat, lon, city, origin_city AS originCity, date,
+             COALESCE(total_count, count) AS totalCount,
+             ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC) AS rank
+      FROM storms
+    ),
+    me AS (SELECT rank FROM ranked WHERE stormKey = ?)
+    SELECT ranked.* FROM ranked, me
+    WHERE ranked.rank BETWEEN me.rank - ? AND me.rank + ?
+    ORDER BY ranked.rank ASC
+  `).all(stormKey, radius, radius) as RankedNeighbor[];
+}
+
 export function deleteStorm(stormKey: string): void {
   const db = getDb();
   db.prepare('DELETE FROM storms WHERE storm_key = ?').run(stormKey);
@@ -934,18 +963,6 @@ export function getGridAreaPage(
 }
 
 // ── Storm events (merge / split log) ──────────────────────────────────────
-export interface StormEvent {
-  id: number;
-  stormKey: string;
-  eventType: 'merge' | 'split';
-  ts: number;
-  relatedKey: string | null;
-  relatedCity: string | null;
-  relatedCc: string | null;
-  strikesAbsorbed: number | null;
-  fragmentLabel: string | null;
-}
-
 export function recordStormEvent(
   stormKey: string,
   eventType: 'merge' | 'split',
@@ -966,56 +983,6 @@ export function recordStormEvent(
 export function countSplitEvents(stormKey: string): number {
   const db = getDb();
   return (db.prepare(`SELECT COUNT(*) AS n FROM storm_events WHERE storm_key = ? AND event_type = 'split'`).get(stormKey) as { n: number }).n;
-}
-
-// Aggregate consecutive absorptions from the same city in 10-minute windows so
-// rapid cluster churn (the same storm absorbed/re-detected every 30s) collapses
-// into one entry. Splits are always kept individually.
-const EVENT_BUCKET_MS = 10 * 60 * 1000;
-// Aggregated merge entries below this threshold are noise (cluster churn); hide
-// them. Splits are always shown regardless of their strike count.
-const EVENT_MIN_STRIKES = 500;
-
-export function getStormEvents(stormKey: string, limit = 15): StormEvent[] {
-  const db = getDb();
-  // Fetch up to 500 raw rows; we collapse them in JS below.
-  const raw = db.prepare(`
-    SELECT id, storm_key AS stormKey, event_type AS eventType, ts,
-           related_key AS relatedKey, related_city AS relatedCity,
-           related_cc AS relatedCc, strikes_absorbed AS strikesAbsorbed,
-           fragment_label AS fragmentLabel
-    FROM storm_events
-    WHERE storm_key = ?
-    ORDER BY ts DESC
-    LIMIT 500
-  `).all(stormKey) as StormEvent[];
-
-  const buckets = new Map<string, StormEvent>();
-  const result: StormEvent[] = [];
-
-  for (const ev of raw) {
-    if (ev.eventType === 'split') {
-      result.push(ev);
-      continue;
-    }
-    const bucket = Math.floor(ev.ts / EVENT_BUCKET_MS);
-    const city = ev.relatedCity ?? ev.relatedKey ?? '';
-    const bucketKey = `${city}:${bucket}`;
-    if (buckets.has(bucketKey)) {
-      const existing = buckets.get(bucketKey)!;
-      existing.strikesAbsorbed = (existing.strikesAbsorbed ?? 0) + (ev.strikesAbsorbed ?? 0);
-      // Keep the latest ts (bucket shows the most recent event in the window)
-      if (ev.ts > existing.ts) existing.ts = ev.ts;
-    } else {
-      const copy = { ...ev };
-      buckets.set(bucketKey, copy);
-      result.push(copy);
-    }
-  }
-
-  return result
-    .filter(ev => ev.eventType === 'split' || (ev.strikesAbsorbed ?? 0) >= EVENT_MIN_STRIKES)
-    .slice(0, limit);
 }
 
 /** Prune storm_events rows older than 30 days (called from hourly maintenance) */

@@ -1,14 +1,14 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
-import type { BiggestStorm, GlobalStormRecord, StormStrike } from '../../lib/db';
+import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
-import StormEventsWidget from '../../components/StormEventsWidget';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
 
@@ -19,6 +19,28 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   const a = Math.sin(dLat / 2) ** 2
     + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function rankBadgeClass(rank: number): string {
+  if (rank === 1) return ' storm-leaderboard-row--gold';
+  if (rank === 2) return ' storm-leaderboard-row--silver';
+  if (rank === 3) return ' storm-leaderboard-row--bronze';
+  if (rank <= 10) return ' storm-leaderboard-row--top10';
+  return '';
+}
+
+function stormLabel(
+  ts: (key: string, values?: Record<string, string>) => string,
+  city: string | null, originCity: string | null, code: string, lat: number, lon: number,
+): string {
+  const isOcean = code === 'XO';
+  const effCity = city ?? (isOcean ? 'Open Ocean' : null);
+  const effOrigin = originCity ?? (isOcean ? 'Open Ocean' : null);
+  return effOrigin && effCity && effOrigin !== effCity
+    ? ts('stormFromTo', { from: effOrigin, to: effCity })
+    : effCity
+      ? ts('stormNear', { city: effCity })
+      : `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
 }
 
 interface MinuteBucket { count: number; ts: number; }
@@ -92,29 +114,6 @@ function TimelineChart({ timeline, peakMinute }: { timeline: StrikeStats['timeli
 
 
 
-function CompareBar({ label, ratio, isRecord }: { label: string; ratio: number; isRecord: boolean }) {
-  const pct = Math.min(100, ratio * 100);
-  const [mounted, setMounted] = useState(false);
-  const [animDone, setAnimDone] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-    const t = setTimeout(() => setAnimDone(true), 700);
-    return () => clearTimeout(t);
-  }, []);
-  return (
-    <div className="storm-rank-bar">
-      <div className="storm-rank-bar-head">
-        <span className="storm-rank-bar-label" style={{ color: isRecord ? '#ff6b35' : '#ffe566' }}>{label}</span>
-        <span className="storm-rank-bar-next">{Math.round(pct)}%</span>
-      </div>
-      <div className="storm-rank-bar-track">
-        <div className="storm-rank-bar-fill"
-          style={{ width: mounted ? `${pct.toFixed(1)}%` : '0%', background: isRecord ? '#ff6b35' : '#ffe566', transition: animDone ? 'none' : undefined }} />
-      </div>
-    </div>
-  );
-}
-
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -128,9 +127,7 @@ interface PollResponse {
   traveledKm: number | null;
   city: string | null;
   originCity: string | null;
-  rank: number;
-  nextRankThreshold: number | null;
-  prevRankThreshold: number | null;
+  nearbyRanked: RankedNeighbor[];
 }
 
 interface LiveStats {
@@ -145,13 +142,11 @@ interface LiveStats {
 }
 
 export default function StormDetailClient({
-  storm, records, rank, nextRankThreshold, prevRankThreshold,
+  storm, records, nearbyRanked,
 }: {
   storm: BiggestStorm;
   records: GlobalStormRecord[];
-  rank: number;
-  nextRankThreshold: number | null;
-  prevRankThreshold: number | null;
+  nearbyRanked: RankedNeighbor[];
 }) {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -189,12 +184,18 @@ export default function StormDetailClient({
     return max;
   })());
 
-  // Live rank + threshold — start from server-rendered values, updated by each KPI poll
-  const [displayRank, setDisplayRank] = useState(rank);
-  const [displayNextThreshold, setDisplayNextThreshold] = useState(nextRankThreshold);
-  const [displayPrevThreshold, setDisplayPrevThreshold] = useState(prevRankThreshold);
-  // Refs so the crossing-detection effect can call poll() and read stormTotal without stale closures
-  const pollNowRef = useRef<(() => Promise<void>) | null>(null);
+  const [displayNearbyRanked, setDisplayNearbyRanked] = useState(nearbyRanked);
+  const [leaderboardFlashKeys, setLeaderboardFlashKeys] = useState<Set<string>>(new Set());
+  // Rank numbers actually shown — held back until a reorder's slide animation
+  // finishes, so the number changes after the row visually arrives, not before
+  const [displayedRanks, setDisplayedRanks] = useState<Map<string, number>>(
+    () => new Map(nearbyRanked.map(n => [n.stormKey, n.rank])),
+  );
+
+  // Refs for the leaderboard's FLIP reorder animation (set up below, once stormTotal exists)
+  const leaderboardRowRefs = useRef(new Map<string, HTMLElement>());
+  const leaderboardRowTops = useRef(new Map<string, number>());
+  // So the poll can read the current live total without a stale closure
   const stormTotalRef = useRef(0);
 
   // SSE: real-time per-strike updates for live storms (millisecond latency)
@@ -229,7 +230,7 @@ export default function StormDetailClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, storm.stormKey]);
 
-  // KPI poll: update stats + rank every 15s; also backfills strikes missed between SSR and SSE
+  // KPI poll: update stats + leaderboard every 15s; also backfills strikes missed between SSR and SSE
   useEffect(() => {
     if (!isLive || !storm.stormKey) return;
     let cancelled = false;
@@ -237,13 +238,11 @@ export default function StormDetailClient({
     const poll = async () => {
       try {
         const liveTotal = stormTotalRef.current;
-        const url = `/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes?liveTotal=${liveTotal}`;
+        const url = `/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes`;
         const res = await fetch(url);
         if (!res.ok || cancelled) return;
         const data = await res.json() as PollResponse;
-        // Preserve SSE strikes not yet flushed to DB. The poll was sent with
-        // liveTotal so thresholds are based on that value — resetting to 0
-        // drops stormTotal below displayPrevThreshold and makes rankFillPct negative.
+        // Preserve SSE strikes not yet flushed to DB
         const dbTotal = data.totalCount ?? data.count;
         setAppendedSinceFlush(Math.max(0, liveTotal - dbTotal));
         setLiveStats({
@@ -256,13 +255,25 @@ export default function StormDetailClient({
           city: data.city,
           originCity: data.originCity,
         });
-        // Take the better (lower-number) rank — never regress an optimistic advance
-        if (data.rank) setDisplayRank(prev => Math.min(prev, data.rank));
-        if ('nextRankThreshold' in data) setDisplayNextThreshold(data.nextRankThreshold);
-        // displayPrevThreshold is intentionally NOT updated from polls — only set
-        // on page load (SSR prop) and threshold crossings. Updating it here would
-        // advance the slot floor each time a new storm appears below stormTotal,
-        // causing the bar to shrink/reset between crossings.
+        if (data.nearbyRanked) {
+          setDisplayNearbyRanked(prev => {
+            // Flash neighbors whose total changed since the last poll (not the current
+            // storm's own row, which already re-renders live off every SSE strike)
+            const changed = new Set<string>();
+            const prevMap = new Map(prev.map(p => [p.stormKey, p.totalCount]));
+            for (const row of data.nearbyRanked) {
+              const prevTotal = prevMap.get(row.stormKey);
+              if (prevTotal != null && prevTotal !== row.totalCount && row.stormKey !== storm.stormKey) {
+                changed.add(row.stormKey);
+              }
+            }
+            if (changed.size > 0) {
+              setLeaderboardFlashKeys(changed);
+              setTimeout(() => setLeaderboardFlashKeys(new Set()), 1000);
+            }
+            return data.nearbyRanked;
+          });
+        }
         // Backfill any strikes between SSR and EventSource connect
         const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
         if (fresh.length > 0) {
@@ -272,47 +283,66 @@ export default function StormDetailClient({
       } catch { /* network blip — skip */ }
     };
 
-    pollNowRef.current = poll;
     const id = setInterval(poll, POLL_INTERVAL_MS);
     poll();
-    return () => { cancelled = true; clearInterval(id); pollNowRef.current = null; };
+    return () => { cancelled = true; clearInterval(id); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, storm.stormKey]);
 
   // Real-time total: DB flush value + strikes received via SSE since last flush
-  // (defined here so the crossing effect below can reference it)
   const stormTotal = (liveStats.totalCount ?? liveStats.count) + appendedSinceFlush;
 
   // Keep stormTotalRef in sync so the poll always sends the current live total
   stormTotalRef.current = stormTotal;
 
-  // When stormTotal crosses displayNextThreshold:
-  // 1. Optimistically advance the rank immediately (never shows "stuck")
-  // 2. Clear old threshold so the tag hides while re-polling
-  // 3. Poll with the live total so the server returns the correct next threshold
-  const prevTotalRef = useRef(0);
-  useEffect(() => {
-    // Always keep ref fresh — if we skip updating while nextThreshold is null,
-    // the stale value causes a spurious re-crossing the moment the poll returns.
-    const prev = prevTotalRef.current;
-    prevTotalRef.current = stormTotal;
-    if (displayNextThreshold == null) return;
-    if (prev < displayNextThreshold && stormTotal >= displayNextThreshold) {
-      setDisplayRank(r => r - 1);
-      setDisplayPrevThreshold(displayNextThreshold);
-      setDisplayNextThreshold(null);
-      pollNowRef.current?.();
-    }
-  }, [stormTotal, displayNextThreshold]);
+  // Reorder the leaderboard locally using the live stormTotal so this storm's position
+  // updates instantly on every strike, instead of waiting up to a poll cycle for the
+  // DB's tracker-flushed total_count to catch up. Neighbors keep their last-polled totals.
+  const localRanked = useMemo(() => {
+    if (!storm.stormKey) return displayNearbyRanked;
+    const withLiveTotal = displayNearbyRanked.map(n =>
+      n.stormKey === storm.stormKey ? { ...n, totalCount: stormTotal } : n);
+    withLiveTotal.sort((a, b) => b.totalCount - a.totalCount);
+    const baseRank = displayNearbyRanked[0]?.rank ?? 1;
+    return withLiveTotal.map((n, i) => ({ ...n, rank: baseRank + i }));
+  }, [displayNearbyRanked, stormTotal, storm.stormKey]);
+  const leaderboardOrderKey = localRanked.map(n => n.stormKey).join('|');
 
-  const isOceanStorm = storm.code === 'XO';
-  const effectiveCity = liveStats.city ?? (isOceanStorm ? 'Open Ocean' : null);
-  const effectiveOrigin = liveStats.originCity ?? (isOceanStorm ? 'Open Ocean' : null);
-  const name = effectiveOrigin && effectiveCity && effectiveOrigin !== effectiveCity
-    ? ts('stormFromTo', { from: effectiveOrigin, to: effectiveCity })
-    : effectiveCity
-      ? ts('stormNear', { city: effectiveCity })
-      : `${storm.lat.toFixed(2)}, ${storm.lon.toFixed(2)}`;
+  // FLIP-animate leaderboard rows sliding to their new position when the rank
+  // order changes, instead of silently popping into place. The displayed rank
+  // NUMBER is held back until the slide finishes (see setDisplayedRanks below)
+  // so a row's label changes after it visually arrives, not before.
+  useLayoutEffect(() => {
+    const prevTops = leaderboardRowTops.current;
+    const nextTops = new Map<string, number>();
+    leaderboardRowRefs.current.forEach((el, key) => nextTops.set(key, el.getBoundingClientRect().top));
+    let anyMoved = false;
+    leaderboardRowRefs.current.forEach((el, key) => {
+      const prevTop = prevTops.get(key);
+      const nextTop = nextTops.get(key);
+      if (prevTop == null || nextTop == null || prevTop === nextTop) return;
+      anyMoved = true;
+      const delta = prevTop - nextTop;
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${delta}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 0.4s ease';
+        el.style.transform = '';
+      });
+    });
+    leaderboardRowTops.current = nextTops;
+
+    const newRanks = new Map(localRanked.map(n => [n.stormKey, n.rank]));
+    if (!anyMoved) {
+      // first mount, or numbers changed with no visible position shift — show right away
+      setDisplayedRanks(newRanks);
+      return;
+    }
+    const t = setTimeout(() => setDisplayedRanks(newRanks), 420);
+    return () => clearTimeout(t);
+  }, [leaderboardOrderKey]);
+
+  const name = stormLabel(ts, liveStats.city, liveStats.originCity, storm.code, storm.lat, storm.lon);
 
   const duration = liveStats.startTime != null && liveStats.endTime != null
     ? liveStats.endTime - liveStats.startTime : null;
@@ -329,38 +359,6 @@ export default function StormDetailClient({
   );
 
   const heldRecords = records.filter(r => r.stormKey && r.stormKey === storm.stormKey);
-  const biggestRec  = records.find(r => r.category === 'biggest');
-  const longestRec  = records.find(r => r.category === 'longest');
-  const farthestRec = records.find(r => r.category === 'farthest');
-
-  const biggestRatio = biggestRec ? stormTotal / (biggestRec.totalCount ?? biggestRec.count) : null;
-  const longestRatio =
-    longestRec && duration != null && longestRec.startTime != null && longestRec.endTime != null
-      ? duration / (longestRec.endTime - longestRec.startTime) : null;
-  const farthestRatio =
-    farthestRec?.traveledKm && liveStats.traveledKm
-      ? liveStats.traveledKm / farthestRec.traveledKm : null;
-  const hasCompare = biggestRatio != null || longestRatio != null || farthestRatio != null;
-
-  // Strikes needed to surpass the storm ranked just above; updates live per SSE strike
-  const strikesToNextRank = displayRank > 1 && displayNextThreshold != null
-    ? displayNextThreshold - stormTotal + 1
-    : null;
-
-  // Progress between the rank just passed (0%) and the rank being targeted (100%).
-  // When nextThreshold is null (crossing in flight, or rank #1) hold at 100%
-  // so the bar never disappears and triggers the re-crossing cascade.
-  const rankFillPct = displayNextThreshold != null
-    ? Math.max(0, Math.min(100, ((stormTotal - (displayPrevThreshold ?? 0)) / (displayNextThreshold - (displayPrevThreshold ?? 0))) * 100))
-    : 100;
-
-  const [rankMounted, setRankMounted] = useState(false);
-  const [rankAnimDone, setRankAnimDone] = useState(false);
-  useEffect(() => {
-    setRankMounted(true);
-    const t = setTimeout(() => setRankAnimDone(true), 700);
-    return () => clearTimeout(t);
-  }, []);
 
   return (
     <div className="archive-page">
@@ -461,48 +459,41 @@ export default function StormDetailClient({
           );
         })()}
 
-        {/* ── Record comparison ── */}
-        {(rankFillPct != null || hasCompare) && (
-          <div className="storm-compare-list">
-            {rankFillPct != null && (
-              <div className="storm-rank-bar">
-                <div className="storm-rank-bar-head">
-                  <span className="storm-rank-bar-label" style={{ color: '#ffe566' }}>
-                    #{displayRank} globally
-                  </span>
-                  {strikesToNextRank != null && strikesToNextRank > 0 && (
-                    <span className="storm-rank-bar-next">
-                      ↑ #{displayRank - 1} in {strikesToNextRank.toLocaleString()} strikes
-                    </span>
-                  )}
-                </div>
-                <div className="storm-rank-bar-track">
-                  <div className="storm-rank-bar-fill" style={{
-                    width: rankMounted ? `${rankFillPct.toFixed(1)}%` : '0%',
-                    background: '#ffe566',
-                    transition: rankAnimDone ? 'none' : undefined,
-                  }} />
-                </div>
-              </div>
-            )}
-            {biggestRatio != null && (
-              <CompareBar label="Biggest" ratio={biggestRatio}
-                isRecord={heldRecords.some(r => r.category === 'biggest')} />
-            )}
-            {longestRatio != null && (
-              <CompareBar label="Longest" ratio={longestRatio}
-                isRecord={heldRecords.some(r => r.category === 'longest')} />
-            )}
-            {farthestRatio != null && (
-              <CompareBar label="Farthest" ratio={farthestRatio}
-                isRecord={heldRecords.some(r => r.category === 'farthest')} />
-            )}
+        {/* ── Rank leaderboard — closest storms above/below globally ── */}
+        {localRanked.length > 1 && (
+          <div className="storm-section">
+            <div className="storm-section-title">All-time leaderboard ranking</div>
+            <div className="storm-leaderboard">
+              {localRanked.map(n => {
+                const isCurrent = !!storm.stormKey && n.stormKey === storm.stormKey;
+                // The rank NUMBER shown lags behind n.rank until the slide animation
+                // finishes (see the FLIP effect above) — total/position update live,
+                // the label catches up once the row has visually arrived.
+                const rowRank = displayedRanks.get(n.stormKey) ?? n.rank;
+                const rowTotal = n.totalCount;
+                const rowLabel = isCurrent ? name : stormLabel(ts, n.city, n.originCity, n.code, n.lat, n.lon);
+                const rowClass = `storm-leaderboard-row${isCurrent ? ' storm-leaderboard-row--current' : rankBadgeClass(rowRank)}${leaderboardFlashKeys.has(n.stormKey) ? ' flash' : ''}`;
+                const row = (
+                  <>
+                    <span className="storm-leaderboard-rank">#{rowRank}</span>
+                    <span className="storm-leaderboard-name">{rowLabel}</span>
+                    <span className="storm-leaderboard-count">{rowTotal.toLocaleString()}</span>
+                  </>
+                );
+                const setRowRef = (el: HTMLElement | null) => {
+                  if (el) leaderboardRowRefs.current.set(n.stormKey, el);
+                  else leaderboardRowRefs.current.delete(n.stormKey);
+                };
+                return isCurrent ? (
+                  <div key={n.stormKey} ref={setRowRef} className={rowClass}>{row}</div>
+                ) : (
+                  <Link key={n.stormKey} ref={setRowRef} href={`/storms/${encodeURIComponent(n.stormKey)}`} className={rowClass}>
+                    {row}
+                  </Link>
+                );
+              })}
+            </div>
           </div>
-        )}
-
-        {/* ── Storm events log ── */}
-        {storm.stormKey && (
-          <StormEventsWidget stormKey={storm.stormKey} isLive={isLive} stormTotal={stormTotal} />
         )}
 
         {/* ── Replay map / Live map ── */}
