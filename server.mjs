@@ -18,8 +18,17 @@ globalThis._seenStrikeQueue = [];
 
 const SEEN_IDS_MAX = 50_000;
 
-function isWsDuplicate(id, src) {
-  const key = `${id}-${src}`;
+// lightningmaps' own `id` is NOT a stable stroke identity: the upstream feed
+// resends every stroke under a fresh sequential id (confirmed by probing
+// live.lightningmaps.org directly — the same lat/lon/time pair arrives twice
+// per connection, back-to-back, with consecutive ids), and connecting to both
+// live/live2 mirrors doubles that again. Deduping on `${id}-${src}` never
+// catches any of this since the id differs on every delivery. Dedupe on the
+// physical event instead — lat/lon/time to full precision is effectively
+// unique per real strike, so two deliveries of the same strike collide here
+// even though their ids don't.
+function isWsDuplicate(lat, lon, time) {
+  const key = `${lat},${lon},${time}`;
   if (globalThis._seenStrikeIds.has(key)) return true;
   globalThis._seenStrikeIds.add(key);
   globalThis._seenStrikeQueue.push(key);
@@ -102,7 +111,7 @@ function connectLMWS(url) {
             if (typeof s.lat === 'number' && typeof s.lon === 'number') {
               // s.time is the actual discharge time — arrival time would collapse
               // reconnect backlogs into artificial bursts
-              if (!isWsDuplicate(s.id, s.src)) onStrike(s.lat, s.lon, s.time);
+              if (!isWsDuplicate(s.lat, s.lon, s.time)) onStrike(s.lat, s.lon, s.time);
             }
           }
         }

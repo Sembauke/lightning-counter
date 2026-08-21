@@ -564,7 +564,19 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
 
       big.totalStrikes += netNew;
       for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
-      for (const s of small.allStrikes) big.allStrikes.push(s);
+      // small.allStrikes can overlap big.allStrikes — e.g. a fragment that split
+      // off and later re-merges carries strikes big already recorded before the
+      // split, or the flapping split/merge cycle re-adds the same points on every
+      // cycle. totalStrikes is already overlap-corrected above (netNew); the
+      // stored replay blob needs the same dedup or it silently accumulates
+      // repeated [lat,lon,time] points across a storm's lifetime.
+      const bigStrikeKeys = new Set(big.allStrikes.map(s => `${s[0]},${s[1]},${s[2]}`));
+      for (const s of small.allStrikes) {
+        const key = `${s[0]},${s[1]},${s[2]}`;
+        if (bigStrikeKeys.has(key)) continue;
+        bigStrikeKeys.add(key);
+        big.allStrikes.push(s);
+      }
       if (big.allStrikes.length > ALL_STRIKES_MAX) {
         big.keepEvery *= 2;
         big.allStrikes = big.allStrikes.filter((_, i) => i % 2 === 0);

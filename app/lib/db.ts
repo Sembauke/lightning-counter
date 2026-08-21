@@ -194,6 +194,26 @@ function getDb(): Database.Database {
     }
   } catch { /* non-fatal */ }
 
+  // One-time repair for storms recorded before two duplicate-counting bugs were
+  // fixed: lightningmaps resent every stroke 2-4x under fresh ids (server.mjs
+  // dedup keyed on the meaningless id instead of the physical strike), and
+  // flapping split/merge cycles re-concatenated the same points into a storm's
+  // strikes blob on every cycle (absorbInto had no overlap check for the blob,
+  // only for the numeric counter). Runs once on the first boot after the fix.
+  try {
+    const dedupeDone = _db.prepare('SELECT value FROM counters WHERE key = ?').get('dedupe_strike_totals_v1_done') as { value: string } | undefined;
+    if (!dedupeDone) {
+      setImmediate(() => {
+        try {
+          const db = getDb();
+          const result = recalculateDuplicateStormTotals();
+          console.log(`[db] duplicate-strike repair: corrected ${result.storms} storms, ${result.countryBiggest} country-biggest entries`);
+          db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)').run('dedupe_strike_totals_v1_done', '1');
+        } catch (err) { console.error('[db] duplicate-strike repair failed:', err); }
+      });
+    }
+  } catch { /* non-fatal */ }
+
   return _db;
 }
 
@@ -743,6 +763,86 @@ export function rebuildStormRecords(): void {
 
   db.prepare('DELETE FROM storm_records').run();
   upsertStormRecords(candidates);
+}
+
+interface StrikeDedupeResult {
+  strikes: StormStrike[];
+  originalLength: number;
+  uniqueLength: number;
+}
+
+/**
+ * Removes exact-duplicate [lat,lon,time] points from a stored strikes blob.
+ * Returns null if the blob is missing, unparseable, empty, or already has no
+ * duplicates (nothing to correct).
+ */
+function dedupeStrikeBlob(raw: string | null): StrikeDedupeResult | null {
+  if (!raw) return null;
+  let points: StormStrike[];
+  try { points = JSON.parse(raw); } catch { return null; }
+  if (!Array.isArray(points) || points.length === 0) return null;
+  const seen = new Set<string>();
+  const unique: StormStrike[] = [];
+  for (const p of points) {
+    const key = `${p[0]},${p[1]},${p[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(p);
+  }
+  if (unique.length === points.length) return null;
+  return { strikes: unique, originalLength: points.length, uniqueLength: unique.length };
+}
+
+/**
+ * Best-effort retroactive correction for storms recorded before the WS
+ * duplicate-delivery fix (server.mjs) and the merge-blob dedup fix
+ * (api/strikes/route.ts absorbInto): every physical strike could be counted
+ * 2-4x at ingestion, and flapping split/merge cycles re-added the same points
+ * to a storm's strikes blob on every cycle, so pre-fix rows have inflated
+ * total_count/count/rate and literal duplicate points in their strikes blob.
+ *
+ * There's no way to recover the exact true total after the fact — the stored
+ * strikes blob is a thinned sample, not the full history. Instead this uses
+ * the duplication ratio measured directly in each storm's own sample
+ * (unique / original count) as a stand-in for the ratio over its whole life,
+ * and scales total_count/count/rate down by that ratio. The bug was constant
+ * (every delivery duplicated, not bursty), so a sample-measured ratio is a
+ * reasonable approximation. Only ever scales DOWN, and never below the
+ * number of strikes actually known to be unique in the sample. Storms whose
+ * stored sample has no detectable duplicates are left untouched.
+ */
+export function recalculateDuplicateStormTotals(): { storms: number; countryBiggest: number } {
+  const db = getDb();
+
+  function correctTable(table: 'storms' | 'country_biggest_storms', idColumn: 'storm_key' | 'code'): number {
+    let fixed = 0;
+    const rows = db.prepare(
+      `SELECT ${idColumn} AS id, strikes, total_count AS totalCount, count, rate FROM ${table} WHERE strikes IS NOT NULL`
+    ).all() as Array<{ id: string; strikes: string; totalCount: number | null; count: number; rate: number }>;
+    const update = db.prepare(`UPDATE ${table} SET strikes = ?, total_count = ?, count = ?, rate = ? WHERE ${idColumn} = ?`);
+    db.transaction(() => {
+      for (const row of rows) {
+        const dedup = dedupeStrikeBlob(row.strikes);
+        if (!dedup) continue;
+        const ratio = dedup.uniqueLength / dedup.originalLength;
+        const correctedTotal = Math.max(dedup.uniqueLength, Math.round((row.totalCount ?? row.count) * ratio));
+        const correctedCount = Math.max(1, Math.round(row.count * ratio));
+        const correctedRate = row.rate * ratio;
+        update.run(JSON.stringify(dedup.strikes), correctedTotal, correctedCount, correctedRate, row.id);
+        fixed++;
+      }
+    })();
+    return fixed;
+  }
+
+  const storms = correctTable('storms', 'storm_key');
+  const countryBiggest = correctTable('country_biggest_storms', 'code');
+
+  // storm_records is fully re-derived from the (now corrected) storms table,
+  // so hall-of-fame rankings reflect corrected totals without separate repair logic.
+  rebuildStormRecords();
+
+  return { storms, countryBiggest };
 }
 
 /** Returns lat/lon for all recent (within 1 hour) DB storm entries, keyed by storm_key. */
