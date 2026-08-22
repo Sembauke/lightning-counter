@@ -532,6 +532,17 @@ html, body {
   color: rgba(255,220,0,0.5);
 }
 
+/* The default delta-chip sits to the left of its number (fine inside a table
+   cell with blank space there), but here the label sits immediately to the
+   left with no room — float it above the number instead. */
+.archive-today-total .delta-chip {
+  right: auto;
+  left: 50%;
+  top: 0;
+  margin-right: 0;
+  translate: -50% -100%;
+}
+
 .archive-body {
   flex: 1;
   overflow-y: auto;
