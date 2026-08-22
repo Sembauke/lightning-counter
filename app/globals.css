@@ -1453,11 +1453,18 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
 .storm-leaderboard-row--current .storm-leaderboard-rank { color: #ffe566; }
 
 .storm-leaderboard-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 0.85rem;
   color: rgba(255,255,255,0.85);
+  min-width: 0;
+}
+.storm-leaderboard-name-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 .storm-leaderboard-row--current .storm-leaderboard-name { color: #fff; font-weight: 700; }
 

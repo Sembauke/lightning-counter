@@ -471,12 +471,16 @@ export default function StormDetailClient({
                 // the label catches up once the row has visually arrived.
                 const rowRank = displayedRanks.get(n.stormKey) ?? n.rank;
                 const rowTotal = n.totalCount;
+                const rowCode = isCurrent ? storm.code : n.code;
                 const rowLabel = isCurrent ? name : stormLabel(ts, n.city, n.originCity, n.code, n.lat, n.lon);
                 const rowClass = `storm-leaderboard-row${isCurrent ? ' storm-leaderboard-row--current' : rankBadgeClass(rowRank)}${leaderboardFlashKeys.has(n.stormKey) ? ' flash' : ''}`;
                 const row = (
                   <>
                     <span className="storm-leaderboard-rank">#{rowRank}</span>
-                    <span className="storm-leaderboard-name">{rowLabel}</span>
+                    <span className="storm-leaderboard-name">
+                      <CountryFlag code={rowCode} name={countryName(rowCode)} />
+                      <span className="storm-leaderboard-name-text">{rowLabel}</span>
+                    </span>
                     <span className="storm-leaderboard-count">{rowTotal.toLocaleString()}</span>
                   </>
                 );
