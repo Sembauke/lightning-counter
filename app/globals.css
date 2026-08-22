@@ -514,6 +514,24 @@ html, body {
   margin-left: auto;
 }
 
+.archive-today-total {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffe040;
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-today-total-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,220,0,0.5);
+}
+
 .archive-body {
   flex: 1;
   overflow-y: auto;

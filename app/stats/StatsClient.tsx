@@ -22,6 +22,8 @@ export default function ArchivePage() {
   // code → last increase of its today-count; rendered as a fading "+N" chip
   const [deltas, setDeltas] = useState<Record<string, { amount: number; ts: number }>>({});
   const prevTodayRef = useRef<Record<string, number>>({});
+  const [todayTotalDelta, setTodayTotalDelta] = useState<{ amount: number; ts: number } | null>(null);
+  const prevTodayTotalRef = useRef<number | null>(null);
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState<SortCol>('today');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -45,6 +47,14 @@ export default function ArchivePage() {
           prev[row.code] = row.today;
         }
         if (Object.keys(changed).length > 0) setDeltas(d => ({ ...d, ...changed }));
+
+        const newTotal = rows.reduce((sum, row) => sum + row.today, 0);
+        const prevTotal = prevTodayTotalRef.current;
+        if (prevTotal !== null && newTotal > prevTotal) {
+          setTodayTotalDelta({ amount: newTotal - prevTotal, ts: now });
+        }
+        prevTodayTotalRef.current = newTotal;
+
         setData(rows);
       })
       .catch(() => {});
@@ -101,6 +111,8 @@ export default function ArchivePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, search, sortCol, sortDir, locale]);
 
+  const todayTotal = useMemo(() => data.reduce((sum, row) => sum + row.today, 0), [data]);
+
   return (
     <div className="archive-page">
       <div className="archive-toolbar">
@@ -120,6 +132,19 @@ export default function ArchivePage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+        )}
+        {view === 'countries' && (
+          <span className="archive-today-total">
+            <span className="archive-today-total-label">{t('todayTotal')}</span>
+            <span className="delta-anchor">
+              {todayTotalDelta && (
+                <span className="delta-chip" key={todayTotalDelta.ts}>
+                  +{fmt(todayTotalDelta.amount)}
+                </span>
+              )}
+              {todayTotal > 0 ? fmt(todayTotal) : '—'}
+            </span>
+          </span>
         )}
         {view === 'countries' && (
           <span className="archive-count">{t('countriesFound', { count: filtered.length })}</span>
