@@ -40,6 +40,9 @@
     "strikes": "Éclairs",
     "noRecords": "Aucun enregistrement ne correspond au filtre.",
     "peakTooltip": "Nombre de décharges le plus élevé jamais enregistré en une journée",
+    "countriesView": "Pays",
+    "dailyTotals": "Totaux quotidiens",
+    "totalStrikes": "Total des éclairs",
     "biggestStorm": "Plus gros orage enregistré",
     "replay": "Rejouer"
   },

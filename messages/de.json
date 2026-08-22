@@ -40,6 +40,9 @@
     "strikes": "Blitze",
     "noRecords": "Keine Datensätze entsprechen dem Filter.",
     "peakTooltip": "Höchste jemals an einem Tag gemessene Anzahl an Entladungen",
+    "countriesView": "Länder",
+    "dailyTotals": "Tagestotale",
+    "totalStrikes": "Blitze gesamt",
     "biggestStorm": "Größtes erfasstes Gewitter",
     "replay": "Wiedergabe"
   },

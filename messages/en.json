@@ -40,6 +40,9 @@
     "strikes": "Strikes",
     "noRecords": "No records match the filter.",
     "peakTooltip": "All-time highest number of strikes recorded in a single day",
+    "countriesView": "Countries",
+    "dailyTotals": "Daily Totals",
+    "totalStrikes": "Total Strikes",
     "biggestStorm": "Biggest storm on record",
     "replay": "Replay"
   },

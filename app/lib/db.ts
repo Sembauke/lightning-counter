@@ -1202,6 +1202,11 @@ export function getCountryHistory(code: string): Array<{ date: string; count: nu
   return db.prepare('SELECT date, count FROM daily_strikes WHERE code = ? ORDER BY date DESC').all(code) as Array<{ date: string; count: number }>;
 }
 
+export function getGlobalDailyTotals(): Array<{ date: string; total: number }> {
+  const db = getDb();
+  return db.prepare('SELECT date, SUM(count) AS total FROM daily_strikes GROUP BY date ORDER BY date DESC').all() as Array<{ date: string; total: number }>;
+}
+
 let _upsertTotal: Database.Statement | null = null;
 let _upsertCountry: Database.Statement | null = null;
 
