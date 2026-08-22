@@ -936,6 +936,63 @@ export function enrichStormCountryPaths(
   }
 }
 
+/**
+ * The inverse cleanup of enrichStormCountryPaths: a storm's `strikes` blob is
+ * capped and thinned (see accumulateStrikes/absorbInto in api/strikes/route.ts),
+ * so for a long-lived storm the surviving sample can lose every point from a
+ * country it legitimately passed through — country_path (append-only, never
+ * thinned) then lists a country the replay has no evidence for at all, which
+ * reads as a bug even though the country really was hit. This can't restore
+ * the missing strikes, but it keeps what's DISPLAYED consistent with what the
+ * replay can actually show: countries with no supporting strikes left in the
+ * (thinned) sample are dropped, always keeping the storm's own tracked `code`
+ * so the single-country display still has something to fall back to. Safe to
+ * run on every startup — a no-op once a storm's path has already been reconciled.
+ */
+export function reconcileCountryPaths(lookupCC: (lat: number, lon: number) => string | null): number {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT storm_key, code, country_path, strikes FROM storms
+    WHERE strikes IS NOT NULL AND country_path IS NOT NULL
+  `).all() as Array<{ storm_key: string; code: string; country_path: string; strikes: string }>;
+
+  const update = db.prepare('UPDATE storms SET country_path = ? WHERE storm_key = ?');
+  let fixed = 0;
+
+  for (const row of rows) {
+    let path: string[];
+    let strikes: StormStrike[];
+    try {
+      path = JSON.parse(row.country_path);
+      strikes = JSON.parse(row.strikes);
+    } catch { continue; }
+    if (!Array.isArray(path) || path.length <= 1) continue;
+
+    const evidenced = new Set<string>();
+    // Unlike enrichStormCountryPaths' fixed every-8th stride (fine for ADDING —
+    // missing a rare country there just delays it being added later), missing
+    // one here means wrongly REMOVING a country that was genuinely hit. Scale
+    // the stride down for small arrays so short/well-preserved storms get
+    // full coverage, capping the sample count for very large ones.
+    const step = Math.max(1, Math.floor(strikes.length / 200));
+    for (let i = 0; i < strikes.length; i += step) {
+      const cc = lookupCC(strikes[i][0], strikes[i][1]);
+      if (cc) evidenced.add(cc);
+    }
+    evidenced.add(row.code); // always keep the storm's own designated country
+
+    const next = path.filter(cc => evidenced.has(cc));
+    if (next.length === 0) next.push(row.code);
+
+    const unchanged = next.length === path.length && next.every((cc, i) => cc === path[i]);
+    if (!unchanged) {
+      update.run(JSON.stringify(next), row.storm_key);
+      fixed++;
+    }
+  }
+  return fixed;
+}
+
 export function getCountryHistory(code: string): Array<{ date: string; count: number }> {
   const db = getDb();
   return db.prepare('SELECT date, count FROM daily_strikes WHERE code = ? ORDER BY date DESC').all(code) as Array<{ date: string; count: number }>;

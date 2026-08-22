@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
@@ -171,6 +171,12 @@ interface TrackedStorm {
   // Full-life strike accumulation for the replay: passes overlap, so only
   // strikes newer than lastStrikeTime get appended
   allStrikes: StormStrike[];
+  // A small, fixed-size, never-thinned sample of this storm's true earliest
+  // strikes (its own — adopted from an ancestor's if that ancestor's origin
+  // turns out to be earlier, see absorbInto). Guards against allStrikes'
+  // uniform-halving thinning erasing all evidence of where a long-lived
+  // storm actually began.
+  originSample: StormStrike[];
   lastStrikeTime: number;
   totalStrikes: number;
   // Ordered list of every country code the storm has passed through
@@ -215,6 +221,18 @@ const STORM_MAX_KMH = 120;
 // A storm enters the storm log only once it has accumulated this many total strikes;
 // biggest-storm and record tables are exempt — they're superlatives, not a log
 const STORM_LOG_MIN_STRIKES = 5000;
+// allStrikes is thinned by uniformly halving the whole array every time it
+// grows past ALL_STRIKES_MAX. Over a multi-day storm that runs through many
+// halvings, points near the front (its origin — often the country_path's
+// first entries, e.g. where it first crossed the detection threshold) have
+// survived every halving since they were added, while recently-appended
+// points have survived few or none — an exponential bias against the
+// oldest history. That let country_path list countries the storm passed
+// through hours or days ago while every strike from that leg had been
+// thinned out of the replay entirely. originSample is a small, fixed,
+// never-thinned reservoir of a storm's true earliest strikes so the replay
+// always has some evidence for the start of its journey, however long it lives.
+const ORIGIN_SAMPLE_MAX = 200;
 const trackedStorms: TrackedStorm[] = (() => {
   try {
     const saved = loadTrackedStorms() as TrackedStorm[];
@@ -230,6 +248,7 @@ const trackedStorms: TrackedStorm[] = (() => {
     for (const st of loaded) {
       st.inDb = dbKeys.has(st.key);
       st.initialStrikesByAncestor = st.initialStrikesByAncestor ?? {};
+      st.originSample = st.originSample ?? [];
       st.keepEvery = st.keepEvery ?? 1;
       st.appendSeq = st.appendSeq ?? (st.allStrikes?.length ?? 0);
       st.splitDetected = st.splitDetected ?? false;
@@ -244,6 +263,13 @@ const trackedStorms: TrackedStorm[] = (() => {
           if (dbStorm?.strikes && dbStorm.strikes.length > (st.allStrikes?.length ?? 0)) {
             st.allStrikes = dbStorm.strikes;
             st.lastStrikeTime = Math.max(...dbStorm.strikes.map(s => s[2]));
+            // The persisted blob is the closest available proxy for the storm's
+            // true beginning after a cold restart wiped the in-memory reservoir —
+            // seed it from the earliest points (sorted, since a merge can have
+            // appended out of order) rather than starting a fresh reservoir now.
+            if (st.originSample.length === 0) {
+              st.originSample = [...dbStorm.strikes].sort((a, b) => a[2] - b[2]).slice(0, ORIGIN_SAMPLE_MAX);
+            }
           }
         } catch { /* non-fatal */ }
       }
@@ -255,6 +281,7 @@ const trackedStorms: TrackedStorm[] = (() => {
 // inDb flags are re-validated in the connect-time handler (below) instead.
 setImmediate(() => {
   try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
+  try { reconcileCountryPaths(getCountryCode); } catch { /* non-fatal */ }
   try {
     consolidateNearbyStorms(TRACKER_MERGE_KM);
     // After consolidation some in-memory storms may have had their DB row deleted
@@ -347,19 +374,41 @@ function sampleCell(members: Array<{ lat: number; lon: number; time: number }>):
   return sample;
 }
 
+/** Combines the permanent origin reservoir with the (possibly thinned) recent
+ *  sample for persistence, without duplicating points present in both. */
+function withOriginSample(origin: StormStrike[], recent: StormStrike[]): StormStrike[] {
+  if (origin.length === 0) return recent;
+  const seen = new Set(recent.map(s => `${s[0]},${s[1]},${s[2]}`));
+  const extra = origin.filter(s => !seen.has(`${s[0]},${s[1]},${s[2]}`));
+  return extra.length ? [...extra, ...recent] : recent;
+}
+
 /** Append a pass's new strikes to the storm's full-life accumulation */
 function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>): void {
   let newest = st.lastStrikeTime;
+  let newestMember: { lat: number; lon: number; time: number } | null = null;
   for (const m of members) {
     if (m.time <= st.lastStrikeTime) continue;
     st.totalStrikes++;
     if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
-    if (m.time > newest) newest = m.time;
+    if (st.originSample.length < ORIGIN_SAMPLE_MAX) st.originSample.push(roundPt(m));
+    if (m.time > newest) { newest = m.time; newestMember = m; }
   }
   st.lastStrikeTime = newest;
   if (st.allStrikes.length > ALL_STRIKES_MAX) {
     st.keepEvery *= 2;
     st.allStrikes = st.allStrikes.filter((_, i) => i % 2 === 0);
+  }
+  // Sub-sampling (keepEvery) can skip the pass's genuinely newest strike, and for
+  // a long-lived storm keepEvery grows large — leaving the replay's tail stuck up
+  // to tens of minutes behind the storm's real last-seen moment ("ends abruptly").
+  // Guarantee it's always represented (pushed last, after thinning, so the halving
+  // filter above can never be the thing that drops it) — bounds that lag to a
+  // single pass (~30s) instead of however large keepEvery has grown.
+  if (newestMember) {
+    const p = roundPt(newestMember);
+    const last = st.allStrikes[st.allStrikes.length - 1];
+    if (!last || last[0] !== p[0] || last[1] !== p[1] || last[2] !== p[2]) st.allStrikes.push(p);
   }
 }
 
@@ -495,7 +544,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           lastSeen: nowMs,
           currentRate: cell.rate,
           inDb: false,
-          allStrikes: [], lastStrikeTime: 0, totalStrikes: 0,
+          allStrikes: [], originSample: [], lastStrikeTime: 0, totalStrikes: 0,
           countryCodes: Object.keys(ccCounts),
           initialStrikesByAncestor: {},
           keepEvery: 1, appendSeq: 0, splitDetected: false, splitCandidateAt: null, fragmentLabel: null,
@@ -522,6 +571,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       if (small.startTime < big.startTime) {
         big.startTime = small.startTime;
         big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
+        // small is the true earlier origin — its own reservoir already captured
+        // its true beginning, so adopt it in place of big's (which no longer
+        // reflects the storm's actual start once big's origin fields are overwritten above).
+        big.originSample = small.originSample;
       }
       big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
 
@@ -763,7 +816,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         originLat: st.originLat, originLon: st.originLon, originCity: st.originCity,
         startTime: st.startTime, endTime: st.lastSeen, stormKey: st.key,
         traveledKm: Math.round(Math.min(st.traveledKm, maxTravel)), totalCount: st.totalStrikes,
-        strikes: st.allStrikes,
+        strikes: withOriginSample(st.originSample, st.allStrikes),
         countryPath: st.countryCodes.length > 1 ? st.countryCodes : null,
       });
     }
