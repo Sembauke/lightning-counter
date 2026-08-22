@@ -513,7 +513,15 @@ export function getLiveStorms(): Array<{ stormKey: string; lat: number; lon: num
   `).all(cutoff) as Array<{ stormKey: string; lat: number; lon: number; totalCount: number | null; count: number }>;
 }
 
-/** Best storm per calendar date, ordered newest-first, for the records page timeline */
+/**
+ * Best storm per calendar date, ordered newest-first, for the records page
+ * timeline. The per-day winner is picked by total_count (matching how
+ * "biggest" is defined everywhere else — the Top 100 list, pruneStormStrikes'
+ * protection query, the storm_records 'biggest' category — not the day's
+ * peak 5-minute burst, which is a different, unrelated storm more often than
+ * not). The outer ORDER BY is chronological (this is a day-by-day timeline,
+ * not a magnitude ranking — "Top 100 all time" already covers that view).
+ */
 export function getBiggestStormPerDay(): StormLogRow[] {
   const db = getDb();
   const rows = db.prepare(`
@@ -526,16 +534,21 @@ export function getBiggestStormPerDay(): StormLogRow[] {
              start_time AS startTime, end_time AS endTime,
              traveled_km AS traveledKm, total_count AS totalCount,
              country_path AS countryPath,
-             ROW_NUMBER() OVER (PARTITION BY date ORDER BY count DESC) AS rn
+             ROW_NUMBER() OVER (PARTITION BY date ORDER BY COALESCE(total_count, count) DESC) AS rn
       FROM storms
     )
     WHERE rn = 1
-    ORDER BY COALESCE(totalCount, count) DESC
+    ORDER BY date DESC
   `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
 /** Top 100 storms of all time by total accumulated strikes */
+// Shared with pruneStormStrikes so "all-time record" protection matches
+// exactly what the Top 100 page shows — the two must not drift apart.
+export const TOP_STORMS_LIMIT = 100;
+const STORM_QUALIFY_MIN_STRIKES = 5000;
+
 export function getTop100Storms(): StormLogRow[] {
   const db = getDb();
   const rows = db.prepare(`
@@ -545,10 +558,10 @@ export function getTop100Storms(): StormLogRow[] {
            traveled_km AS traveledKm, total_count AS totalCount,
            country_path AS countryPath
     FROM storms
-    WHERE COALESCE(total_count, count) >= 5000
+    WHERE COALESCE(total_count, count) >= ?
     ORDER BY COALESCE(total_count, count) DESC
-    LIMIT 100
-  `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
+    LIMIT ?
+  `).all(STORM_QUALIFY_MIN_STRIKES, TOP_STORMS_LIMIT) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
@@ -872,22 +885,38 @@ export function loadTrackedStorms(): unknown[] {
   try { return JSON.parse(row.value) as unknown[]; } catch { return []; }
 }
 
-export function pruneStormStrikes(): void {
+export function pruneStormStrikes(now: number = Date.now()): void {
   const db = getDb();
-  const now = Date.now();
   const cutoff7d = now - 7 * 24 * 60 * 60 * 1000;
 
-  // Preserve strikes forever for the best storm on each date and for any storm
-  // that is a current global record holder. All other blobs drop after 7 days.
+  // Preserve strikes forever for:
+  //  - each date's daily record (biggest storm of that day by total_count —
+  //    matches getBiggestStormPerDay's own ranking, not the old count-only check)
+  //  - the all-time Top 100 by total_count (matches getTop100Storms exactly —
+  //    TOP_STORMS_LIMIT/STORM_QUALIFY_MIN_STRIKES are shared with it so the two
+  //    can't drift apart)
+  //  - any current global record holder (biggest/longest/farthest/most), which
+  //    can hold a category (e.g. "longest") without being a Top 100 total-count storm
+  // Everything else still drops its strikes blob after 7 days.
   db.prepare(`
+    WITH qualifying AS (
+      SELECT storm_key, date, COALESCE(total_count, count) AS metric
+      FROM storms
+      WHERE COALESCE(total_count, count) >= ?
+    ),
+    ranked AS (
+      SELECT storm_key,
+             ROW_NUMBER() OVER (PARTITION BY date ORDER BY metric DESC) AS daily_rank,
+             ROW_NUMBER() OVER (ORDER BY metric DESC) AS alltime_rank
+      FROM qualifying
+    )
     UPDATE storms SET strikes = NULL
     WHERE strikes IS NOT NULL
       AND end_time < ?
-      AND (date, count) NOT IN (SELECT date, MAX(count) FROM storms GROUP BY date)
-      AND (storm_key IS NULL OR storm_key NOT IN (
-            SELECT storm_key FROM storm_records WHERE storm_key IS NOT NULL
-          ))
-  `).run(cutoff7d);
+      AND storm_key NOT IN (SELECT storm_key FROM ranked WHERE daily_rank = 1)
+      AND storm_key NOT IN (SELECT storm_key FROM ranked WHERE alltime_rank <= ?)
+      AND storm_key NOT IN (SELECT storm_key FROM storm_records WHERE storm_key IS NOT NULL)
+  `).run(STORM_QUALIFY_MIN_STRIKES, cutoff7d, TOP_STORMS_LIMIT);
 
   // Storm rows are kept forever so global rankings stay stable.
   // Only the strikes blob is expensive — that's already nulled above after 7 days.
