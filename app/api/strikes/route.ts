@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
 import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
 
@@ -282,6 +282,16 @@ const trackedStorms: TrackedStorm[] = (() => {
 setImmediate(() => {
   try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
   try { reconcileCountryPaths(getCountryCode); } catch { /* non-fatal */ }
+  // Self-limiting (only storms with an end_time inside grid_strikes' 3-day
+  // retention are even considered), so safe to attempt on every startup —
+  // a storm already fully reconstructed, or whose window has since aged out
+  // of the archive, is just a no-op.
+  try {
+    const backfilled = backfillGappedStormTails();
+    if (backfilled.length > 0) {
+      console.log(`[db] storm tail backfill: ${backfilled.length} storm(s) attempted — ${JSON.stringify(backfilled)}`);
+    }
+  } catch (err) { console.error('[db] storm tail backfill failed:', err); }
   try {
     consolidateNearbyStorms(TRACKER_MERGE_KM);
     // After consolidation some in-memory storms may have had their DB row deleted
