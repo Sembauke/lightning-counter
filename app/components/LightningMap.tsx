@@ -88,6 +88,13 @@ interface MapState {
 // z≤6: binZoom=6, 192px → ~192px at z6, ~12px at z2 (same geographic cells, just smaller on screen)
 // z7–z9: binZoom=7, 96px → ~96px at z7, ~384px at z9
 // z10–z12: binZoom=10, 64px → ~64px at z10, ~256px at z12
+// Strike dots stayed a fixed 2-3px at every zoom, so they read as near-invisible
+// specks once fully zoomed in. Grow gently with zoom instead, capped so they
+// don't dominate the view at low zoom where strikes are dense.
+function baseDotRadius(zoom: number): number {
+  return Math.min(9, Math.max(2, 2 + (zoom - 4) * 0.5));
+}
+
 function getHeatmapLevel(zoom: number): { displayPx: number; binZoom: number } {
   const z = Math.floor(zoom);
   if (z >= 10) return { displayPx: 64,  binZoom: 10 };
@@ -100,6 +107,11 @@ function getHeatmapLevel(zoom: number): { displayPx: number; binZoom: number } {
 // Logarithmic color scale: blue (sparse) → cyan → green → yellow → orange → red (dense)
 const CELL_KEY_MULT = 1 << 15;
 const FLASH_DURATION_MS = 700;
+// The "sound wave" ring expands at the real speed of sound so its radius always
+// matches how far thunder would have traveled by the time the ring fades out.
+const SOUND_SPEED_MPS = 343;
+const SOUND_RING_DURATION_MS = 30_000;
+const SOUND_RING_MAX_DISTANCE_M = SOUND_SPEED_MPS * (SOUND_RING_DURATION_MS / 1000);
 
 function getHeatColor(count: number, maxCount: number): string {
   if (!count || !maxCount) return 'rgba(0,0,0,0)';
@@ -639,7 +651,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         // Dot view — always on when heatmap is inactive. Shows the last 30 minutes.
         if (!heatmapEnabledRef.current) {
           const dotCutoff = Date.now() - WINDOW_MS;
-          const dotR = Math.max(2, 3 / dpr);
+          const dotR = baseDotRadius(s.map.getZoom()) / dpr;
           // Normalize against the fixed window so colors are viewport-independent:
           // t=0 → oldest possible (cutoff), t=1 → now
 
@@ -1332,7 +1344,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         ctx.clearRect(0, 0, overlay.width, overlay.height);
 
         // Screen transform from precomputed mercator coords — one Leaflet call per frame
-        const scale = 256 * Math.pow(2, map.getZoom());
+        const zoom = map.getZoom();
+        const scale = 256 * Math.pow(2, zoom);
         const org = map.latLngToContainerPoint([0, 0]);
         const ox = org.x - scale * 0.5;
         const oy = org.y - scale * 0.5;
@@ -1341,17 +1354,16 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           ctx.save();
           ctx.scale(dpr, dpr);
 
-          const zoom = map.getZoom();
           const metersPerPx = 156_543 / Math.pow(2, zoom);
-          const soundMaxPx = Math.max(160, Math.min(600, Math.round(25_000 / metersPerPx)));
+          const soundMaxPx = Math.min(600, Math.round(SOUND_RING_MAX_DISTANCE_M / metersPerPx));
           const hmActive = heatmapEnabledRef.current;
 
           let i = s.rings.length;
           while (i--) {
             const ring = s.rings[i];
             if (ring.zoomed) {
-              if (zoom < 11) continue;
-              const p = Math.min((now - ring.startTime) / 73_000, 1);
+              if (zoom < 9) continue;
+              const p = Math.min((now - ring.startTime) / SOUND_RING_DURATION_MS, 1);
               if (p >= 1) { s.rings.splice(i, 1); continue; }
               if (p <= 0 || hmActive) continue;
               ctx.beginPath();
@@ -1360,7 +1372,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
               ctx.lineWidth = 0.5 + (1 - p) * 2.5;
               ctx.stroke();
             } else {
-              if (zoom >= 11) continue;
+              if (zoom >= 9) continue;
               const p = Math.min((now - ring.startTime) / 600, 1);
               if (p >= 1) { s.rings.splice(i, 1); continue; }
               if (p <= 0 || hmActive) continue;
@@ -1390,12 +1402,12 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           for (const dot of s.liveDots) {
             const age = nowMs - dot.addedAt;
             const alpha = Math.pow(1 - age / maxAge, 0.4);
-            const radius = age < 10_000 ? 4 : 3;
+            const radius = baseDotRadius(zoom) + (age < 10_000 ? 1 : 0);
             ctx.beginPath();
             ctx.arc(dot.nx * scale + ox, dot.ny * scale + oy, radius, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(255,224,64,${alpha.toFixed(3)})`;
             ctx.fill();
-            if (age < 10_000) {
+            if (age < 20_000) {
               ctx.strokeStyle = `rgba(255,34,34,${Math.min(1, alpha * 1.4).toFixed(3)})`;
               ctx.lineWidth = 2.5;
               ctx.stroke();
@@ -1878,7 +1890,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       if (!strike.id.startsWith('hist-') && !document.hidden) {
         const zoom = s.map.getZoom();
         // Stagger ring starts across the batch window so pulses stay continuous
-        s.rings.push({ nx, ny, startTime: performance.now() + Math.random() * 700, zoomed: zoom >= 11 });
+        s.rings.push({ nx, ny, startTime: performance.now() + Math.random() * 700, zoomed: zoom >= 9 });
         s.liveDots.push({ nx, ny, addedAt: Date.now() });
 
         if (heatmapEnabledRef.current) {
