@@ -114,7 +114,6 @@ export default function ArchivePage() {
   return (
     <div className="archive-page">
       <div className="archive-toolbar">
-        <span className="archive-title">{t('title')}</span>
         <select
           className="storm-table-select"
           value={view}
@@ -143,9 +142,6 @@ export default function ArchivePage() {
               {todayTotal > 0 ? fmt(todayTotal) : '—'}
             </span>
           </span>
-        )}
-        {view === 'countries' && (
-          <span className="archive-count">{t('countriesFound', { count: filtered.length })}</span>
         )}
       </div>
 

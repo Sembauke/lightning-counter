@@ -24,13 +24,7 @@ export default function StormsClient() {
   const t = useTranslations('stormLog');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
-  const [date, setDate] = useState(() => {
-    try {
-      const saved = localStorage.getItem('stormLogDate');
-      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) && saved <= todayUTC()) return saved;
-    } catch {}
-    return todayUTC();
-  });
+  const [date, setDate] = useState(() => todayUTC());
   const [storms, setStorms] = useState<StormRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -126,7 +120,6 @@ export default function StormsClient() {
 
   function changeDate(next: string) {
     setDate(next);
-    try { localStorage.setItem('stormLogDate', next); } catch {}
     setExpandedKey(null);
   }
 
@@ -150,7 +143,6 @@ export default function StormsClient() {
   return (
     <div className="archive-page">
       <div className="archive-toolbar">
-        <span className="archive-title">{t('title')}</span>
         <div className="storm-log-datenav">
           <button className="storm-log-daybtn" onClick={() => shiftDate(-1)} aria-label="‹">‹</button>
           <input

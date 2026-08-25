@@ -382,55 +382,6 @@ html, body {
   text-transform: uppercase;
 }
 
-/* ── Below-the-fold info section (homepage) ── */
-.site-info {
-  background: #0a0a0f;
-  color: rgba(255,255,255,0.72);
-  padding: 3rem 1.5rem 4rem;
-  font-family: system-ui, sans-serif;
-  line-height: 1.65;
-  border-top: 1px solid rgba(255,220,0,0.15);
-}
-.site-info h1,
-.site-info h2,
-.site-info p,
-.site-info details {
-  max-width: 720px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.site-info h1 {
-  font-size: 1.35rem;
-  letter-spacing: 0.06em;
-  color: rgba(255,230,80,0.9);
-  margin-bottom: 1.25rem;
-}
-.site-info h2 {
-  font-size: 1.05rem;
-  letter-spacing: 0.05em;
-  color: rgba(255,230,80,0.8);
-  margin: 2rem auto 0.75rem;
-}
-.site-info p { margin: 0 auto 1rem; }
-.site-info a { color: rgba(255,220,0,0.75); text-decoration: none; }
-.site-info a:hover { color: #ffe040; }
-.site-info details {
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  padding: 0.6rem 0;
-}
-.site-info summary {
-  cursor: pointer;
-  color: rgba(255,255,255,0.85);
-  font-weight: 600;
-}
-.site-info details p { margin: 0.6rem 0 0.2rem; }
-
-/* Desktop-only: on phones the map should be the whole experience, and hiding
-   the section also removes the page scroll below the map */
-@media (max-width: 640px) {
-  .site-info { display: none; }
-}
-
 /* ── Attribution ── */
 .attribution {
   position: absolute;
@@ -482,20 +433,13 @@ html, body {
   flex-wrap: wrap;
 }
 
-.archive-title {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(255,220,80,0.9);
-  flex-shrink: 0;
-}
-
 .archive-search {
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 6px;
-  padding: 0.45rem 0.85rem;
+  box-sizing: border-box;
+  height: 2.15rem;
+  padding: 0 0.85rem;
   color: rgba(255,220,0,0.9);
   font-family: inherit;
   font-size: 0.875rem;
@@ -522,6 +466,7 @@ html, body {
   font-weight: 700;
   color: #ffe040;
   font-variant-numeric: tabular-nums;
+  margin-left: auto;
 }
 
 .archive-today-total-label {
@@ -546,7 +491,7 @@ html, body {
 .archive-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0 1.5rem 2rem;
+  padding: 0 0 2rem;
 }
 
 .archive-table {
@@ -592,11 +537,9 @@ html, body {
 .archive-row {
   border-bottom: 1px solid rgba(255,255,255,0.05);
   cursor: pointer;
-  transition: background 0.1s;
 }
-.archive-row:hover { background: rgba(255,255,255,0.04); }
-.archive-row.selected { background: rgba(255,220,0,0.06); border-bottom-color: rgba(255,220,0,0.12); }
-.archive-row td { padding: 0.6rem 0.75rem; vertical-align: middle; }
+.archive-row:hover td { background: rgba(255,255,255,0.04); }
+.archive-row td { padding: 0.6rem 0.75rem; vertical-align: middle; transition: background 0.1s; }
 
 /* Fading "+N" chip shown when a live count increases; re-keyed per change so
    the animation restarts, and it simply stays at opacity 0 afterwards.
@@ -674,7 +617,7 @@ html, body {
 
 @media (max-width: 640px) {
   .archive-toolbar { padding: 0.75rem; }
-  .archive-body { padding: 0 0.75rem 2rem; }
+  .archive-body { padding: 0 0 2rem; }
   .archive-count { display: none; }
   .archive-table th.col-date, .archive-table td.col-date { display: none; }
   .archive-row td { padding: 0.55rem 0.5rem; }
@@ -991,92 +934,6 @@ html, body {
   .sl-expand { padding: 0 0.75rem 1rem; }
 }
 
-/* ── Records filter bar ──────────────────────────────────────────────── */
-.hof-filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.25rem;
-  padding: 0.65rem 1.5rem;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-  background: rgba(255,255,255,0.015);
-}
-
-.hof-filter-field {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  cursor: default;
-}
-
-.hof-filter-label {
-  font-size: 0.7rem;
-  font-family: 'Courier New', monospace;
-  color: rgba(255,220,0,0.45);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-  user-select: none;
-}
-
-.hof-filter-unit {
-  font-size: 0.7rem;
-  font-family: 'Courier New', monospace;
-  color: rgba(255,220,0,0.45);
-}
-
-.hof-filter-input {
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 4px;
-  padding: 0.3rem 0.5rem;
-  color: rgba(255,220,0,0.9);
-  font-family: 'Courier New', monospace;
-  font-size: 0.78rem;
-  width: 5rem;
-  outline: none;
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-.hof-filter-input::-webkit-outer-spin-button,
-.hof-filter-input::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; }
-.hof-filter-input:focus {
-  border-color: rgba(255,220,0,0.35);
-}
-.hof-filter-input::placeholder { color: rgba(255,220,0,0.3); }
-
-.hof-filter-clear {
-  background: rgba(255,80,80,0.1);
-  border: 1px solid rgba(255,80,80,0.25);
-  border-radius: 4px;
-  color: rgba(255,120,120,0.8);
-  font-family: 'Courier New', monospace;
-  font-size: 0.72rem;
-  padding: 0.3rem 0.65rem;
-  cursor: pointer;
-  transition: background 0.12s;
-  white-space: nowrap;
-}
-.hof-filter-clear:hover {
-  background: rgba(255,80,80,0.2);
-}
-
-.hof-filter-count {
-  font-family: 'Courier New', monospace;
-  font-size: 0.75rem;
-  color: rgba(255,220,0,0.5);
-  margin-left: auto;
-}
-
-@media (max-width: 640px) {
-  .hof-filters {
-    padding: 0.55rem 0.75rem;
-    gap: 0.45rem 1rem;
-  }
-  .hof-filter-label { font-size: 0.65rem; }
-  .hof-filter-input { width: 4rem; font-size: 0.72rem; }
-}
-
 /* ── Hall of Fame leaderboard (records page) ─────────────────────────── */
 .hof-list {
   display: flex;
@@ -1233,13 +1090,15 @@ html, body {
   background: #1a1a1a;
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 6px;
+  box-sizing: border-box;
+  height: 2.15rem;
   color: rgba(255,220,0,0.85);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-family: inherit;
-  padding: 0.35rem 0.7rem;
+  padding: 0 0.7rem;
   cursor: pointer;
   outline: none;
   transition: border-color 0.15s;
@@ -1696,7 +1555,9 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
 }
 
 .storm-log-daybtn {
-  padding: 0.35rem 0.7rem;
+  box-sizing: border-box;
+  height: 2.15rem;
+  padding: 0 0.7rem;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 6px;
@@ -1707,6 +1568,12 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
 }
 .storm-log-daybtn:hover:not(:disabled) { border-color: rgba(255,220,0,0.4); }
 .storm-log-daybtn:disabled { opacity: 0.35; cursor: default; }
+
+.storm-log-datenav .detail-input {
+  box-sizing: border-box;
+  height: 2.15rem;
+  padding: 0 0.55rem;
+}
 
 .storm-log-list {
   display: flex;
@@ -2058,20 +1925,10 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
   text-align: left;
 }
 
-.storm-col-rank { width: 28px; text-align: center; }
 .storm-col-rate { width: 72px; text-align: right; }
-.storm-col-ath { width: 80px; text-align: right; }
 
 .storm-row {
   border-bottom: 1px solid rgba(255,255,255,0.04);
-}
-
-.storm-rank {
-  font-size: 0.72rem;
-  color: rgba(255,220,0,0.5);
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  padding: 0.5rem 0.25rem;
 }
 
 .tornado-warning-path {
@@ -2211,20 +2068,6 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
   margin-left: 1px;
 }
 
-.storm-ath {
-  font-size: 0.8rem;
-  color: rgba(255,220,0,0.75);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  padding: 0.5rem 0.75rem 0.5rem 0.25rem;
-  white-space: nowrap;
-}
-
-/* ── Expandable per-country storm details ── */
-.storm-row { cursor: pointer; }
-.storm-row:hover td { background: rgba(255,220,0,0.04); }
-.storm-row-open td { background: rgba(255,220,0,0.05); }
-
 .storm-chevron {
   flex-shrink: 0;
   font-size: 1rem;
@@ -2235,94 +2078,6 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
   padding-left: 1rem;
 }
 .storm-chevron.open { transform: rotate(180deg); color: rgba(255,220,0,0.85); }
-
-.storm-detail-row td {
-  padding: 0;
-  background: rgba(255,220,0,0.03);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-.storm-cells {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 0.4rem 0.6rem 0.55rem;
-}
-
-.storm-cells-summary {
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255,225,90,0.8);
-  padding: 0 0.3rem 0.25rem;
-}
-
-.storm-cells-empty {
-  font-size: 0.75rem;
-  color: rgba(255,235,150,0.8);
-  padding: 0.2rem 0.3rem 0.3rem;
-}
-
-.storm-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 0.4rem 0.5rem;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,220,0,0.08);
-  border-radius: 6px;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-.storm-cell:hover {
-  background: rgba(255,220,0,0.07);
-  border-color: rgba(255,220,0,0.25);
-}
-
-.storm-cell-main {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.storm-cell-name {
-  font-size: 0.78rem;
-  color: rgba(255,240,180,0.92);
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.storm-cell-rate {
-  font-size: 0.78rem;
-  color: #ffe040;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.storm-trend {
-  margin-left: 0.35rem;
-  font-size: 0.6rem;
-}
-.storm-trend-up { color: #7dff8a; }
-.storm-trend-down { color: #ff8a7d; }
-.storm-trend-steady { color: rgba(255,220,0,0.35); }
-
-.storm-cell-meta {
-  font-size: 0.68rem;
-  color: rgba(255,230,120,0.75);
-  letter-spacing: 0.03em;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
 
 .storm-merge-tag {
   display: inline-flex;
