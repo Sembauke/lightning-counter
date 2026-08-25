@@ -31,7 +31,6 @@ export default function StormsClient() {
     } catch {}
     return todayUTC();
   });
-  const [search, setSearch] = useState('');
   const [storms, setStorms] = useState<StormRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -143,20 +142,10 @@ export default function StormsClient() {
     const isLiveFn = (s: StormRow) =>
       date === todayUTC() && s.endTime != null && now - s.endTime < 10 * 60 * 1000;
 
-    const q = search.trim().toLowerCase();
-    const base = q
-      ? storms.filter(s =>
-          countryName(s.code).toLowerCase().includes(q)
-          || s.code.toLowerCase().includes(q)
-          || (s.city ?? '').toLowerCase().includes(q)
-          || (s.originCity ?? '').toLowerCase().includes(q)
-        )
-      : storms;
-
-    const live = base.filter(isLiveFn).sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
-    const dead = base.filter(s => !isLiveFn(s));
+    const live = storms.filter(isLiveFn).sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+    const dead = storms.filter(s => !isLiveFn(s));
     return [...live, ...dead];
-  }, [storms, search, date]);
+  }, [storms, date]);
 
   return (
     <div className="archive-page">
@@ -173,12 +162,6 @@ export default function StormsClient() {
           />
           <button className="storm-log-daybtn" onClick={() => shiftDate(1)} disabled={date >= todayUTC()} aria-label="›">›</button>
         </div>
-        <input
-          className="archive-search"
-          placeholder={t('searchPlaceholder')}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
         <span className="archive-count">{t('stormsFound', { count: filtered.length })}</span>
       </div>
 

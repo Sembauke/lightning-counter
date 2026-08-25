@@ -376,7 +376,8 @@ export default function StormReplayMap({
       const cutoff = cutoffForProgress(p, replayMinTime, maxTime);
       renderAt(cutoff, now, true);
 
-      if (p < 1 || ringsRef.current.length > 0) {
+      const strikesRemaining = nextIdxRef.current < projectedRef.current.length;
+      if (p < 1 || strikesRemaining || ringsRef.current.length > 0) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
         rafRef.current = null;
