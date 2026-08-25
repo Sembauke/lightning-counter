@@ -87,11 +87,9 @@ export default function ArchivePage() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    const rows = q
-      ? data.filter(row =>
-          countryName(row.code).toLowerCase().includes(q) || row.code.toLowerCase().includes(q)
-        )
-      : [...data];
+    const rows = data.filter(row =>
+      row.code !== 'XO' && (!q || countryName(row.code).toLowerCase().includes(q) || row.code.toLowerCase().includes(q))
+    );
 
     rows.sort((a, b) => {
       let cmp = 0;
