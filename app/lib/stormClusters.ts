@@ -24,8 +24,8 @@ export type CityTuple = [name: string, lat: number, lon: number];
 
 // ~0.25° ≈ 25 km cells; adjacent active cells merge into one storm
 const CELL_DEG = 0.25;
-// A cluster only counts as a storm at 15+ strikes per minute
-const MIN_RATE_PER_MIN = 15;
+// A cluster only counts as a storm at 20+ strikes per minute.
+export const MIN_STORM_RATE = 20;
 const MAX_STORMS = 20;
 // Clusters with centroids closer than this are the same storm
 export const MERGE_KM = 75;
@@ -46,7 +46,7 @@ const BORDER_KM = 25;
 
 const NEIGHBORS = [-1, 0, 1];
 
-export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCell[] {
+export function detectStorms(strikes: StrikePoint[], windowMs: number, maxStorms = MAX_STORMS): StormCell[] {
   const cells = new Map<string, StrikePoint[]>();
   for (const s of strikes) {
     const key = `${Math.floor(s.lat / CELL_DEG)}:${Math.floor(s.lon / CELL_DEG)}`;
@@ -110,7 +110,7 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
     }
   }
 
-  const minStrikes = MIN_RATE_PER_MIN * (windowMs / 60_000);
+  const minStrikes = MIN_STORM_RATE * (windowMs / 60_000);
   // Keep eligibility and merging based on the dense cores alone. In particular,
   // a chain of sparse cells must neither become a storm nor join existing ones.
   const qualified = groups.filter(g => g.strikes.length >= minStrikes);
@@ -163,7 +163,7 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
   const halfCutoff = Date.now() - windowMs / 2;
   return qualified
     .sort((a, b) => b.strikes.length - a.strikes.length)
-    .slice(0, MAX_STORMS)
+    .slice(0, maxStorms)
     .map(({ strikes: cluster, mergedFrom }) => {
       let latSum = 0, lonSum = 0;
       let oldN = 0, oldLat = 0, oldLon = 0;

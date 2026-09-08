@@ -138,18 +138,18 @@ describe('detectStorms', () => {
 
   it('detects a single active cluster', () => {
     const now = Date.now();
-    // MIN_RATE_PER_MIN = 15, so 75 strikes in 5 min satisfies the threshold
-    const strikes = makeStrikes(52, 5, 80, now - WINDOW_5MIN + 1000);
+    // MIN_STORM_RATE = 20, so 100 strikes in 5 min satisfies the threshold
+    const strikes = makeStrikes(52, 5, 120, now - WINDOW_5MIN + 1000);
     const storms = detectStorms(strikes, WINDOW_5MIN);
     expect(storms.length).toBe(1);
-    expect(storms[0].count).toBeGreaterThanOrEqual(75);
+    expect(storms[0].count).toBeGreaterThanOrEqual(100);
   });
 
   it('detects two separate clusters as two storms', () => {
     const now = Date.now();
     // Two clusters 3 degrees apart (~333 km) so they stay separate
-    const clusterA = makeStrikes(52, 5, 80, now - WINDOW_5MIN + 1000);
-    const clusterB = makeStrikes(49, 5, 80, now - WINDOW_5MIN + 1000);
+    const clusterA = makeStrikes(52, 5, 120, now - WINDOW_5MIN + 1000);
+    const clusterB = makeStrikes(49, 5, 120, now - WINDOW_5MIN + 1000);
     const storms = detectStorms([...clusterA, ...clusterB], WINDOW_5MIN);
     expect(storms.length).toBe(2);
   });
@@ -159,8 +159,8 @@ describe('detectStorms', () => {
     // 52.65 - 52.0 = 0.65° ≈ 72 km, within MERGE_KM (75 km).
     // Spread 0.1 means A's top cells are at row 208, B's bottom cells at row 210 — a
     // 2-row gap so BFS keeps them separate, letting the agglomerative step merge them.
-    const clusterA = makeStrikes(52.0, 5.0, 80, now - WINDOW_5MIN + 1000);
-    const clusterB = makeStrikes(52.65, 5.0, 80, now - WINDOW_5MIN + 1000);
+    const clusterA = makeStrikes(52.0, 5.0, 120, now - WINDOW_5MIN + 1000);
+    const clusterB = makeStrikes(52.65, 5.0, 120, now - WINDOW_5MIN + 1000);
     const storms = detectStorms([...clusterA, ...clusterB], WINDOW_5MIN);
     expect(storms.length).toBe(1);
     expect(storms[0].mergedFrom).toBe(2);
@@ -168,15 +168,15 @@ describe('detectStorms', () => {
 
   it('ignores clusters below the minimum rate threshold', () => {
     const now = Date.now();
-    // Only 10 strikes in 5 min = 2/min, below MIN_RATE_PER_MIN=15
+    // Only 10 strikes in 5 min = 2/min, below MIN_STORM_RATE=20
     const strikes = makeStrikes(52, 5, 10, now - WINDOW_5MIN + 1000);
     expect(detectStorms(strikes, WINDOW_5MIN)).toEqual([]);
   });
 
   it('sorts storms by count descending', () => {
     const now = Date.now();
-    const big = makeStrikes(52, 5, 120, now - WINDOW_5MIN + 1000);
-    const small = makeStrikes(49, 5, 80, now - WINDOW_5MIN + 1000);
+    const big = makeStrikes(52, 5, 160, now - WINDOW_5MIN + 1000);
+    const small = makeStrikes(49, 5, 120, now - WINDOW_5MIN + 1000);
     const storms = detectStorms([...big, ...small], WINDOW_5MIN);
     expect(storms.length).toBe(2);
     expect(storms[0].count).toBeGreaterThanOrEqual(storms[1].count);

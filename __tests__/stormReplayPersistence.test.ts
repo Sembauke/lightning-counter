@@ -64,6 +64,64 @@ function tableMetrics(table: string) {
   return rows.map(({ strikes: _strikes, ...metrics }) => metrics);
 }
 
+describe('updateStormReplay', () => {
+  it('updates every existing replay copy while preserving official metrics and ranks', () => {
+    const storm = saveStorm();
+    dbModule.upsertBiggestStorms([storm]);
+    dbModule.upsertStormRecords([storm]);
+    saveStorm({ stormKey: 'TEST:bigger', totalCount: 20_000, strikes: null });
+    const tables = ['storms', 'country_biggest_storms', 'storm_records'];
+    const metrics = tables.map(tableMetrics);
+    const rank = dbModule.getStormRank(storm.totalCount!);
+    const fadingReplay: StormStrike[] = [...storm.strikes!, [0, 0.1, now - 60_000]];
+
+    dbModule.updateStormReplay(storm.stormKey!, fadingReplay);
+
+    for (const table of tables) {
+      const copies = sql.prepare(`SELECT strikes FROM ${table} WHERE storm_key = ?`).all(storm.stormKey) as { strikes: string }[];
+      expect(copies.length).toBeGreaterThan(0);
+      for (const copy of copies) expect(JSON.parse(copy.strikes)).toEqual(fadingReplay);
+    }
+    expect(tables.map(tableMetrics)).toEqual(metrics);
+    expect(dbModule.getStormRank(storm.totalCount!)).toBe(rank);
+    expect(dbModule.getStormByKey('TEST:bigger')!.strikes).toBeNull();
+  });
+
+  it('does not create log entries, claim records, or resurrect deleted storms', () => {
+    const storm = saveStorm();
+    dbModule.upsertBiggestStorms([storm]);
+    dbModule.upsertStormRecords([storm]);
+    dbModule.deleteStorm(storm.stormKey!);
+
+    dbModule.updateStormReplay(storm.stormKey!, storm.strikes!);
+    dbModule.updateStormReplay('TEST:never-recorded', storm.strikes!);
+
+    expect(dbModule.getStormByKey(storm.stormKey!)).toBeNull();
+    expect(dbModule.getStormByKey('TEST:never-recorded')).toBeNull();
+    expect(dbModule.getBiggestStorm(storm.code)).toBeNull();
+    expect(dbModule.getStormRecords()).toEqual([]);
+  });
+
+  it('rolls back all replay copies when a cache update fails', () => {
+    const storm = saveStorm();
+    dbModule.upsertBiggestStorms([storm]);
+    dbModule.upsertStormRecords([storm]);
+    sql.exec(`
+      CREATE TRIGGER reject_tail_copy BEFORE UPDATE OF strikes ON storm_records
+      BEGIN SELECT RAISE(ABORT, 'simulated tail write failure'); END;
+    `);
+    try {
+      expect(() => dbModule.updateStormReplay(storm.stormKey!, [...storm.strikes!, [0, 0.1, now - 60_000]]))
+        .toThrow('simulated tail write failure');
+      expect(dbModule.getStormByKey(storm.stormKey!)!.strikes).toEqual(storm.strikes);
+      expect(dbModule.getBiggestStorm(storm.code)!.strikes).toEqual(storm.strikes);
+      expect(dbModule.getStormRecords().every(record => JSON.stringify(record.strikes) === JSON.stringify(storm.strikes))).toBe(true);
+    } finally {
+      sql.exec('DROP TRIGGER reject_tail_copy');
+    }
+  });
+});
+
 describe('getStormReplayByKey', () => {
   it('persists recovered edges in every replay copy without changing metrics or ranks', () => {
     const storm = saveStorm();
@@ -145,6 +203,22 @@ describe('getStormReplayByKey', () => {
     }
     expect(dbModule.getStormReplayByKey('TEST:absent', now)).toBeNull();
     expect(marker('TEST:absent')).toBeUndefined();
+  });
+
+  it('waits for a fading replay tail to settle after the official storm has ended', () => {
+    const storm = saveStorm();
+    const fadingReplay: StormStrike[] = [...storm.strikes!, [0, 0, now - 5 * 60_000]];
+    dbModule.updateStormReplay(storm.stormKey!, fadingReplay);
+    const edge: StormStrike = [0, 0.18, strikeTime + 1000];
+    archive([edge]);
+
+    expect(dbModule.getStormReplayByKey(storm.stormKey!, now)!.strikes).toEqual(fadingReplay);
+    expect(marker()).toBeUndefined();
+    expect(dbModule.getStormReplayByKey(storm.stormKey!, now + 55 * 60_000)!.strikes).toEqual(fadingReplay);
+    expect(marker()).toBeUndefined();
+    expect(dbModule.getStormReplayByKey(storm.stormKey!, now + 55 * 60_000 + 1)!.strikes).toContainEqual(edge);
+    expect(marker()).toBeDefined();
+    expect(dbModule.getStormByKey(storm.stormKey!)!.endTime).toBe(storm.endTime);
   });
 
   it('rolls back all replay copies and the completion marker when persistence fails', () => {

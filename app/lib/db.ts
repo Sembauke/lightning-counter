@@ -476,6 +476,19 @@ export function upsertStorms(storms: BiggestStorm[]): void {
   })();
 }
 
+/** Persist fading lightning without extending the qualified storm's metrics. */
+export function updateStormReplay(stormKey: string, strikes: StormStrike[]): void {
+  const db = getDb();
+  const json = JSON.stringify(strikes);
+  db.transaction(() => {
+    // UPDATE only: a replay continuation must not create a log entry, claim a
+    // record, or resurrect a key that the tracker has absorbed into another one.
+    db.prepare('UPDATE storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+    db.prepare('UPDATE country_biggest_storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+    db.prepare('UPDATE storm_records SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+  })();
+}
+
 function parseCountryPath(raw: string | null): string[] | null {
   if (!raw) return null;
   try { return JSON.parse(raw) as string[]; } catch { return null; }
@@ -591,11 +604,16 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
  */
 export function getStormReplayByKey(stormKey: string, nowMs = Date.now()): BiggestStorm | null {
   const storm = getStormByKey(stormKey);
-  // The UI stops showing LIVE after ten minutes, but the tracker retains the
-  // identity for one hour (STORM_DROP_MS). Wait until it can no longer resume
-  // before writing a durable repair marker or replacing its replay samples.
-  if (!storm || storm.endTime == null || nowMs - storm.endTime <= 60 * 60_000
+  if (!storm || storm.endTime == null
       || !Array.isArray(storm.strikes) || storm.strikes.length === 0) return storm;
+  // A storm's official end time stops advancing below the detection threshold,
+  // while its replay may still follow fading lightning. Wait for both to settle
+  // before replacing the tracker-owned sample or writing a durable repair marker.
+  let latestActivity = storm.endTime;
+  for (const point of storm.strikes) {
+    if (Array.isArray(point) && Number.isFinite(point[2])) latestActivity = Math.max(latestActivity, point[2]);
+  }
+  if (nowMs - latestActivity <= 60 * 60_000) return storm;
 
   try {
     const db = getDb();

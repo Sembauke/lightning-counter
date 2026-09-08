@@ -9,6 +9,7 @@ import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
+import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../../lib/stormReplayState';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
 
@@ -183,6 +184,22 @@ export default function StormDetailClient({
     if (storm.strikes) for (const s of storm.strikes) if (s[2] > max) max = s[2];
     return max;
   })());
+  const seenReplayStrikesRef = useRef(new Set((storm.strikes ?? []).map(replayStrikeKey)));
+  const shouldPoll = shouldPollStormReplay(liveStats.endTime, latestTsRef.current);
+
+  const appendUnseenStrikes = (batch: StormStrike[]) => {
+    const fresh = batch.filter(strike => {
+      const key = replayStrikeKey(strike);
+      if (seenReplayStrikesRef.current.has(key)) return false;
+      seenReplayStrikesRef.current.add(key);
+      return true;
+    });
+    if (fresh.length) {
+      latestTsRef.current = Math.max(latestTsRef.current, latestReplayTime(fresh));
+      setAppendedStrikes(prev => [...prev, ...fresh]);
+    }
+    return fresh.length;
+  };
 
   const [displayNearbyRanked, setDisplayNearbyRanked] = useState(nearbyRanked);
   const [leaderboardFlashKeys, setLeaderboardFlashKeys] = useState<Set<string>>(new Set());
@@ -208,43 +225,42 @@ export default function StormDetailClient({
     es.addEventListener('history', (e: Event) => {
       try {
         const batch = JSON.parse((e as MessageEvent).data) as StormStrike[];
-        if (batch.length > 0) {
-          // batch is sorted ascending; take max to guard live dupes
-          latestTsRef.current = Math.max(latestTsRef.current, batch[batch.length - 1][2]);
-          setAppendedStrikes(batch);
-        }
+        appendUnseenStrikes(batch);
       } catch {}
     });
 
     es.onmessage = (e) => {
       try {
         const strike = JSON.parse(e.data) as StormStrike;
-        if (strike[2] > latestTsRef.current) {
-          latestTsRef.current = strike[2];
-          setAppendedStrikes(prev => [...prev, strike]);
-          setAppendedSinceFlush(prev => prev + 1);
-        }
+        const added = appendUnseenStrikes([strike]);
+        if (added) setAppendedSinceFlush(prev => prev + added);
       } catch {}
     };
     return () => es.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, storm.stormKey]);
 
-  // KPI poll: update stats + leaderboard every 15s; also backfills strikes missed between SSR and SSE
+  // Keep replay polling through the weakening tail even after the official
+  // storm is no longer live. Only SSE for active storms affects the live total.
   useEffect(() => {
-    if (!isLive || !storm.stormKey) return;
+    if (!shouldPoll || !storm.stormKey) return;
     let cancelled = false;
+    let polling = false;
 
     const poll = async () => {
+      if (polling) return;
+      polling = true;
       try {
         const liveTotal = stormTotalRef.current;
         const url = `/api/storms/${encodeURIComponent(storm.stormKey!)}/strikes`;
         const res = await fetch(url);
         if (!res.ok || cancelled) return;
         const data = await res.json() as PollResponse;
+        if (cancelled) return;
         // Preserve SSE strikes not yet flushed to DB
         const dbTotal = data.totalCount ?? data.count;
-        setAppendedSinceFlush(Math.max(0, liveTotal - dbTotal));
+        const stillLive = data.endTime != null && Date.now() - data.endTime < 10 * 60_000;
+        setAppendedSinceFlush(stillLive ? Math.max(0, liveTotal - dbTotal) : 0);
         setLiveStats({
           endTime: data.endTime,
           totalCount: data.totalCount,
@@ -275,19 +291,15 @@ export default function StormDetailClient({
           });
         }
         // Backfill any strikes between SSR and EventSource connect
-        const fresh = data.strikes.filter(s => s[2] > latestTsRef.current);
-        if (fresh.length > 0) {
-          for (const s of fresh) if (s[2] > latestTsRef.current) latestTsRef.current = s[2];
-          setAppendedStrikes(prev => [...prev, ...fresh]);
-        }
-      } catch { /* network blip — skip */ }
+        appendUnseenStrikes(data.strikes);
+      } catch { /* network blip — skip */ } finally { polling = false; }
     };
 
     const id = setInterval(poll, POLL_INTERVAL_MS);
     poll();
     return () => { cancelled = true; clearInterval(id); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, storm.stormKey]);
+  }, [shouldPoll, storm.stormKey]);
 
   // Real-time total: DB flush value + strikes received via SSE since last flush
   const stormTotal = (liveStats.totalCount ?? liveStats.count) + appendedSinceFlush;

@@ -18,16 +18,22 @@ describe('computeReplayDurationMs', () => {
     expect(computeReplayDurationMs(1000)).toBe(REPLAY_MS_MIN);
   });
 
-  it('scales proportionally to storm length in the middle of the range', () => {
-    // 30 storm-minutes * 2000ms/min = 60_000ms, within [MIN, MAX]
-    const spanMs = 30 * 60_000;
-    expect(computeReplayDurationMs(spanMs)).toBe(60_000);
+  it.each([
+    [30, 15_000],
+    [60, 30_000],
+    [120, 60_000],
+    [180, 90_000],
+  ])('plays %i storm-minutes in %i milliseconds', (minutes, expectedMs) => {
+    expect(computeReplayDurationMs(minutes * 60_000)).toBe(expectedMs);
   });
 
-  it('clamps very long storms to the 5-minute maximum instead of the old 40s cap', () => {
-    const sixHours = 6 * 60 * 60 * 1000;
-    expect(computeReplayDurationMs(sixHours)).toBe(REPLAY_MS_MAX);
-    expect(REPLAY_MS_MAX).toBe(300_000);
+  it.each([4, 8, 24])('caps a %i-hour storm at 90 seconds', hours => {
+    expect(computeReplayDurationMs(hours * 60 * 60 * 1000)).toBe(90_000);
+    expect(REPLAY_MS_MAX).toBe(90_000);
+  });
+
+  it.each([0, -60_000, NaN, Infinity, -Infinity])('uses the minimum for an invalid or empty span (%s)', spanMs => {
+    expect(computeReplayDurationMs(spanMs)).toBe(8_000);
   });
 });
 
@@ -35,6 +41,25 @@ describe('computeFreshMs', () => {
   it('scales with how compressed real time is relative to replay time', () => {
     // spanMs 10x replayMs => strikes stay fresh 10x as long in replay-time
     expect(computeFreshMs(100_000, 10_000)).toBeCloseTo(1200 * 10);
+  });
+
+  it.each([1, 60, 120, 180, 480])('keeps strikes fresh for 1.2 playback seconds in a %i-minute storm', minutes => {
+    const spanMs = minutes * 60_000;
+    const replayMs = computeReplayDurationMs(spanMs);
+    expect(computeFreshMs(spanMs, replayMs) / spanMs * replayMs).toBeCloseTo(1200);
+  });
+
+  it.each([
+    [0, 8000],
+    [-1000, 8000],
+    [NaN, 8000],
+    [Infinity, 8000],
+    [60_000, 0],
+    [60_000, -1000],
+    [60_000, NaN],
+    [60_000, Infinity],
+  ])('returns no freshness window for invalid timing (%s, %s)', (spanMs, replayMs) => {
+    expect(computeFreshMs(spanMs, replayMs)).toBe(0);
   });
 });
 
@@ -55,6 +80,15 @@ describe('cutoffForProgress / progressForCutoff', () => {
   it('round-trips a mid-range cutoff', () => {
     const cutoff = cutoffForProgress(0.4, minTime, maxTime);
     expect(progressForCutoff(cutoff, minTime, maxTime)).toBeCloseTo(0.4);
+  });
+
+  it.each([60, 120, 480])('maps half of a %i-minute replay to half of the storm timeline', minutes => {
+    const endTime = minTime + minutes * 60_000;
+    const elapsedPlaybackMs = computeReplayDurationMs(endTime - minTime) / 2;
+    const progress = elapsedPlaybackMs / computeReplayDurationMs(endTime - minTime);
+    const cutoff = cutoffForProgress(progress, minTime, endTime);
+    expect(cutoff).toBe(minTime + (endTime - minTime) / 2);
+    expect(progressForCutoff(cutoff, minTime, endTime)).toBe(0.5);
   });
 
   it('clamps progressForCutoff to [0, 1] for out-of-range times', () => {

@@ -3,7 +3,9 @@ import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
-import { detectStorms, nearestCity, type CityTuple } from '../../lib/stormClusters';
+import { detectStorms, nearestCity, MIN_STORM_RATE, type CityTuple } from '../../lib/stormClusters';
+import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from '../../lib/stormReplayTail';
+import { updateStormReplay } from '../../lib/db';
 
 // Wider than the detection MERGE_KM (75 km) so that two tracked identities
 // from the same large storm system get consolidated even when their centroids
@@ -146,7 +148,7 @@ function citiesFor(cc: string): CityTuple[] {
 // ── Storm tracking across passes ────────────────────────────────────────
 // A storm keeps its identity while it stays above the detection threshold,
 // so records can say "from Amsterdam to Hoorn, 22:10 – 22:35" as it moves.
-interface TrackedStorm {
+interface TrackedStorm extends ReplayTailStorm {
   key: string;
   cc: string;
   originLat: number;
@@ -211,7 +213,8 @@ interface TrackedStorm {
 const STORM_MATCH_KM = 60;
 // Minimum match window regardless of elapsed time (absorbs centroid jitter)
 const STORM_MATCH_MIN_KM = 15;
-// Keep a storm alive for 1 hour after it drops below the detection threshold.
+// Keep a storm available for matching for 1 hour after it drops below the
+// detection threshold. A still-arriving replay tail is retained separately.
 // Beyond that, a re-appearing cell in the same area is a new storm, not a
 // continuation — the 6-hour window was causing unrelated evening storms to
 // inherit morning storm identities, inflating counts and durations.
@@ -237,14 +240,11 @@ const trackedStorms: TrackedStorm[] = (() => {
   try {
     const saved = loadTrackedStorms() as TrackedStorm[];
     const cutoff = Date.now() - STORM_DROP_MS;
-    const loaded = saved.filter(st => st.lastSeen > cutoff && st.key && st.cc && typeof st.lat === 'number');
+    const loaded = saved.filter(st => Math.max(st.lastSeen, st.lastReplayTime ?? 0) > cutoff && st.key && st.cc && typeof st.lat === 'number');
     // Mark storms that are already in the DB so the map can link them immediately
     const dbKeys = getTrackedStormKeys();
-    // Nudge stale lastSeen into the 5-min active window so the first connect-time
-    // broadcast includes them. After a hot-reload or restart the saved timestamps
-    // can be >5 min old, causing labels=0 until the first 30s interval fires.
-    // The interval resets lastSeen to the real match time on its first pass.
-    const minLastSeen = Date.now() - 4 * 60 * 1000;
+    // Keep the real detection timestamp: nudging it forward would turn a fading
+    // replay back into an officially active storm on every restart.
     for (const st of loaded) {
       st.inDb = dbKeys.has(st.key);
       st.initialStrikesByAncestor = st.initialStrikesByAncestor ?? {};
@@ -254,7 +254,6 @@ const trackedStorms: TrackedStorm[] = (() => {
       st.splitDetected = st.splitDetected ?? false;
       st.splitCandidateAt = st.splitCandidateAt ?? null;
       st.fragmentLabel = st.fragmentLabel ?? null;
-      if (st.lastSeen < minLastSeen) st.lastSeen = minLastSeen;
       // If allStrikes is missing or unusually short (e.g. lost on prev restart),
       // seed from the DB strikes blob which has the full historical coverage.
       if (st.inDb && (!st.allStrikes || st.allStrikes.length < 100)) {
@@ -262,7 +261,11 @@ const trackedStorms: TrackedStorm[] = (() => {
           const dbStorm = getStormByKey(st.key);
           if (dbStorm?.strikes && dbStorm.strikes.length > (st.allStrikes?.length ?? 0)) {
             st.allStrikes = dbStorm.strikes;
-            st.lastStrikeTime = Math.max(...dbStorm.strikes.map(s => s[2]));
+            // Replay-only fading points may be newer than the official count
+            // watermark. Reloading them must not suppress counts on revival.
+            if (!Number.isFinite(st.lastStrikeTime)) {
+              st.lastStrikeTime = Math.min(st.lastSeen, Math.max(...dbStorm.strikes.map(s => s[2])));
+            }
             // The persisted blob is the closest available proxy for the storm's
             // true beginning after a cold restart wiped the in-memory reservoir —
             // seed it from the earliest points (sorted, since a merge can have
@@ -349,7 +352,7 @@ function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): numb
 // hot-reload that reset stormSeq) don't pollute the broadcast.
 // Priority: DB-linked (inDb=true) beats non-DB; within same tier, more totalStrikes wins.
 function dedupeActiveStorms(storms: TrackedStorm[], nowMs: number): TrackedStorm[] {
-  const active = storms.filter(st => nowMs - st.lastSeen < 5 * 60_000);
+  const active = storms.filter(st => nowMs - st.lastSeen < 5 * 60_000 && st.currentRate >= MIN_STORM_RATE);
   const sorted = [...active].sort((a, b) => {
     if (a.inDb !== b.inDb) return (b.inDb ? 1 : 0) - (a.inDb ? 1 : 0);
     return b.totalStrikes - a.totalStrikes;
@@ -397,10 +400,18 @@ function withOriginSample(origin: StormStrike[], recent: StormStrike[]): StormSt
 function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>): void {
   let newest = st.lastStrikeTime;
   let newestMember: { lat: number; lon: number; time: number } | null = null;
+  // A re-strengthening cell can qualify points already saved in its quiet
+  // replay tail. Count them once officially, but keep one replay copy.
+  const saved = new Set(st.allStrikes.map(s => `${s[0]},${s[1]},${s[2]}`));
   for (const m of members) {
     if (m.time <= st.lastStrikeTime) continue;
     st.totalStrikes++;
-    if (st.appendSeq++ % st.keepEvery === 0) st.allStrikes.push(roundPt(m));
+    const p = roundPt(m);
+    const id = `${p[0]},${p[1]},${p[2]}`;
+    if (st.appendSeq++ % st.keepEvery === 0 && !saved.has(id)) {
+      st.allStrikes.push(p);
+      saved.add(id);
+    }
     if (st.originSample.length < ORIGIN_SAMPLE_MAX) st.originSample.push(roundPt(m));
     if (m.time > newest) { newest = m.time; newestMember = m; }
   }
@@ -417,9 +428,9 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   // single pass (~30s) instead of however large keepEvery has grown.
   if (newestMember) {
     const p = roundPt(newestMember);
-    const last = st.allStrikes[st.allStrikes.length - 1];
-    if (!last || last[0] !== p[0] || last[1] !== p[1] || last[2] !== p[2]) st.allStrikes.push(p);
+    if (!st.allStrikes.some(s => s[0] === p[0] && s[1] === p[1] && s[2] === p[2])) st.allStrikes.push(p);
   }
+  rememberReplayAnchors(st, members.map(roundPt), Date.now());
 }
 
 (globalThis as any)._iv_dbFlush = setInterval(() => {
@@ -465,7 +476,12 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     const matched = new Set<TrackedStorm>();
     // Storms created for the first time this pass — used for split detection below
     const freshThisPass = new Set<TrackedStorm>();
-    for (const cell of detectStorms(allRecentStrikes, WINDOW_MS)) {
+    // Reserve even qualified cells outside the UI's top20 so their points
+    // cannot be borrowed by a nearby fading replay.
+    const detected = detectStorms(allRecentStrikes, WINDOW_MS, Infinity);
+    const reserved = new Set(detected.flatMap(cell => cell.members));
+    for (const st of trackedStorms) st.currentRate = 0;
+    for (const cell of detected.slice(0, 20)) {
       const sample = sampleCell(cell.members);
       // A backlog flush can masquerade as a huge storm — never track those
       if (hasTimestampBurst(sample)) continue;
@@ -489,6 +505,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         let nearestSt: TrackedStorm | null = null;
         let nearestKm = Infinity;
         for (const st of trackedStorms) {
+          if (nowMs - st.lastSeen > STORM_DROP_MS) continue;
           const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
           if (km < matchWindow(st) && km < nearestKm) { nearestKm = km; nearestSt = st; }
         }
@@ -501,6 +518,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       // the bigger rather than the bigger being silently dropped.
       let best: TrackedStorm | null = null;
       for (const st of trackedStorms) {
+        if (nowMs - st.lastSeen > STORM_DROP_MS) continue;
         if (matched.has(st)) continue;
         const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
         if (km > matchWindow(st)) continue;
@@ -626,6 +644,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       }
 
       big.totalStrikes += netNew;
+      rememberReplayAnchors(big, small.replayAnchors ?? small.allStrikes, nowMs);
       for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
       // small.allStrikes can overlap big.allStrikes — e.g. a fragment that split
       // off and later re-merges carries strikes big already recorded before the
@@ -812,6 +831,8 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       } catch { /* non-fatal */ }
     }
 
+    collectReplayTails(trackedStorms, allRecentStrikes, reserved, matched, nowMs);
+
     // Offer every storm seen this pass as a record candidate; the upsert only
     // accepts ones that beat the stored count or already hold the record
     const records: BiggestStorm[] = [];
@@ -834,14 +855,22 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     upsertStormRecords(records);
     const loggable = records.filter(r => (r.totalCount ?? r.count) >= STORM_LOG_MIN_STRIKES);
     upsertStorms(loggable);
+    // Fading lightning updates existing replay copies only: it cannot extend
+    // the official duration, alter rankings, or create a new storm record.
+    for (const st of trackedStorms) {
+      if (!st.replayDirty) continue;
+      updateStormReplay(st.key, withOriginSample(st.originSample, st.allStrikes));
+      st.replayDirty = false;
+    }
     // Mark in-memory storms as persisted so the next broadcast can link to their pages
     const loggedKeys = new Set(loggable.map(r => r.stormKey).filter(Boolean));
     for (const st of trackedStorms) { if (loggedKeys.has(st.key)) st.inDb = true; }
 
-    // Expire storms that fell below the threshold for several passes
+    // Retain a fading replay as long as its own lightning continues arriving.
     let i = trackedStorms.length;
     while (i--) {
-      if (nowMs - trackedStorms[i].lastSeen > STORM_DROP_MS) trackedStorms.splice(i, 1);
+      const st = trackedStorms[i];
+      if (nowMs - Math.max(st.lastSeen, st.lastReplayTime ?? 0) > STORM_DROP_MS) trackedStorms.splice(i, 1);
     }
 
     // Persist in-flight storm state so a server restart doesn't wipe live storms
@@ -856,13 +885,11 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     // Push authoritative storm summaries to all SSE clients so map rank labels
     // use server-tracked positions and lifetime totals — no client-side matching needed.
     const activeStorms = dedupeActiveStorms(trackedStorms, nowMs);
-    if (activeStorms.length > 0) {
-      broadcastSSE(`event: storms\ndata: ${JSON.stringify(activeStorms.map((st, i) => ({
+    broadcastSSE(`event: storms\ndata: ${JSON.stringify(activeStorms.map((st, i) => ({
         key: st.key, lat: st.lat, lon: st.lon, totalStrikes: st.totalStrikes,
         cc: st.cc, rate: st.currentRate ?? 0, rank: i + 1,
         hasPage: st.inDb === true,
-      })))}\n\n`);
-    }
+    })))}\n\n`);
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 

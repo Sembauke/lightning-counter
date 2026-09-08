@@ -9,6 +9,7 @@ import { fmtRate, fmtClock, fmtDuration, fmt } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
 import type { StormLogRow, StormStrike } from '../lib/db';
 import { useStormMerge } from '../context/StormMergeContext';
+import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../lib/stormReplayState';
 
 type StormRow = StormLogRow & { originCode?: string | null; rank?: number | null };
 
@@ -80,33 +81,44 @@ export default function StormsClient() {
     setDetail(null);
     setAppendedStrikes([]);
 
-    const expandedStorm = storms.find(s => s.stormKey === expandedKey);
-    const isLiveExpanded = expandedStorm != null && date === todayUTC()
-      && expandedStorm.endTime != null && Date.now() - expandedStorm.endTime < 10 * 60_000;
-
-    let baseCount = 0;
+    const seen = new Set<string>();
+    let latestStrike = 0;
+    let endTime: number | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let polling = false;
 
     fetch(`/api/storms?key=${encodeURIComponent(expandedKey)}`)
       .then(r => r.json())
-      .then((storm: { strikes: StormStrike[] | null } | null) => {
+      .then((storm: { strikes: StormStrike[] | null; endTime: number | null } | null) => {
         if (cancelled || !storm?.strikes) return;
         setDetail({ key: expandedKey, strikes: storm.strikes });
-        baseCount = storm.strikes.length;
+        for (const strike of storm.strikes) seen.add(replayStrikeKey(strike));
+        latestStrike = latestReplayTime(storm.strikes);
+        endTime = storm.endTime;
 
-        if (!isLiveExpanded) return;
+        if (!shouldPollStormReplay(endTime, latestStrike)) return;
         pollTimer = setInterval(async () => {
-          if (cancelled || document.hidden) return;
+          if (cancelled || document.hidden || polling) return;
+          polling = true;
           try {
             const res = await fetch(`/api/storms/${encodeURIComponent(expandedKey)}/strikes`);
+            if (!res.ok || cancelled) return;
             const data = await res.json();
+            if (cancelled) return;
             const all: StormStrike[] = data.strikes ?? [];
-            if (all.length > baseCount) {
-              const fresh = all.slice(baseCount);
-              baseCount = all.length;
+            const fresh = all.filter(strike => {
+              const key = replayStrikeKey(strike);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            latestStrike = Math.max(latestStrike, latestReplayTime(fresh));
+            endTime = data.endTime;
+            if (fresh.length > 0) {
               setAppendedStrikes(prev => [...prev, ...fresh]);
             }
-          } catch {}
+            if (!shouldPollStormReplay(endTime, latestStrike) && pollTimer) clearInterval(pollTimer);
+          } catch {} finally { polling = false; }
         }, 15_000);
       })
       .catch(() => {});
@@ -266,7 +278,7 @@ export default function StormsClient() {
                   {!isLive && open && (
                     <div className="sl-expand">
                       {detail?.key === s.stormKey
-                        ? <StormReplayMap strikes={detail.strikes} />
+                        ? <StormReplayMap strikes={detail.strikes} appendedStrikes={appendedStrikes} />
                         : <div className="storm-log-loading">…</div>}
                     </div>
                   )}

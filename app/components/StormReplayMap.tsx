@@ -10,6 +10,7 @@ import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
 import { ageColor } from '../lib/ageGradient';
 import { fmtClock } from '../lib/format';
 import { computeReplayDurationMs, computeFreshMs, cutoffForProgress, progressForCutoff } from '../lib/replayTiming';
+import { mergeReplayStrikes, replayStrikeKey } from '../lib/stormReplayState';
 
 // In the static view, strikes from the storm's last 20 s are drawn bright with
 // a red border, matching the fresh-strike treatment on the live map. During
@@ -77,10 +78,9 @@ export default function StormReplayMap({
   const zoomingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const liveRafRef = useRef<number | null>(null);
-  const appendedLengthRef = useRef(0);
-  // Raw [lat, lon, time] tuples for every appended live strike, kept so
-  // reprojectStrikes (called on zoom/pan) can include them alongside strikes.
-  const appendedRawRef = useRef<StormStrike[]>([]);
+  const reprojectRef = useRef<(() => void) | null>(null);
+  const previousStrikeKeysRef = useRef(new Set(strikes.map(replayStrikeKey)));
+  const restartPlaybackRef = useRef<((progress: number) => void) | null>(null);
   const maxTimeRef = useRef(-Infinity);
   // Index into projectedRef.current of the next strike that hasn't yet triggered
   // a ring burst during forward playback; resynced (without bursting) on seek.
@@ -95,27 +95,35 @@ export default function StormReplayMap({
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastTickRef = useRef(0);
   const [playing, setPlaying] = useState(false);
+  const playingRef = useRef(false);
+  playingRef.current = playing;
   const t = useTranslations('stats');
+
+  const allStrikes = useMemo(() => mergeReplayStrikes(strikes, appendedStrikes), [strikes, appendedStrikes]);
+  const allStrikesRef = useRef(allStrikes);
+  allStrikesRef.current = allStrikes;
 
   const { minTime, maxTime } = useMemo(() => {
     let min = Infinity, max = -Infinity;
-    for (const [, , time] of strikes) {
+    for (const [, , time] of allStrikes) {
       if (time < min) min = time;
       if (time > max) max = time;
     }
     maxTimeRef.current = max;
     return { minTime: min, maxTime: max };
-  }, [strikes]);
+  }, [allStrikes]);
 
   // Stretch the age gradient to cover the full storm lifespan so that beginning
   // strikes are visible even when the storm lasted longer than GRADIENT_REF_MS.
   // The floor ensures ageColor(t) is never called with t<0.12 (near-invisible).
   const gradientRef = Math.max(GRADIENT_REF_MS, maxTime - minTime);
+  const gradientSpanRef = useRef(gradientRef);
+  gradientSpanRef.current = gradientRef;
 
   // Playback timing, derived once per strike set so the scrubber can seek
   // before the user ever presses play, not just while play() is running.
   const replayMeta = useMemo(() => {
-    const times = strikes.map(s => s[2]).sort((a, b) => a - b);
+    const times = allStrikes.map(s => s[2]).sort((a, b) => a - b);
     // Skip isolated early strikes: find the first index where the gap to the
     // NEXT strike is less than 2 hours — the storm is "continuous" from there.
     // This prevents a single outlier strike 11 hours before the main activity
@@ -131,7 +139,7 @@ export default function StormReplayMap({
     // Sample rings evenly across the storm instead of ringing every strike
     const ringEvery = Math.max(1, Math.round(times.length / TARGET_RING_COUNT));
     return { replayMinTime, spanMs, replayMs, freshMs, ringEvery };
-  }, [strikes, minTime, maxTime]);
+  }, [allStrikes, minTime, maxTime]);
 
   // The storm's 5-minute window in the viewer's local time
   const timeRange = `${fmtClock(minTime)} – ${fmtClock(maxTime)}`;
@@ -160,7 +168,7 @@ export default function StormReplayMap({
       const age = cutoff - pt.time;
       // During replay use the fixed 4-hour scale so the full colour range is
       // visible within the sliding window rather than compressed to a thin band.
-      const ageRef = windowStart !== undefined ? GRADIENT_REF_MS : gradientRef;
+      const ageRef = windowStart !== undefined ? GRADIENT_REF_MS : gradientSpanRef.current;
       ctx.beginPath();
       if (age < freshMs) {
         const f = age / freshMs;
@@ -216,7 +224,7 @@ export default function StormReplayMap({
       // on compact storms, so we no longer need percentile trimming (which was
       // cutting off the trailing end of traveling storms).
       let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-      for (const s of strikes) {
+      for (const s of allStrikesRef.current) {
         if (s[0] < minLat) minLat = s[0];
         if (s[0] > maxLat) maxLat = s[0];
         if (s[1] < minLon) minLon = s[1];
@@ -242,16 +250,14 @@ export default function StormReplayMap({
       };
 
       const reprojectStrikes = () => {
-        const all = appendedRawRef.current.length
-          ? [...strikes, ...appendedRawRef.current]
-          : strikes;
-        projectedRef.current = all
+        projectedRef.current = allStrikesRef.current
           .map(([lat, lon, time]) => {
             const p = map.latLngToContainerPoint([lat, lon]);
             return { x: p.x, y: p.y, time };
           })
           .sort((a, b) => a.time - b.time);
       };
+      reprojectRef.current = reprojectStrikes;
 
       resizeCanvas();
       reprojectStrikes();
@@ -280,7 +286,7 @@ export default function StormReplayMap({
       map.on('zoomend', () => { zoomingRef.current = false; redrawView(); });
       map.on('move resize', redrawView);
 
-      draw(maxTime, performance.now());
+      draw(maxTimeRef.current, performance.now());
 
       // Leaflet watches window resize, but the map can also change size when
       // its surrounding layout changes without a browser resize event.
@@ -296,40 +302,62 @@ export default function StormReplayMap({
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       mapRef.current?.remove();
       mapRef.current = null;
+      reprojectRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strikes]);
 
-  // Project and flash-draw newly-arrived live strikes without reinitializing the map
+  // The stored replay can keep growing after the official storm ends. Update
+  // its full time range without resetting the map or a manually selected frame.
   useEffect(() => {
-    if (!appendedStrikes?.length) return;
-    const newBatch = appendedStrikes.slice(appendedLengthRef.current);
-    if (!newBatch.length) return;
-    appendedLengthRef.current = appendedStrikes.length;
-
-    // Always store raw coords — reprojectStrikes() uses appendedRawRef so these
-    // will be included even if the map isn't ready yet (Leaflet loads async).
-    for (const s of newBatch) {
-      appendedRawRef.current.push(s);
-      if (s[2] > maxTimeRef.current) maxTimeRef.current = s[2];
-    }
+    const previousKeys = previousStrikeKeysRef.current;
+    const newBatch = allStrikes.filter(strike => !previousKeys.has(replayStrikeKey(strike)));
+    previousStrikeKeysRef.current = new Set(allStrikes.map(replayStrikeKey));
 
     const map = mapRef.current;
-    if (!map) return; // reprojectStrikes() will project them on map init
+    if (!map) return; // Initial projection reads the latest combined strike set.
+    if (projectedRef.current.length + newBatch.length === allStrikes.length) {
+      for (const [lat, lon, time] of newBatch) {
+        const p = map.latLngToContainerPoint([lat, lon]);
+        projectedRef.current.push({ x: p.x, y: p.y, time });
+      }
+      if (newBatch.length) projectedRef.current.sort((a, b) => a.time - b.time);
+    } else {
+      reprojectRef.current?.();
+    }
+    if (isLive) {
+      map.dragging.disable();
+      map.scrollWheelZoom.disable();
+      map.touchZoom.disable();
+    } else {
+      map.dragging.enable();
+      map.scrollWheelZoom.enable();
+      map.touchZoom.enable();
+    }
 
     const now = performance.now();
-    for (const [lat, lon, time] of newBatch) {
-      const p = map.latLngToContainerPoint([lat, lon]);
-      projectedRef.current.push({ x: p.x, y: p.y, time });
-      // Live mode: every real-time strike gets a ring (they expire in 600 ms so
-      // they don't accumulate); replay caps via MAX_RINGS_REPLAY.
-      ringsRef.current.push({ x: p.x, y: p.y, start: now });
-      if (time > maxTimeRef.current) maxTimeRef.current = time;
+    const frame = displayedFrameRef.current;
+    if (!isLive && frame?.windowStart !== undefined) {
+      const progress = progressForCutoff(frame.cutoff, replayMeta.replayMinTime, maxTime);
+      nextIdxRef.current = firstIndexAfter(projectedRef.current, frame.cutoff);
+      draw(frame.cutoff, now, replayMeta.freshMs, frame.windowStart);
+      if (timeTextRef.current) timeTextRef.current.textContent = fmtClock(frame.cutoff, true);
+      if (progressInputRef.current) progressInputRef.current.value = String(progress);
+      if (playingRef.current) restartPlaybackRef.current?.(progress);
+    } else {
+      if (isLive) {
+        for (const [lat, lon] of newBatch) {
+          const p = map.latLngToContainerPoint([lat, lon]);
+          ringsRef.current.push({ x: p.x, y: p.y, start: now });
+        }
+      } else {
+        ringsRef.current = [];
+      }
+      draw(isLive ? Date.now() : maxTime, now);
+      if (timeTextRef.current) timeTextRef.current.textContent = isLive ? fmtClock(maxTime, true) : timeRange;
     }
-    projectedRef.current.sort((a, b) => a.time - b.time);
-    draw(maxTimeRef.current, now);
 
-    if (soundRef.current && newBatch.length > 0) {
+    if (isLive && soundRef.current && newBatch.length > 0) {
       if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
       const toPlay = Math.min(newBatch.length, 12);
       for (let i = 0; i < toPlay; i++) {
@@ -343,7 +371,7 @@ export default function StormReplayMap({
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appendedStrikes]);
+  }, [allStrikes, isLive]);
 
   // Live mode: continuous RAF that ages strikes by real elapsed time and keeps rings animated
   useEffect(() => {
@@ -396,6 +424,7 @@ export default function StormReplayMap({
   const startPlaybackFrom = (progress: number) => {
     const proj = projectedRef.current;
     if (proj.length === 0) return;
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     const { replayMinTime, replayMs } = replayMeta;
     ringsRef.current = [];
     const p0 = Math.min(1, Math.max(0, progress));
@@ -408,11 +437,11 @@ export default function StormReplayMap({
       const cutoff = cutoffForProgress(p, replayMinTime, maxTime);
       renderAt(cutoff, now, true);
 
-      const strikesRemaining = nextIdxRef.current < projectedRef.current.length;
-      if (p < 1 || strikesRemaining || ringsRef.current.length > 0) {
+      if (p < 1) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
         rafRef.current = null;
+        ringsRef.current = [];
         draw(maxTime, performance.now());
         if (timeTextRef.current) timeTextRef.current.textContent = timeRange;
         if (progressInputRef.current) progressInputRef.current.value = '1';
@@ -421,6 +450,7 @@ export default function StormReplayMap({
     };
     rafRef.current = requestAnimationFrame(tick);
   };
+  restartPlaybackRef.current = startPlaybackFrom;
 
   const play = () => {
     if (playing) return;

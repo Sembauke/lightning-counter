@@ -1,10 +1,11 @@
-// Playback lasts ~2 s per storm-minute, clamped so short storms stay watchable
-// and multi-hour storms don't drag on forever.
-export const REPLAY_MS_MIN = 10_000;
-export const REPLAY_MS_MAX = 300_000;
-export const REPLAY_MS_PER_STORM_MIN = 2_000;
+// Play one storm-hour in 30 seconds (120x), with an 8-second floor for short
+// storms and a 90-second ceiling so a full day's activity stays easy to watch.
+export const REPLAY_MS_MIN = 8_000;
+export const REPLAY_MS_MAX = 90_000;
+export const REPLAY_MS_PER_STORM_MIN = 500;
 
 export function computeReplayDurationMs(spanMs: number): number {
+  if (!Number.isFinite(spanMs) || spanMs <= 0) return REPLAY_MS_MIN;
   return Math.min(
     REPLAY_MS_MAX,
     Math.max(REPLAY_MS_MIN, (spanMs / 60_000) * REPLAY_MS_PER_STORM_MIN),
@@ -14,6 +15,7 @@ export function computeReplayDurationMs(spanMs: number): number {
 // During playback a strike counts as "fresh" for ~1.2 real seconds, scaled by
 // how compressed real time is relative to replay time.
 export function computeFreshMs(spanMs: number, replayMs: number): number {
+  if (!Number.isFinite(spanMs) || !Number.isFinite(replayMs) || spanMs <= 0 || replayMs <= 0) return 0;
   return (spanMs / replayMs) * 1200;
 }
 
