@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getStormByKey, getNearbyRankedStorms } from '../../../../lib/db';
+import { getStormReplayByKey, getNearbyRankedStorms } from '../../../../lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,7 +9,7 @@ export async function GET(
   { params }: { params: Promise<{ key: string }> },
 ) {
   const { key } = await params;
-  const storm = getStormByKey(decodeURIComponent(key));
+  const storm = getStormReplayByKey(decodeURIComponent(key));
   if (!storm) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const nearbyRanked = storm.stormKey ? getNearbyRankedStorms(storm.stormKey, 10) : [];
   return NextResponse.json({

@@ -37,10 +37,12 @@ const DRIFT_MIN_DEG = 0.06;
 // Without this, scattered background strikes between two storm systems create a
 // chain of adjacent cells that the BFS fuses into one cluster before the
 // agglomerative distance check has a chance to separate them.
-// Threshold is chosen to be just above the observed inter-storm background
-// density (~9 strikes/cell/5 min) while keeping legitimate storm-edge cells
-// (~10+ strikes for any storm that meets MIN_RATE_PER_MIN).
+// This threshold discovers dense storm cores; sparse edge strikes are assigned
+// separately so the grid does not cut rectangular holes in their replay.
 const MIN_CELL_STRIKES = 10;
+// Roughly one detection cell, measured from an actual core strike rather than
+// a cell boundary. Border strikes cannot extend this radius or join two cores.
+const BORDER_KM = 25;
 
 const NEIGHBORS = [-1, 0, 1];
 
@@ -108,10 +110,58 @@ export function detectStorms(strikes: StrikePoint[], windowMs: number): StormCel
     }
   }
 
-  const halfCutoff = Date.now() - windowMs / 2;
   const minStrikes = MIN_RATE_PER_MIN * (windowMs / 60_000);
-  return groups
-    .filter(g => g.strikes.length >= minStrikes)
+  // Keep eligibility and merging based on the dense cores alone. In particular,
+  // a chain of sparse cells must neither become a storm nor join existing ones.
+  const qualified = groups.filter(g => g.strikes.length >= minStrikes);
+  if (qualified.length === 0) return [];
+
+  // Freeze the core's ownership before adding border points. `cells` contains
+  // the original input buckets, separate from each group's accumulation array,
+  // so an attached point can never serve as an anchor for another attachment.
+  const coreOwners = new Map<string, (typeof qualified)[number]>();
+  for (const group of qualified) {
+    for (const s of group.strikes) {
+      coreOwners.set(`${Math.floor(s.lat / CELL_DEG)}:${Math.floor(s.lon / CELL_DEG)}`, group);
+    }
+  }
+
+  const latReach = BORDER_KM / 111.32;
+  for (const points of cells.values()) {
+    if (points.length >= MIN_CELL_STRIKES) continue;
+    for (const s of points) {
+      let nearest: (typeof qualified)[number] | undefined;
+      let nearestD2 = BORDER_KM * BORDER_KM;
+      const minRow = Math.floor(Math.max(-90, s.lat - latReach) / CELL_DEG);
+      const maxRow = Math.floor(Math.min(90, s.lat + latReach) / CELL_DEG);
+      // Use the poleward edge for a conservative longitude search bound; the
+      // final distance check uses the two actual strikes' mean latitude.
+      const polewardLat = Math.min(90, Math.abs(s.lat) + latReach);
+      const lonReach = latReach / Math.max(0.000001, Math.cos(polewardLat * Math.PI / 180));
+      const minCol = Math.floor(Math.max(-180, s.lon - lonReach) / CELL_DEG);
+      const maxCol = Math.floor(Math.min(180, s.lon + lonReach) / CELL_DEG);
+      for (let row = minRow; row <= maxRow; row++) {
+        for (let col = minCol; col <= maxCol; col++) {
+          const key = `${row}:${col}`;
+          const owner = coreOwners.get(key);
+          if (!owner) continue;
+          for (const core of cells.get(key)!) {
+            const dLat = (s.lat - core.lat) * 111.32;
+            const dLon = (s.lon - core.lon) * 111.32 * Math.cos(((s.lat + core.lat) / 2) * Math.PI / 180);
+            const d2 = dLat * dLat + dLon * dLon;
+            if (d2 < nearestD2 || (d2 === nearestD2 && !nearest)) {
+              nearestD2 = d2;
+              nearest = owner;
+            }
+          }
+        }
+      }
+      if (nearest) nearest.strikes.push(s);
+    }
+  }
+
+  const halfCutoff = Date.now() - windowMs / 2;
+  return qualified
     .sort((a, b) => b.strikes.length - a.strikes.length)
     .slice(0, MAX_STORMS)
     .map(({ strikes: cluster, mergedFrom }) => {

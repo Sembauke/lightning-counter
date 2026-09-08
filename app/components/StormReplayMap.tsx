@@ -42,6 +42,7 @@ function playTick(ctx: AudioContext) {
 
 interface Projected { x: number; y: number; time: number }
 interface Ring { x: number; y: number; start: number }
+interface ReplayFrame { cutoff: number; freshMs: number; windowStart?: number }
 
 // `proj` is sorted ascending by time — binary search for the first entry
 // strictly after `cutoff` so seeking can resync ring bookkeeping in O(log n)
@@ -72,6 +73,8 @@ export default function StormReplayMap({
   const mapRef = useRef<LeafletMap | null>(null);
   const projectedRef = useRef<Projected[]>([]);
   const ringsRef = useRef<Ring[]>([]);
+  const displayedFrameRef = useRef<ReplayFrame | null>(null);
+  const zoomingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const liveRafRef = useRef<number | null>(null);
   const appendedLengthRef = useRef(0);
@@ -137,6 +140,10 @@ export default function StormReplayMap({
   // windowStart: when set (replay mode) strikes older than this are skipped so the
   // display shows a sliding 4-hour window instead of the full accumulated history.
   const draw = (cutoff: number, now: number, freshMs = FRESH_MS, windowStart?: number) => {
+    displayedFrameRef.current = { cutoff, freshMs, windowStart };
+    // The overlay uses container coordinates, so it cannot follow Leaflet's
+    // animated tile transform until the final zoom projection is available.
+    if (zoomingRef.current) return;
     const cnv = canvasRef.current;
     if (!cnv) return;
     const ctx = cnv.getContext('2d');
@@ -189,6 +196,9 @@ export default function StormReplayMap({
 
   useEffect(() => {
     let disposed = false;
+    let resizeObserver: ResizeObserver | undefined;
+    zoomingRef.current = false;
+    ringsRef.current = [];
     import('leaflet').then(({ default: L }) => {
       if (disposed || !containerRef.current || mapRef.current) return;
 
@@ -223,8 +233,10 @@ export default function StormReplayMap({
         const cnv = canvasRef.current;
         if (!cnv) return;
         const dpr = window.devicePixelRatio || 1;
-        cnv.width = size.x * dpr;
-        cnv.height = size.y * dpr;
+        const width = Math.round(size.x * dpr);
+        const height = Math.round(size.y * dpr);
+        if (cnv.width !== width) cnv.width = width;
+        if (cnv.height !== height) cnv.height = height;
         cnv.style.width = `${size.x}px`;
         cnv.style.height = `${size.y}px`;
       };
@@ -244,24 +256,43 @@ export default function StormReplayMap({
       resizeCanvas();
       reprojectStrikes();
 
-      // Zoom: resize canvas + re-project + redraw
+      // Moving the map must retain the displayed replay time and age window.
+      // Rings use screen coordinates, so discard them when that projection changes.
+      const redrawView = () => {
+        resizeCanvas();
+        reprojectStrikes();
+        ringsRef.current = [];
+        const frame = displayedFrameRef.current;
+        if (frame) draw(frame.cutoff, performance.now(), frame.freshMs, frame.windowStart);
+      };
+
       map.on('zoomstart', () => {
+        zoomingRef.current = true;
+        ringsRef.current = [];
         const cnv = canvasRef.current;
         if (!cnv) return;
         const ctx = cnv.getContext('2d');
-        if (ctx) ctx.clearRect(0, 0, cnv.width, cnv.height);
+        if (ctx) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, cnv.width, cnv.height);
+        }
       });
-      map.on('zoomend', () => { resizeCanvas(); reprojectStrikes(); draw(maxTime, performance.now()); });
-
-      // Drag: only re-project (canvas size doesn't change); if replay is running
-      // the next animation frame picks up the new positions automatically.
-      map.on('move', () => { reprojectStrikes(); draw(maxTime, performance.now()); });
+      map.on('zoomend', () => { zoomingRef.current = false; redrawView(); });
+      map.on('move resize', redrawView);
 
       draw(maxTime, performance.now());
+
+      // Leaflet watches window resize, but the map can also change size when
+      // its surrounding layout changes without a browser resize event.
+      resizeObserver = new ResizeObserver(() => {
+        if (!disposed) map.invalidateSize({ animate: false });
+      });
+      resizeObserver.observe(containerRef.current);
     });
 
     return () => {
       disposed = true;
+      resizeObserver?.disconnect();
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       mapRef.current?.remove();
       mapRef.current = null;
@@ -352,6 +383,7 @@ export default function StormReplayMap({
         nextIdxRef.current++;
       }
     } else {
+      ringsRef.current = [];
       nextIdxRef.current = firstIndexAfter(proj, cutoff);
     }
     draw(cutoff, now, freshMs, cutoff - GRADIENT_REF_MS);

@@ -1,4 +1,4 @@
-import { getCountryHistory, getBiggestStorm } from '../../../lib/db';
+import { getCountryHistory, getBiggestStorm, getStormReplayByKey } from '../../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,5 +17,13 @@ export async function GET(_req: Request, { params }: { params: { code: string } 
     todayInDb.count = todayCounts[code];
   }
 
-  return Response.json({ history, biggestStorm: getBiggestStorm(code) });
+  let biggestStorm = getBiggestStorm(code);
+  if (biggestStorm?.stormKey) {
+    getStormReplayByKey(biggestStorm.stormKey);
+    // Recovery mirrors its persisted sample here. Re-read this copy so an
+    // older, independently retained country replay is preserved when no
+    // recovery was possible in the canonical storms row.
+    biggestStorm = getBiggestStorm(code) ?? biggestStorm;
+  }
+  return Response.json({ history, biggestStorm });
 }

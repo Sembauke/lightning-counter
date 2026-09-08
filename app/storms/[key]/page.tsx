@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import fs from 'fs';
 import path from 'path';
-import { getStormByKey, getStormRecords, getNearbyRankedStorms } from '../../lib/db';
+import { getStormReplayByKey, getStormRecords, getNearbyRankedStorms } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
 
@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
 interface Props { params: Promise<{ key: string }> }
 
 function loadStorm(key: string) {
-  return getStormByKey(decodeURIComponent(key));
+  return getStormReplayByKey(decodeURIComponent(key));
 }
 
 // Returns up to `max` city names within `radiusKm` of the given point,

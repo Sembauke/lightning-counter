@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { detectStorms, type StrikePoint } from './stormClusters';
+import { recoverReplayEdges, REPLAY_EDGE_RADIUS_KM, REPLAY_EDGE_TIME_MS } from './stormReplayRecovery';
 
 const DB_DIR = process.env.DB_PATH ?? (fs.existsSync('/data') ? '/data' : './tmp');
 const DB_FILE = path.join(DB_DIR, 'lightning.db');
@@ -581,6 +582,106 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
   let countryPath: string[] | null = null;
   try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
   return { ...row, strikes, countryPath };
+}
+
+/**
+ * Recover the geographic edges of a finished replay while its raw archive is
+ * still available. Tracking and ranking keep using getStormByKey: this changes
+ * only replay samples, never the independently accumulated storm metrics.
+ */
+export function getStormReplayByKey(stormKey: string, nowMs = Date.now()): BiggestStorm | null {
+  const storm = getStormByKey(stormKey);
+  // The UI stops showing LIVE after ten minutes, but the tracker retains the
+  // identity for one hour (STORM_DROP_MS). Wait until it can no longer resume
+  // before writing a durable repair marker or replacing its replay samples.
+  if (!storm || storm.endTime == null || nowMs - storm.endTime <= 60 * 60_000
+      || !Array.isArray(storm.strikes) || storm.strikes.length === 0) return storm;
+
+  try {
+    const db = getDb();
+    const markerKey = `replay_edges_v1:${stormKey}`;
+    const marker = db.prepare('SELECT value FROM counters WHERE key = ?');
+    if (marker.get(markerKey)) return storm;
+
+    const archiveStart = nowMs - GRID_RETENTION_MS;
+    const bucketMs = 5 * 60_000;
+    const buckets = new Map<number, { minLat: number; maxLat: number; minLon: number; maxLon: number }>();
+    for (const point of storm.strikes) {
+      if (!Array.isArray(point) || point.length !== 3 || !point.every(Number.isFinite)) continue;
+      const [lat, lon, time] = point;
+      if (Math.abs(lat) > 90 || Math.abs(lon) > 180 || time + REPLAY_EDGE_TIME_MS < archiveStart) continue;
+      const bucket = Math.floor(time / bucketMs) * bucketMs;
+      const bounds = buckets.get(bucket);
+      if (bounds) {
+        bounds.minLat = Math.min(bounds.minLat, lat);
+        bounds.maxLat = Math.max(bounds.maxLat, lat);
+        bounds.minLon = Math.min(bounds.minLon, lon);
+        bounds.maxLon = Math.max(bounds.maxLon, lon);
+      } else {
+        buckets.set(bucket, { minLat: lat, maxLat: lat, minLon: lon, maxLon: lon });
+      }
+    }
+    if (buckets.size === 0) return storm;
+
+    // Iterate every candidate instead of using getGridStrikesInRange's 20,000
+    // row limit, which can itself cut a dense storm's replay short.
+    const query = db.prepare(`
+      SELECT lat, lon, strike_time FROM grid_strikes INDEXED BY idx_gs_time
+      WHERE strike_time >= ? AND strike_time <= ?
+        AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+    `);
+    let archiveRows = 0;
+    function* candidates(): Generator<StormStrike> {
+      // Use a conservative latitude conversion so the SQL bounds cannot
+      // discard points that the exact spatial check would accept.
+      const latPad = REPLAY_EDGE_RADIUS_KM / 110.574;
+      for (const [time, bounds] of buckets) {
+        const minLat = Math.max(-90, bounds.minLat - latPad);
+        const maxLat = Math.min(90, bounds.maxLat + latPad);
+        const cosLat = Math.cos(Math.max(Math.abs(minLat), Math.abs(maxLat)) * Math.PI / 180);
+        const lonPad = cosLat > 0 ? Math.min(180, latPad / cosLat) : 180;
+        let minLon = bounds.minLon - lonPad;
+        let maxLon = bounds.maxLon + lonPad;
+        // A box crossing the date line needs both longitude ends. Fetch the
+        // whole longitude range there; the helper still applies exact distance.
+        if (minLon < -180 || maxLon > 180 || bounds.maxLon - bounds.minLon > 180) {
+          minLon = -180; maxLon = 180;
+        }
+        const rows = query.iterate(
+          Math.max(archiveStart, time - REPLAY_EDGE_TIME_MS),
+          Math.min(nowMs, time + bucketMs + REPLAY_EDGE_TIME_MS),
+          minLat, maxLat, minLon, maxLon,
+        ) as Iterable<{ lat: number; lon: number; strike_time: number }>;
+        for (const row of rows) {
+          archiveRows++;
+          yield [row.lat, row.lon, row.strike_time];
+        }
+      }
+    }
+
+    const recovered = recoverReplayEdges(storm.strikes, candidates());
+    // An absent archive is not a completed repair: leave the sample and marker
+    // untouched so a restored raw archive can still repair it on a later read.
+    if (archiveRows === 0) return storm;
+
+    const persisted = db.transaction(() => {
+      // Another process may have repaired the same storm while we scanned.
+      if (marker.get(markerKey)) return false;
+      if (recovered.recoveredCount > 0) {
+        const json = JSON.stringify(recovered.strikes);
+        db.prepare('UPDATE storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+        db.prepare('UPDATE country_biggest_storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+        db.prepare('UPDATE storm_records SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+      }
+      db.prepare('INSERT INTO counters (key, value) VALUES (?, ?)').run(markerKey, String(nowMs));
+      return true;
+    })();
+    if (!persisted) return getStormByKey(stormKey);
+    return recovered.recoveredCount > 0 ? { ...storm, strikes: recovered.strikes } : storm;
+  } catch (err) {
+    console.error(`[db] replay edge recovery failed for ${stormKey}:`, err);
+    return storm;
+  }
 }
 
 /** 1-based rank of this storm by peak count across all logged storms */

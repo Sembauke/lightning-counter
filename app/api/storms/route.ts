@@ -1,4 +1,4 @@
-import { getStormsForDate, getStormByKey, getStormRanks, getNextRankThreshold, getLiveStorms } from '../../lib/db';
+import { getStormsForDate, getStormReplayByKey, getStormRanks, getNextRankThreshold, getLiveStorms } from '../../lib/db';
 import { getCountryCode } from '../../lib/geoCountry';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +8,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const key = url.searchParams.get('key');
   if (key) {
-    return Response.json(getStormByKey(key));
+    return Response.json(getStormReplayByKey(key));
   }
   // Lightweight live-storms list for map rank matching — no date or size filter
   if (url.searchParams.get('live') === '1') {
