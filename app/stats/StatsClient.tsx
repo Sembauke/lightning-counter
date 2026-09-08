@@ -33,6 +33,13 @@ export default function ArchivePage() {
   const router = useRouter();
 
   useEffect(() => {
+    try {
+      const savedView = localStorage.getItem('stats-view');
+      if (savedView === 'countries' || savedView === 'daily') setView(savedView);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
     const load = () => fetch('/api/archive')
       .then(r => r.json())
       .then((rows: ArchiveRow[]) => {
@@ -67,10 +74,31 @@ export default function ArchivePage() {
 
   useEffect(() => {
     if (view !== 'daily') return;
-    fetch('/api/archive/daily')
-      .then(r => r.json())
-      .then((rows: DailyTotalRow[]) => setDailyTotals(rows))
-      .catch(() => {});
+    const controller = new AbortController();
+    let loading = false;
+
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const response = await fetch('/api/archive/daily', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const rows: DailyTotalRow[] = await response.json();
+        if (!controller.signal.aborted) setDailyTotals(rows);
+      } catch {} finally {
+        loading = false;
+      }
+    };
+
+    load();
+    const timer = setInterval(load, 2_500);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
   }, [view]);
 
   const handleSort = (col: SortCol) => {
@@ -117,7 +145,11 @@ export default function ArchivePage() {
         <select
           className="storm-table-select"
           value={view}
-          onChange={e => setView(e.target.value as ArchiveView)}
+          onChange={e => {
+            const nextView = e.target.value as ArchiveView;
+            setView(nextView);
+            try { localStorage.setItem('stats-view', nextView); } catch {}
+          }}
         >
           <option value="countries">{t('countriesView')}</option>
           <option value="daily">{t('dailyTotals')}</option>
