@@ -13,6 +13,7 @@ export async function GET(
   if (!storm) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const nearbyRanked = storm.stormKey ? getNearbyRankedStorms(storm.stormKey, 10) : [];
   return NextResponse.json({
+    stormKey: storm.stormKey,
     strikes: storm.strikes ?? [],
     endTime: storm.endTime,
     totalCount: storm.totalCount,

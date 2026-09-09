@@ -124,6 +124,10 @@ function getDb(): Database.Database {
       strikes_absorbed INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_storm_events_key ON storm_events(storm_key, ts DESC);
+    CREATE TABLE IF NOT EXISTS storm_aliases (
+      alias_key TEXT PRIMARY KEY,
+      canonical_key TEXT NOT NULL
+    );
   `);
   // Migrations for databases created before the replay / storm-tracking features
   const migrations = [
@@ -585,7 +589,38 @@ export function getTop100Storms(): StormLogRow[] {
   return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
+/** Keep bookmarks and in-flight replay requests valid after confirmed merges. */
+export function resolveStormKey(stormKey: string): string {
+  const db = getDb();
+  const lookup = db.prepare('SELECT canonical_key FROM storm_aliases WHERE alias_key = ?');
+  const seen = new Set<string>();
+  let key = stormKey;
+  while (!seen.has(key)) {
+    seen.add(key);
+    const row = lookup.get(key) as { canonical_key: string } | undefined;
+    if (!row) return key;
+    key = row.canonical_key;
+  }
+  return stormKey;
+}
+
+export function recordStormAlias(aliasKey: string, survivorKey: string): void {
+  const db = getDb();
+  const canonical = resolveStormKey(survivorKey);
+  if (aliasKey === canonical) return;
+  db.transaction(() => {
+    db.prepare('UPDATE storm_aliases SET canonical_key = ? WHERE canonical_key = ?').run(canonical, aliasKey);
+    db.prepare('INSERT OR REPLACE INTO storm_aliases (alias_key, canonical_key) VALUES (?, ?)').run(aliasKey, canonical);
+    // Preserve the absorbed system's event history and country/record links.
+    // The obsolete storm-log row is removed by the confirmed tracker merge.
+    db.prepare('UPDATE storm_events SET storm_key = ? WHERE storm_key = ?').run(canonical, aliasKey);
+    db.prepare('UPDATE storm_records SET storm_key = ? WHERE storm_key = ?').run(canonical, aliasKey);
+    db.prepare('UPDATE country_biggest_storms SET storm_key = ? WHERE storm_key = ?').run(canonical, aliasKey);
+  })();
+}
+
 export function getStormByKey(stormKey: string): BiggestStorm | null {
+  stormKey = resolveStormKey(stormKey);
   const db = getDb();
   const row = db.prepare(`
     SELECT storm_key AS stormKey, code, count, rate, lat, lon, city, date,
@@ -609,6 +644,7 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
  * only replay samples, never the independently accumulated storm metrics.
  */
 export function getStormReplayByKey(stormKey: string, nowMs = Date.now()): BiggestStorm | null {
+  stormKey = resolveStormKey(stormKey);
   const storm = getStormByKey(stormKey);
   if (!storm || storm.endTime == null
       || !Array.isArray(storm.strikes) || storm.strikes.length === 0) return storm;
@@ -769,6 +805,7 @@ export interface RankedNeighbor {
 
 /** The `radius` storms ranked immediately above and below `stormKey` (plus itself) — for a race-leaderboard view centered on this storm's global position */
 export function getNearbyRankedStorms(stormKey: string, radius = 10): RankedNeighbor[] {
+  stormKey = resolveStormKey(stormKey);
   const db = getDb();
   return db.prepare(`
     WITH ranked AS (

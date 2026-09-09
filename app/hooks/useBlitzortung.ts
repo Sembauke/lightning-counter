@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import type { StormFootprintGeometry } from '../lib/stormFootprint';
+import type { StormTransition } from '../lib/stormTransition';
 
 export interface Strike {
   id: string;
@@ -19,6 +21,8 @@ export interface TrackedStormSummary {
   rate: number;
   rank: number;
   hasPage: boolean;
+  outline?: StormFootprintGeometry;
+  transitions?: StormTransition[];
 }
 
 export type CountryCounts = Record<string, number>;

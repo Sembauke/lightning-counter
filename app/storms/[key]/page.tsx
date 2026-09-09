@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import fs from 'fs';
 import path from 'path';
 import { getStormReplayByKey, getStormRecords, getNearbyRankedStorms } from '../../lib/db';
@@ -73,7 +73,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `Lightning Storm ${journey} — ${storm.date}`;
   const nearbyStr = extraCities.length ? ` Also near: ${extraCities.slice(0, 3).join(', ')}.` : '';
   const description = `Lightning storm ${journey} on ${storm.date}: ${parts}.${nearbyStr}`;
-  const canonical = `${SITE_URL}/storms/${encodeURIComponent(key)}`;
+  const canonical = `${SITE_URL}/storms/${encodeURIComponent(storm.stormKey ?? decodeURIComponent(key))}`;
 
   return {
     title,
@@ -99,7 +99,10 @@ export default async function StormDetailPage({ params }: Props) {
   const { key } = await params;
   const storm = loadStorm(key);
   if (!storm) notFound();
+  if (storm.stormKey && storm.stormKey !== decodeURIComponent(key)) {
+    redirect(`/storms/${encodeURIComponent(storm.stormKey)}`);
+  }
   const records = getStormRecords();
   const nearbyRanked = storm.stormKey ? getNearbyRankedStorms(storm.stormKey, 10) : [];
-  return <StormDetailClient storm={storm} records={records} nearbyRanked={nearbyRanked} />;
+  return <StormDetailClient key={storm.stormKey} storm={storm} records={records} nearbyRanked={nearbyRanked} />;
 }

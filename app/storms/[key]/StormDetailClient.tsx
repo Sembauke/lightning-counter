@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
@@ -9,6 +10,7 @@ import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
+import { transitionLabel } from '../../lib/stormTransitionDisplay';
 import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../../lib/stormReplayState';
 import { buildStormTimeline, type StormMinuteBucket } from '../../lib/stormTimeline';
 
@@ -69,6 +71,7 @@ function TimelineChart({ timeline }: { timeline: StormMinuteBucket[] }) {
 const POLL_INTERVAL_MS = 15_000;
 
 interface PollResponse {
+  stormKey?: string;
   strikes: StormStrike[];
   endTime: number | null;
   totalCount: number | null;
@@ -100,8 +103,9 @@ export default function StormDetailClient({
   nearbyRanked: RankedNeighbor[];
 }) {
   const ts = useTranslations('storms');
+  const router = useRouter();
   const countryName = useCountryName();
-  const { mergeMap } = useStormMerge();
+  const { mergeMap, now: transitionNow, connected: transitionsConnected } = useStormMerge();
   const mergeStatus = storm.stormKey ? mergeMap.get(storm.stormKey) : undefined;
 
   const [liveStats, setLiveStats] = useState<LiveStats>({
@@ -207,6 +211,10 @@ export default function StormDetailClient({
         if (!res.ok || cancelled) return;
         const data = await res.json() as PollResponse;
         if (cancelled) return;
+        if (data.stormKey && data.stormKey !== storm.stormKey) {
+          router.replace(`/storms/${encodeURIComponent(data.stormKey)}`);
+          return;
+        }
         // Preserve SSE strikes not yet flushed to DB
         const dbTotal = data.totalCount ?? data.count;
         const stillLive = data.endTime != null && Date.now() - data.endTime < 10 * 60_000;
@@ -353,17 +361,9 @@ export default function StormDetailClient({
                   : 'Global Record — Farthest'}
               </span>
             ))}
-            {mergeStatus?.type === 'merging' && (() => {
-              const rem = Math.max(0, Math.round((mergeStatus.mergeAtMs - Date.now()) / 60_000));
-              return (
-                <span className="storm-record-badge storm-merge-status-badge storm-merge-status-badge--merging">
-                  ⚡ merging{rem > 0 ? ` ~${rem}m` : ''}
-                </span>
-              );
-            })()}
-            {mergeStatus?.type === 'splitting' && (
-              <span className="storm-record-badge storm-merge-status-badge storm-merge-status-badge--splitting">
-                ⚡ splitting{mergeStatus.estimatedMinutes != null ? ` ~${mergeStatus.estimatedMinutes}m` : ''}
+            {mergeStatus && (
+              <span className={`storm-record-badge storm-merge-status-badge storm-merge-status-badge--${mergeStatus.kind === 'merge' ? 'merging' : 'splitting'}`}>
+                ⚡ {transitionLabel(mergeStatus, transitionNow, transitionsConnected)}
               </span>
             )}
           </div>

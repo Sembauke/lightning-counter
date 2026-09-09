@@ -1,16 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, consolidateNearbyStorms, getTrackedStormKeys, getRecentStormPositions, getStormByKey, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
-import { dispatchStrike as dispatchToStormSubscribers } from '../../lib/strikeStream';
-import { detectStorms, nearestCity, MIN_STORM_RATE, type CityTuple } from '../../lib/stormClusters';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, getTrackedStormKeys, getStormByKey, recordStormAlias, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { dispatchStrike as dispatchToStormSubscribers, publishStormOwnership } from '../../lib/strikeStream';
+import { nearestCity, MIN_STORM_RATE, type CityTuple, type StrikePoint } from '../../lib/stormClusters';
+import { detectStormFootprints } from '../../lib/stormFootprint';
+import { combineStormLifecycle, lifecycleStrikeId, reconcileStormLifecycle, stormLifecycleSummaries, type StormLifecycleState } from '../../lib/stormLifecycle';
 import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from '../../lib/stormReplayTail';
 import { updateStormReplay } from '../../lib/db';
-
-// Wider than the detection MERGE_KM (75 km) so that two tracked identities
-// from the same large storm system get consolidated even when their centroids
-// are far apart (large MCS can span 100+ km).
-const TRACKER_MERGE_KM = 100;
 
 // When two DB-loaded storms merge with no ancestor tracking, absorbInto falls
 // into Branch 3 and returns small.totalStrikes — the full lifetime count, not
@@ -40,11 +37,10 @@ interface RecentStrike { lat: number; lon: number; cc: string | null; time: numb
 // Survive HMR module reloads in dev — same pattern as _serverTotal/_serverCountryCounts
 const recentStrikes: RecentStrike[] = (globalThis as any)._recentStrikes ?? [];
 (globalThis as any)._recentStrikes = recentStrikes;
-// Must fully cover the storm widget's 5-minute window (+1 min slack) even at
-// peak global rates (~100/s), or its rates collapse on every page refresh.
-// Older map visuals are seeded from the DB archive, not this buffer.
-const MAX_HISTORY = 40_000;
-const HISTORY_LIFETIME_MS = 6 * 60 * 1000;
+// Cover the ten-minute physical footprint as well as five-minute rates at
+// peak global rates (~100/s). Older map visuals use the DB archive.
+const MAX_HISTORY = 100_000;
+const HISTORY_LIFETIME_MS = 10 * 60 * 1000;
 
 const pendingGridStrikes: Array<{ lat: number; lon: number; time: number }> = [];
 
@@ -149,6 +145,7 @@ function citiesFor(cc: string): CityTuple[] {
 // A storm keeps its identity while it stays above the detection threshold,
 // so records can say "from Amsterdam to Hoorn, 22:10 – 22:35" as it moves.
 interface TrackedStorm extends ReplayTailStorm {
+  lifecycle?: StormLifecycleState;
   key: string;
   cc: string;
   originLat: number;
@@ -194,25 +191,15 @@ interface TrackedStorm extends ReplayTailStorm {
   // doubles and the array is halved so memory stays bounded for long storms.
   keepEvery: number;
   appendSeq: number;
-  // Set to true the first time split detection assigns a parent. Used as the
-  // split-detection guard so Phase 1/2 absorptions (which also populate
-  // initialStrikesByAncestor) don't incorrectly suppress re-detection.
+  // Legacy persisted fragment marker; authoritative pending state is lifecycle.
   splitDetected: boolean;
-  // Timestamp when this storm was first detected as a split candidate (ms).
-  // Null until split detection marks it. The split event is only recorded
-  // after SPLIT_CONFIRM_MS to filter transient clusters that re-merge quickly.
+  // Kept when loading older snapshots; no longer used to confirm transitions.
   splitCandidateAt: number | null;
   // Human-readable label assigned when split detection fires (e.g. "F1", "F2").
   // Null for storms that formed independently. Carried through merges so that
   // absorbing a known fragment can surface the label in the event log.
   fragmentLabel: string | null;
 }
-// Maximum match window — a cell within this distance of a tracked storm's last
-// centroid is a candidate. The effective window is further capped by velocity:
-// a storm last seen 5 min ago can't be 60 km away at any realistic speed.
-const STORM_MATCH_KM = 60;
-// Minimum match window regardless of elapsed time (absorbs centroid jitter)
-const STORM_MATCH_MIN_KM = 15;
 // Keep a storm available for matching for 1 hour after it drops below the
 // detection threshold. A still-arriving replay tail is retained separately.
 // Beyond that, a re-appearing cell in the same area is a new storm, not a
@@ -280,6 +267,34 @@ const trackedStorms: TrackedStorm[] = (() => {
     return loaded;
   } catch { return []; }
 })();
+// A short restart must not turn a joined footprint into a new identity merely
+// because the ingestion buffer has only collected a few seconds of lightning.
+// Restore recent observation ownership without ingesting/counting it again.
+{
+  const now = Date.now();
+  const restored = new Map(recentStrikes.map(p => [lifecycleStrikeId(p), p]));
+  for (const st of trackedStorms) {
+    const points: StrikePoint[] = st.lifecycle?.members ?? st.replayAnchors?.map(([lat, lon, time]) => ({ lat, lon, time })) ?? [];
+    for (const p of points) {
+      if (p.time <= now && p.time > now - HISTORY_LIFETIME_MS) {
+        const id = lifecycleStrikeId(p);
+        // Explicit null is ocean. Legacy anchors without metadata need their
+        // own location lookup; a coastal storm's country is not a safe proxy.
+        if (!restored.has(id)) {
+          let cc = p.cc;
+          if (cc === undefined) {
+            try { cc = getCountryCode(p.lat, p.lon); } catch { cc = null; }
+          }
+          restored.set(id, { ...p, cc });
+        }
+      }
+    }
+  }
+  const points = [...restored.values()].sort((a, b) => a.time - b.time).slice(-MAX_HISTORY);
+  recentStrikes.length = 0;
+  for (const point of points) recentStrikes.push(point);
+}
+publishStormOwnership(trackedStorms, Date.now());
 // Startup tasks run async so they don't delay the first SSE response.
 // inDb flags are re-validated in the connect-time handler (below) instead.
 setImmediate(() => {
@@ -295,34 +310,8 @@ setImmediate(() => {
       console.log(`[db] storm tail backfill: ${backfilled.length} storm(s) attempted — ${JSON.stringify(backfilled)}`);
     }
   } catch (err) { console.error('[db] storm tail backfill failed:', err); }
-  try {
-    consolidateNearbyStorms(TRACKER_MERGE_KM);
-    // After consolidation some in-memory storms may have had their DB row deleted
-    // (consolidation keeps the highest-count row and deletes others). Re-key any
-    // orphaned in-memory storms to the surviving DB entry so they don't lose TRACKING.
-    const liveKeys = getTrackedStormKeys();
-    const livePositions = getRecentStormPositions();
-    for (const st of trackedStorms) {
-      if (liveKeys.has(st.key)) {
-        st.inDb = true;
-      } else if (st.inDb) {
-        // Key was deleted by consolidation — find the nearby surviving DB storm and adopt it.
-        let bestKey: string | null = null;
-        let bestKm = Infinity;
-        for (const [key, pos] of livePositions) {
-          const d = kmBetween(st.lat, st.lon, pos.lat, pos.lon);
-          if (d < TRACKER_MERGE_KM && d < bestKm) { bestKm = d; bestKey = key; }
-        }
-        if (bestKey) {
-          st.key = bestKey;
-          st.inDb = true;
-          livePositions.delete(bestKey); // prevent two storms from claiming the same DB key
-        } else {
-          st.inDb = false;
-        }
-      }
-    }
-  } catch { /* non-fatal */ }
+  // Nearby identities are reconciled only by observed, timed transitions.
+  // Restart cleanup must never silently merge pending or confirmed storms.
 });
 // Travel stride: passes per measurement, and the displacement band that counts
 // as real drift (≥3 km ≈ 36 km/h sustained; >20 km ≈ re-merge, not motion)
@@ -331,9 +320,13 @@ const TRAVEL_MIN_KM = 3;
 const TRAVEL_MAX_KM = 20;
 
 function meanPos(points: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
-  let lat = 0, lon = 0;
-  for (const p of points) { lat += p.lat; lon += p.lon; }
-  return { lat: lat / points.length, lon: lon / points.length };
+  let lat = 0, sinLon = 0, cosLon = 0;
+  for (const p of points) {
+    lat += p.lat;
+    sinLon += Math.sin(p.lon * Math.PI / 180);
+    cosLon += Math.cos(p.lon * Math.PI / 180);
+  }
+  return { lat: lat / points.length, lon: Math.atan2(sinLon, cosLon) * 180 / Math.PI };
 }
 const STRIKE_SAMPLE_MAX = 4000;
 const ALL_STRIKES_MAX = 24_000;
@@ -343,26 +336,8 @@ let stormSeq: number = (globalThis as any)._stormSeq ?? 0;
 
 function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const dLat = (aLat - bLat) * 111.32;
-  const dLon = (aLon - bLon) * 111.32 * Math.cos(((aLat + bLat) / 2) * Math.PI / 180);
+  const dLon = ((aLon - bLon + 540) % 360 - 180) * 111.32 * Math.cos(((aLat + bLat) / 2) * Math.PI / 180);
   return Math.hypot(dLat, dLon);
-}
-
-// Deduplicate active storms before broadcasting: remove entries within 75 km of a
-// higher-priority entry so duplicate in-memory identities (e.g. from a dev
-// hot-reload that reset stormSeq) don't pollute the broadcast.
-// Priority: DB-linked (inDb=true) beats non-DB; within same tier, more totalStrikes wins.
-function dedupeActiveStorms(storms: TrackedStorm[], nowMs: number): TrackedStorm[] {
-  const active = storms.filter(st => nowMs - st.lastSeen < 5 * 60_000 && st.currentRate >= MIN_STORM_RATE);
-  const sorted = [...active].sort((a, b) => {
-    if (a.inDb !== b.inDb) return (b.inDb ? 1 : 0) - (a.inDb ? 1 : 0);
-    return b.totalStrikes - a.totalStrikes;
-  });
-  const kept: TrackedStorm[] = [];
-  for (const st of sorted) {
-    const tooClose = kept.some(k => kmBetween(k.lat, k.lon, st.lat, st.lon) < 20);
-    if (!tooClose) kept.push(st);
-  }
-  return kept.sort((a, b) => (b.currentRate ?? 0) - (a.currentRate ?? 0)).slice(0, 20);
 }
 
 function roundPt(m: { lat: number; lon: number; time: number }): StormStrike {
@@ -371,13 +346,15 @@ function roundPt(m: { lat: number; lon: number; time: number }): StormStrike {
 
 function footprintCenter(members: Array<{ lat: number; lon: number }>): { lat: number; lon: number } {
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  const anchorLon = members[0]?.lon ?? 0;
   for (const m of members) {
     if (m.lat < minLat) minLat = m.lat;
     if (m.lat > maxLat) maxLat = m.lat;
-    if (m.lon < minLon) minLon = m.lon;
-    if (m.lon > maxLon) maxLon = m.lon;
+    const lon = anchorLon + ((m.lon - anchorLon + 540) % 360 - 180);
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
   }
-  return { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
+  return { lat: (minLat + maxLat) / 2, lon: (((minLon + maxLon) / 2 + 540) % 360) - 180 };
 }
 
 function sampleCell(members: Array<{ lat: number; lon: number; time: number }>): StormStrike[] {
@@ -456,13 +433,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     for (const [cc, count] of Object.entries(fiveMinCounts)) rates[cc] = count / 5;
     upsertCountryPeakRates(rates);
 
-    // Re-validate inDb flags each pass. Startup consolidateNearbyStorms (setImmediate)
-    // fires AFTER the first SSE connect-time re-validation, so it can delete a key
-    // that was still valid at connect time. Without this, the stale inDb=true persists
-    // indefinitely and the TRACKING link leads to a 404.
-    // NOTE: we do NOT call consolidateNearbyStorms here — that would create a race
-    // where it deletes keys we're about to upsert. Only the startup call (setImmediate)
-    // is allowed; this pass only clears flags for keys already gone from the DB.
+    // Page availability can change independently of the current observation.
     try {
       const liveDbKeys = getTrackedStormKeys();
       for (const st of trackedStorms) {
@@ -470,130 +441,78 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       }
     } catch { /* non-fatal */ }
 
-    // Detect storm cells across ALL countries (including sea strikes) so storms
-    // that cross borders or move offshore are tracked as one continuous system.
+    // Physical footprint connectivity and identity ownership are resolved before
+    // any official count, record, label or merge event can change.
     const allRecentStrikes = recentStrikes.filter(s => s.time > cutoff5m);
+    const observations = detectStormFootprints(recentStrikes, nowMs)
+      .filter(cell => !hasTimestampBurst(sampleCell(cell.activeMembers)));
     const matched = new Set<TrackedStorm>();
-    // Storms created for the first time this pass — used for split detection below
-    const freshThisPass = new Set<TrackedStorm>();
-    // Reserve even qualified cells outside the UI's top20 so their points
-    // cannot be borrowed by a nearby fading replay.
-    const detected = detectStorms(allRecentStrikes, WINDOW_MS, Infinity);
-    const reserved = new Set(detected.flatMap(cell => cell.members));
+    const reserved = new Set(observations.filter(cell => cell.activeMembers.length >= MIN_STORM_RATE * WINDOW_MS / 60_000).flatMap(cell => cell.activeMembers));
     for (const st of trackedStorms) st.currentRate = 0;
-    for (const cell of detected.slice(0, 20)) {
-      const sample = sampleCell(cell.members);
-      // A backlog flush can masquerade as a huge storm — never track those
-      if (hasTimestampBurst(sample)) continue;
-
-      // Derive the cell's country from whichever cc is most common in its members
+    function memberLocation(members: StrikePoint[], parent?: TrackedStorm) {
       const ccCounts: Record<string, number> = {};
-      for (const m of cell.members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
-      let cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
-
-      // Velocity-capped match window: a storm can only move STORM_MAX_KMH km/h,
-      // so shrink the search radius based on how long ago it was last seen.
-      const matchWindow = (st: TrackedStorm) => {
-        const elapsedHours = (nowMs - st.lastSeen) / 3_600_000;
-        return Math.min(STORM_MATCH_KM, Math.max(STORM_MATCH_MIN_KM, elapsedHours * STORM_MAX_KMH));
-      };
-
-      // If no land strikes in this cluster, try to inherit cc from a nearby tracked
-      // storm — this keeps offshore-drifting storms alive in the log.
-      // If still no cc, track as 'XO' (open ocean) so large ocean storms are ranked.
-      if (!cc) {
-        let nearestSt: TrackedStorm | null = null;
-        let nearestKm = Infinity;
-        for (const st of trackedStorms) {
-          if (nowMs - st.lastSeen > STORM_DROP_MS) continue;
-          const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
-          if (km < matchWindow(st) && km < nearestKm) { nearestKm = km; nearestSt = st; }
+      for (const m of members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
+      const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? parent?.cc ?? 'XO';
+      const { lat, lon } = meanPos(members);
+      const city = cc === 'XO' ? 'Open Ocean' : (nearestCity(citiesFor(cc), lat, lon)?.name ?? null);
+      return { ccCounts, cc, lat, lon, city };
+    }
+    const plan = reconcileStormLifecycle(trackedStorms, observations, nowMs, (members, parent) => {
+      const { ccCounts, cc, lat, lon, city } = memberLocation(members, parent);
+      const freshKey = `${cc}:${nowMs}:${stormSeq++}`;
+      (globalThis as any)._stormSeq = stormSeq;
+      return {
+        key: freshKey, cc, originLat: lat, originLon: lon, originCity: city,
+        startTime: nowMs, lat, lon, city, peakCount: 0, peakRate: 0,
+        traveledKm: 0, travelAnchor: footprintCenter(members), posBuf: [],
+        lastSeen: nowMs, currentRate: 0, inDb: false,
+        allStrikes: [], originSample: [], lastStrikeTime: 0, totalStrikes: 0,
+        countryCodes: Object.keys(ccCounts), initialStrikesByAncestor: {},
+        keepEvery: 1, appendSeq: 0, splitDetected: !!parent, splitCandidateAt: null, fragmentLabel: null,
+      } satisfies TrackedStorm;
+    });
+    for (const [st, members] of plan.assignments) {
+      const { ccCounts, cc, lat, lon, city } = memberLocation(members, st);
+      for (const code of Object.keys(ccCounts)) if (!st.countryCodes.includes(code)) st.countryCodes.push(code);
+      st.cc = cc;
+      st.posBuf.push(footprintCenter(members));
+      if (st.posBuf.length >= TRAVEL_STRIDE_PASSES) {
+        const cur = meanPos(st.posBuf.slice(-3));
+        if (st.travelAnchor) {
+          const hop = kmBetween(st.travelAnchor.lat, st.travelAnchor.lon, cur.lat, cur.lon);
+          if (hop >= TRAVEL_MIN_KM && hop <= TRAVEL_MAX_KM) st.traveledKm += hop;
         }
-        if (nearestSt) cc = nearestSt.cc;
-        else cc = 'XO';
+        st.travelAnchor = cur;
+        st.posBuf = [];
       }
-
-      // Among all tracked storms within range, pick the biggest (by peak count)
-      // so that when two storms converge into one cell, the smaller merges into
-      // the bigger rather than the bigger being silently dropped.
-      let best: TrackedStorm | null = null;
-      for (const st of trackedStorms) {
-        if (nowMs - st.lastSeen > STORM_DROP_MS) continue;
-        if (matched.has(st)) continue;
-        const km = kmBetween(st.lat, st.lon, cell.lat, cell.lon);
-        if (km > matchWindow(st)) continue;
-        if (!best || st.peakCount > best.peakCount) best = st;
+      st.lat = lat; st.lon = lon; st.city = city;
+      st.lastSeen = nowMs;
+      st.currentRate = members.length / 5;
+      if (members.length > st.peakCount) { st.peakCount = members.length; st.peakRate = st.currentRate; }
+      // One call per owner is essential: split branches share one time watermark.
+      accumulateStrikes(st, members);
+      matched.add(st);
+      for (const p of members) reserved.add(p);
+    }
+    for (const { parent, child, overlap } of plan.splits) {
+      // Historical replay stays intact, but fading-tail competition must use
+      // each confirmed branch's current footprint rather than the old union.
+      const retained = new Set(parent.lifecycle!.members.map(lifecycleStrikeId));
+      parent.replayAnchors = parent.replayAnchors?.filter(([lat, lon, time]) => retained.has(lifecycleStrikeId({ lat, lon, time })));
+      rememberReplayAnchors(child, child.lifecycle!.members.map(roundPt), nowMs);
+      child.initialStrikesByAncestor[parent.key] = overlap;
+      for (const [key, count] of Object.entries(parent.initialStrikesByAncestor)) {
+        child.initialStrikesByAncestor[key] = Math.min(overlap, count);
       }
-
-      const city = cc === 'XO' ? 'Open Ocean' : (nearestCity(citiesFor(cc), cell.lat, cell.lon)?.name ?? null);
-      const foot = footprintCenter(cell.members);
-      if (best) {
-        // Add every country present in this cluster (not just the dominant one).
-        // A storm straddling SI/HR will have cc='SI' but HR strikes should still
-        // appear in the path.
-        for (const c of Object.keys(ccCounts)) {
-          if (!best.countryCodes.includes(c)) best.countryCodes.push(c);
-        }
-        if (cc !== best.cc) best.cc = cc;
-        best.posBuf.push(foot);
-        if (best.posBuf.length >= TRAVEL_STRIDE_PASSES) {
-          // Smooth the stride endpoint over its last few passes
-          const cur = meanPos(best.posBuf.slice(-3));
-          if (best.travelAnchor) {
-            const hop = kmBetween(best.travelAnchor.lat, best.travelAnchor.lon, cur.lat, cur.lon);
-            if (hop >= TRAVEL_MIN_KM && hop <= TRAVEL_MAX_KM) best.traveledKm += hop;
-          }
-          best.travelAnchor = cur;
-          best.posBuf = [];
-        }
-        best.lat = cell.lat;
-        best.lon = cell.lon;
-        best.city = city;
-        best.lastSeen = nowMs;
-        best.currentRate = cell.rate;
-        if (cell.count > best.peakCount) {
-          best.peakCount = cell.count;
-          best.peakRate = cell.rate;
-        }
-        accumulateStrikes(best, cell.members);
-        matched.add(best);
-      } else {
-        const freshKey = `${cc}:${nowMs}:${stormSeq++}`;
-        (globalThis as any)._stormSeq = stormSeq;
-        const fresh: TrackedStorm = {
-          key: freshKey,
-          cc,
-          originLat: cell.lat, originLon: cell.lon, originCity: city,
-          startTime: nowMs,
-          lat: cell.lat, lon: cell.lon, city,
-          peakCount: cell.count, peakRate: cell.rate,
-          traveledKm: 0,
-          travelAnchor: { lat: foot.lat, lon: foot.lon }, posBuf: [],
-          lastSeen: nowMs,
-          currentRate: cell.rate,
-          inDb: false,
-          allStrikes: [], originSample: [], lastStrikeTime: 0, totalStrikes: 0,
-          countryCodes: Object.keys(ccCounts),
-          initialStrikesByAncestor: {},
-          keepEvery: 1, appendSeq: 0, splitDetected: false, splitCandidateAt: null, fragmentLabel: null,
-        };
-        accumulateStrikes(fresh, cell.members);
-        trackedStorms.push(fresh);
-        matched.add(fresh);
-        freshThisPass.add(fresh);
-      }
+      try {
+        const label = `F${countSplitEvents(parent.key) + 1}`;
+        child.fragmentLabel = label;
+        recordStormEvent(parent.key, 'split', nowMs, child.key, child.city, child.cc, null, label);
+      } catch { /* non-fatal */ }
     }
 
-    // Consolidate tracker identities within TRACKER_MERGE_KM of each other.
-    //
-    // Two phases:
-    // 1. Matched pairs: both identities were assigned live clusters this pass but
-    //    are close enough to be the same system. Absorb the smaller into the bigger
-    //    and remove the smaller from `matched` so it won't be written back to the DB.
-    // 2. Unmatched strays: an old identity that didn't get a cluster this pass but
-    //    is still within range of a matched winner — fold it in and delete from DB.
-    // Returns the net-new strike count added to big (used by call sites to record
-    // the merge event under the correct canonical key after any key adoption).
+    // Confirmation keeps the existing ancestry-aware accumulation and canonical
+    // key adoption, while all pending observations remain separate above.
     function absorbInto(big: TrackedStorm, small: TrackedStorm): number {
       if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
       if (small.startTime < big.startTime) {
@@ -666,169 +585,37 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       return netNew;
     }
 
-    // Phase 1: merge matched pairs — avoids the cycle where removing one matched
-    // storm from memory causes its cluster to spawn a fresh identity next pass.
-    {
-      let anyMerged = true;
-      while (anyMerged) {
-        anyMerged = false;
-        const matchedArr = Array.from(matched);
-        outer: for (let i = 0; i < matchedArr.length; i++) {
-          for (let j = i + 1; j < matchedArr.length; j++) {
-            const a = matchedArr[i], b = matchedArr[j];
-            if (kmBetween(a.lat, a.lon, b.lat, b.lon) >= TRACKER_MERGE_KM) continue;
-            const big = a.peakCount >= b.peakCount ? a : b;
-            const small = a.peakCount >= b.peakCount ? b : a;
-            // Capture small's identity before absorption in case the event needs it.
-            const smallKey1 = small.key, smallCity1 = small.city, smallCc1 = small.cc;
-            const smallFragLabel1 = small.fragmentLabel;
-            // Capture big's pre-adoption identity (city/cc won't change inside absorbInto,
-            // but key may change below, so capture here for the event payload).
-            const bigKey1 = big.key, bigCity1 = big.city, bigCc1 = big.cc;
-            const bigFragLabel1 = big.fragmentLabel;
-            const hadAncestor1 = small.key in big.initialStrikesByAncestor || big.key in small.initialStrikesByAncestor;
-            const netNew1 = absorbInto(big, small);
-            // Only record a count when ancestry is tracked — Branch 1/2 give a
-            // reliable delta; Branch 3 would show small.totalStrikes (the full
-            // lifetime count, not the genuine contribution since last absorption).
-            const reportedNew1 = hadAncestor1 ? netNew1 : null;
-            matched.delete(small);
-            trackedStorms.splice(trackedStorms.indexOf(small), 1);
-            // If the loser had a DB entry but the winner doesn't, adopt its key so
-            // the TRACKING link survives the merge without a 404 gap.
-            if (small.inDb && !big.inDb) {
-              big.key = small.key;
-              big.inDb = true;
-              // Patch every storm whose ancestor map references big's old key.
-              for (const st of trackedStorms) {
-                if (bigKey1 in st.initialStrikesByAncestor) {
-                  st.initialStrikesByAncestor[big.key] = st.initialStrikesByAncestor[bigKey1];
-                  delete st.initialStrikesByAncestor[bigKey1];
-                }
-              }
-              // small.key is now big's key — don't delete the DB row.
-              // Record merge on the new canonical key; the "other" storm was big's old identity.
-              try { recordStormEvent(big.key, 'merge', nowMs, bigKey1, bigCity1, bigCc1, reportedNew1, bigFragLabel1); } catch { /* non-fatal */ }
-            } else {
-              if (small.key) try { deleteStorm(small.key); } catch { /* non-fatal */ }
-              // Patch any surviving storm that references the absorbed storm's key
-              // in its ancestor map — it is now carried by big, so redirect to big.key.
-              for (const st of trackedStorms) {
-                if (smallKey1 in st.initialStrikesByAncestor) {
-                  st.initialStrikesByAncestor[big.key] = st.initialStrikesByAncestor[smallKey1];
-                  delete st.initialStrikesByAncestor[smallKey1];
-                }
-              }
-              // big.key is already the canonical key.
-              try { recordStormEvent(big.key, 'merge', nowMs, smallKey1, smallCity1, smallCc1, reportedNew1, smallFragLabel1); } catch { /* non-fatal */ }
-            }
-            anyMerged = true;
-            break outer;
+    for (const { winner: big, losers, outline } of plan.merges) {
+      const whole = [big, ...losers].flatMap(st => plan.assignments.get(st) ?? []);
+      combineStormLifecycle(big, losers, nowMs, outline);
+      for (const small of losers) {
+        const oldBigKey = big.key, oldSmallKey = small.key;
+        const adopted = small.inDb && !big.inDb;
+        const related = adopted ? big : small;
+        const eventIdentity = { key: related.key, city: related.city, cc: related.cc, fragment: related.fragmentLabel };
+        const hadAncestor = small.key in big.initialStrikesByAncestor || big.key in small.initialStrikesByAncestor;
+        const netNew = absorbInto(big, small);
+        matched.delete(small);
+        trackedStorms.splice(trackedStorms.indexOf(small), 1);
+        if (adopted) { big.key = small.key; big.inDb = true; }
+        // Bookmark redirects and event/record ownership change only at confirmation.
+        recordStormAlias(adopted ? oldBigKey : oldSmallKey, big.key);
+        if (!adopted) try { deleteStorm(small.key); } catch { /* non-fatal */ }
+        for (const survivor of trackedStorms) {
+          const replaced = adopted ? oldBigKey : oldSmallKey;
+          if (replaced in survivor.initialStrikesByAncestor) {
+            survivor.initialStrikesByAncestor[big.key] = survivor.initialStrikesByAncestor[replaced];
+            delete survivor.initialStrikesByAncestor[replaced];
           }
         }
+        try { recordStormEvent(big.key, 'merge', nowMs, eventIdentity.key, eventIdentity.city, eventIdentity.cc, hadAncestor ? netNew : null, eventIdentity.fragment); } catch { /* non-fatal */ }
       }
-    }
-
-    // Phase 2: fold unmatched strays into nearby matched winners.
-    for (const st of [...trackedStorms]) {
-      if (matched.has(st) || nowMs - st.lastSeen > STORM_DROP_MS) continue;
-      for (const m of matched) {
-        if (kmBetween(st.lat, st.lon, m.lat, m.lon) >= TRACKER_MERGE_KM) continue;
-        // Capture identities before absorption, same rationale as Phase 1.
-        const stKey2 = st.key, stCity2 = st.city, stCc2 = st.cc;
-        const stFragLabel2 = st.fragmentLabel;
-        const mKey2 = m.key, mCity2 = m.city, mCc2 = m.cc;
-        const mFragLabel2 = m.fragmentLabel;
-        const hadAncestor2 = st.key in m.initialStrikesByAncestor || m.key in st.initialStrikesByAncestor;
-        const netNew2 = absorbInto(m, st);
-        const reportedNew2 = hadAncestor2 ? netNew2 : null;
-        trackedStorms.splice(trackedStorms.indexOf(st), 1);
-        // If the absorbed stray had a DB entry but the winner doesn't, adopt its key
-        // so the existing TRACKING link continues to work without a 404 gap.
-        if (st.inDb && !m.inDb) {
-          m.key = st.key;
-          m.inDb = true;
-          // Patch ancestor maps that reference m's old key.
-          for (const survivor of trackedStorms) {
-            if (mKey2 in survivor.initialStrikesByAncestor) {
-              survivor.initialStrikesByAncestor[m.key] = survivor.initialStrikesByAncestor[mKey2];
-              delete survivor.initialStrikesByAncestor[mKey2];
-            }
-          }
-          // st.key is now m's key — don't delete the DB row.
-          // Record merge on the new canonical key; the "other" storm was m's old identity.
-          try { recordStormEvent(m.key, 'merge', nowMs, mKey2, mCity2, mCc2, reportedNew2, mFragLabel2); } catch { /* non-fatal */ }
-        } else {
-          if (st.key) try { deleteStorm(st.key); } catch { /* non-fatal */ }
-          // Patch surviving storms that referenced the absorbed stray's key.
-          for (const survivor of trackedStorms) {
-            if (stKey2 in survivor.initialStrikesByAncestor) {
-              survivor.initialStrikesByAncestor[m.key] = survivor.initialStrikesByAncestor[stKey2];
-              delete survivor.initialStrikesByAncestor[stKey2];
-            }
-          }
-          // m.key is already the canonical key.
-          try { recordStormEvent(m.key, 'merge', nowMs, stKey2, stCity2, stCc2, reportedNew2, stFragLabel2); } catch { /* non-fatal */ }
-        }
-        break;
+      if (whole.length) {
+        const location = memberLocation(whole, big);
+        big.lat = location.lat; big.lon = location.lon; big.city = location.city; big.cc = location.cc;
+        big.currentRate = whole.length / 5;
+        if (whole.length > big.peakCount) { big.peakCount = whole.length; big.peakRate = big.currentRate; }
       }
-    }
-
-    // Split detection — two-phase:
-    // Phase A (candidate): mark a fresh storm that survives near an existing storm.
-    //   Sets the ancestor overlap immediately (needed for absorbInto correctness)
-    //   but does NOT fire the event yet.
-    // Phase B (confirmation): after SPLIT_CONFIRM_MS the fragment must still be
-    //   active and near a parent. Only then is the event recorded. This filters
-    //   out transient blobs that immediately re-merge.
-    const SPLIT_DETECT_KM = 75;
-    const SPLIT_CONFIRM_MS = 5 * 60_000;
-
-    for (const freshSt of freshThisPass) {
-      if (!matched.has(freshSt) || freshSt.splitDetected || freshSt.splitCandidateAt != null) continue;
-      let nearestParent: TrackedStorm | null = null;
-      let nearestKm = Infinity;
-      for (const st of matched) {
-        if (st === freshSt || freshThisPass.has(st)) continue;
-        const km = kmBetween(freshSt.lat, freshSt.lon, st.lat, st.lon);
-        if (km < nearestKm && km < SPLIT_DETECT_KM) { nearestKm = km; nearestParent = st; }
-      }
-      if (nearestParent) {
-        // Set ancestor overlap immediately so absorbInto can apply the correct
-        // double-count correction if this fragment re-merges before confirmation.
-        freshSt.initialStrikesByAncestor[nearestParent.key] = freshSt.totalStrikes;
-        for (const [k, v] of Object.entries(nearestParent.initialStrikesByAncestor)) {
-          freshSt.initialStrikesByAncestor[k] = Math.min(freshSt.totalStrikes, v);
-        }
-        freshSt.splitCandidateAt = nowMs;
-      }
-    }
-
-    // Confirmation pass: fire the split event for candidates that have survived
-    // long enough and are still active near a parent.
-    for (const st of trackedStorms) {
-      if (st.splitDetected || st.splitCandidateAt == null) continue;
-      if (!matched.has(st)) continue;
-      if (nowMs - st.splitCandidateAt < SPLIT_CONFIRM_MS) continue;
-      let nearestParentC: TrackedStorm | null = null;
-      let nearestKmC = Infinity;
-      for (const other of matched) {
-        if (other === st || freshThisPass.has(other)) continue;
-        const km = kmBetween(st.lat, st.lon, other.lat, other.lon);
-        if (km < nearestKmC && km < SPLIT_DETECT_KM) { nearestKmC = km; nearestParentC = other; }
-      }
-      if (!nearestParentC) {
-        // Parent gone or diverged too far — cancel the candidate.
-        st.splitCandidateAt = null;
-        continue;
-      }
-      st.splitDetected = true;
-      try {
-        const splitCount = countSplitEvents(nearestParentC.key);
-        const label = `F${splitCount + 1}`;
-        st.fragmentLabel = label;
-        recordStormEvent(nearestParentC.key, 'split', nowMs, st.key, st.city, st.cc, null, label);
-      } catch { /* non-fatal */ }
     }
 
     collectReplayTails(trackedStorms, allRecentStrikes, reserved, matched, nowMs);
@@ -875,21 +662,9 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
 
     // Persist in-flight storm state so a server restart doesn't wipe live storms
     saveTrackedStorms(trackedStorms);
-    // NOTE: consolidateNearbyStorms is NOT called here. It runs once at startup
-    // (setImmediate) to clean up leftover DB rows from previous server runs.
-    // Calling it periodically causes a race: it merges the freshly-upserted
-    // current storm key into an older DB row with a higher count, deleting the
-    // current key and permanently preventing the storm from getting TRACKING.
-    // In-memory Phase 1/2 merges already handle per-pass deduplication.
-
-    // Push authoritative storm summaries to all SSE clients so map rank labels
-    // use server-tracked positions and lifetime totals — no client-side matching needed.
-    const activeStorms = dedupeActiveStorms(trackedStorms, nowMs);
-    broadcastSSE(`event: storms\ndata: ${JSON.stringify(activeStorms.map((st, i) => ({
-        key: st.key, lat: st.lat, lon: st.lon, totalStrikes: st.totalStrikes,
-        cc: st.cc, rate: st.currentRate ?? 0, rank: i + 1,
-        hasPage: st.inDb === true,
-    })))}\n\n`);
+    publishStormOwnership(trackedStorms, nowMs);
+    // Both initial and periodic clients receive the same authoritative state.
+    broadcastSSE(`event: storms\ndata: ${JSON.stringify(stormLifecycleSummaries(trackedStorms, nowMs))}\n\n`);
   } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 
@@ -934,8 +709,7 @@ export async function GET() {
         `event: history\ndata: ${JSON.stringify(historySlice)}\n\n`
       ));
       // Send current tracked storms immediately so rank labels appear without waiting 30 s.
-      // Re-validate inDb from the DB first: startup consolidation (setImmediate) may have
-      // deleted keys that were marked inDb=true at module load time.
+      // Re-validate page availability before publishing the initial state.
       try {
         const freshKeys = getTrackedStormKeys();
         for (const st of trackedStorms) {
@@ -943,14 +717,8 @@ export async function GET() {
         }
       } catch { /* non-fatal */ }
       const connectNow = Date.now();
-      const connectStorms = dedupeActiveStorms(trackedStorms, connectNow);
-      if (connectStorms.length > 0) {
-        ctrl.enqueue(enc.encode(`event: storms\ndata: ${JSON.stringify(connectStorms.map((st, i) => ({
-          key: st.key, lat: st.lat, lon: st.lon, totalStrikes: st.totalStrikes,
-          cc: st.cc, rate: st.currentRate ?? 0, rank: i + 1,
-          hasPage: st.inDb === true,
-        })))}\n\n`));
-      }
+      const connectStorms = stormLifecycleSummaries(trackedStorms, connectNow);
+      ctrl.enqueue(enc.encode(`event: storms\ndata: ${JSON.stringify(connectStorms)}\n\n`));
       if (activeSources.size > 0) {
         ctrl.enqueue(enc.encode('event: status\ndata: live\n\n'));
       }

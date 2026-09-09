@@ -9,6 +9,7 @@ import { fmtRate, fmtClock, fmtDuration, fmt } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
 import type { StormLogRow, StormStrike } from '../lib/db';
 import { useStormMerge } from '../context/StormMergeContext';
+import { transitionLabel } from '../lib/stormTransitionDisplay';
 import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../lib/stormReplayState';
 
 type StormRow = StormLogRow & { originCode?: string | null; rank?: number | null };
@@ -21,7 +22,7 @@ function todayUTC(): string {
 }
 
 export default function StormsClient() {
-  const { mergeMap } = useStormMerge();
+  const { mergeMap, now: transitionNow, connected: transitionsConnected } = useStormMerge();
   const t = useTranslations('stormLog');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
@@ -210,16 +211,9 @@ export default function StormsClient() {
               const mergeTag = (() => {
                 const ms = mergeMap.get(s.stormKey);
                 if (!ms) return null;
-                let est = '';
-                if (ms.type === 'merging') {
-                  const rem = Math.max(0, Math.round((ms.mergeAtMs - Date.now()) / 60_000));
-                  est = rem > 0 ? ` ~${rem}m` : '';
-                } else if (ms.type === 'splitting' && ms.estimatedMinutes != null) {
-                  est = ` ~${ms.estimatedMinutes}m`;
-                }
                 return (
-                  <span className={`storm-merge-status-tag storm-merge-status-tag--${ms.type}`}>
-                    ⚡ {ms.type}{est}
+                  <span className={`storm-merge-status-tag storm-merge-status-tag--${ms.kind === 'merge' ? 'merging' : 'splitting'}`}>
+                    ⚡ {transitionLabel(ms, transitionNow, transitionsConnected)}
                   </span>
                 );
               })();

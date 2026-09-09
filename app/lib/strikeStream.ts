@@ -1,11 +1,38 @@
 import type { StormStrike } from './db';
+import { buildStormStrikeOwnership, type StormOwnershipSource, type StormStrikeOwnership } from './stormStrikeOwnership';
 
 type Subscriber = {
-  lat: number;
-  lon: number;
-  radiusKm: number;
+  stormKey: string;
+  resolveKey?: () => string;
   send: (strike: StormStrike) => void;
 };
+
+function ownership(): StormStrikeOwnership | undefined {
+  return (globalThis as any)._stormStrikeOwnership;
+}
+
+export function publishStormOwnership(storms: StormOwnershipSource[], now = Date.now()): void {
+  (globalThis as any)._stormStrikeOwnership = buildStormStrikeOwnership(storms, now);
+  const resolved = new Map<string, string>();
+  for (const subscriber of registry().values()) {
+    if (!subscriber.resolveKey) continue;
+    if (!resolved.has(subscriber.stormKey)) {
+      try { resolved.set(subscriber.stormKey, subscriber.resolveKey()); } catch { continue; }
+    }
+    subscriber.stormKey = resolved.get(subscriber.stormKey)!;
+  }
+}
+
+export function findStormStrikeOwner(lat: number, lon: number, time: number) {
+  return ownership()?.find({ lat, lon, time }, Date.now());
+}
+
+/** Legacy/finished rows fall back to their saved replay, never a nearby raw-grid query. */
+export function stormStrikeHistory(stormKey: string, saved: StormStrike[] | null, now = Date.now()): StormStrike[] {
+  return ownership()?.history(stormKey, now) ?? (saved ?? [])
+    .filter(strike => strike[2] > now - 10 * 60_000 && strike[2] <= now)
+    .sort((a, b) => a[2] - b[2]);
+}
 
 function registry(): Map<string, Subscriber> {
   if (!(globalThis as any)._stormStrikeSubscribers) {
@@ -25,10 +52,10 @@ export function unregisterStrikeSubscriber(id: string): void {
 export function dispatchStrike(lat: number, lon: number, time: number): void {
   const reg = registry();
   if (reg.size === 0) return;
+  const owner = findStormStrikeOwner(lat, lon, time);
+  if (!owner?.active) return;
   for (const sub of reg.values()) {
-    const dLat = (lat - sub.lat) * 111.32;
-    const dLon = (lon - sub.lon) * 111.32 * Math.cos(((lat + sub.lat) / 2) * Math.PI / 180);
-    if (Math.hypot(dLat, dLon) <= sub.radiusKm) {
+    if (sub.stormKey === owner.key) {
       try { sub.send([lat, lon, time]); } catch { /* subscriber gone */ }
     }
   }
