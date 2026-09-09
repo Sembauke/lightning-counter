@@ -18,6 +18,10 @@ import { restoreStormCounting } from '../../lib/stormCountingMigration';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+// A reload is not ready until state restoration and every persistence timer
+// have completed. The custom server checks this before connecting upstream.
+(globalThis as any)._ingestionReady = undefined;
+
 // ── Persisted state ────────────────────────────────────────────────────
 const { total, countries } = loadCounters();
 let serverTotal = total;
@@ -100,14 +104,6 @@ function processStrike(lat: number, lon: number, time?: number) {
     dispatchToStormSubscribers(lat, lon, t);
   }
 }
-
-// Register with server.mjs so it can call us for incoming WS strikes
-(globalThis as any)._processStrike = processStrike;
-
-// Drain any strikes that arrived before this module loaded
-const queued: Array<{ lat: number; lon: number; time?: number }> = (globalThis as any)._strikeQueue ?? [];
-(globalThis as any)._strikeQueue = [];
-for (const { lat, lon, time } of queued) processStrike(lat, lon, time);
 
 // ── Stale-interval cleanup ─────────────────────────────────────────────
 // Use named globalThis slots (_iv_*) for every interval so that ANY module
@@ -666,6 +662,27 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     pruneStormEvents();
   } catch (err) { console.error('[db] prune failed:', err); }
 }, 60 * 60 * 1000);
+
+// Publish the processor only after restoring tracking state and installing all
+// persistence jobs. Startup calls HEAD explicitly; it never needs an SSE client.
+(globalThis as any)._processStrike = processStrike;
+const queued: Array<{ lat: number; lon: number; time?: number }> = (globalThis as any)._strikeQueue ?? [];
+(globalThis as any)._strikeQueue = [];
+for (const { lat, lon, time } of queued) processStrike(lat, lon, time);
+
+const ingestionTimers = ['_iv_histPrune', '_iv_dbFlush', '_iv_gridBatch', '_iv_hourly']
+  .map(key => ({ key, timer: (globalThis as any)[key] }));
+(globalThis as any)._ingestionReady = () =>
+  (globalThis as any)._processStrike === processStrike
+  && ingestionTimers.every(({ key, timer }) => timer && !timer._destroyed && (globalThis as any)[key] === timer);
+
+/** Finite startup handshake: initialize ingestion without subscribing a viewer. */
+export function HEAD() {
+  return new Response(null, {
+    status: (globalThis as any)._ingestionReady?.() ? 200 : 503,
+    headers: { 'Cache-Control': 'no-store' },
+  });
+}
 
 // ── SSE endpoint ───────────────────────────────────────────────────────
 export async function GET() {

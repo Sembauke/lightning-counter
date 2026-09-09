@@ -1,18 +1,8 @@
 **Website audit — 9 September 2026**
 
-Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining findings affect recording after startup and map history. Findings retain their original numbers as verified fixes are removed.
+Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining numbered finding affects map history. Findings retain their original numbers as verified fixes are removed.
 
 The review combined Chrome desktop/mobile navigation, ordinary production API requests, source inspection, and disposable SQLite reproductions. Production was not restarted or load-tested. The live bundle contains the recent shared transition display code, although bundle markers alone do not establish an exact deployed commit. Local findings below identify their reproduction boundaries explicitly.
-
-4. **High priority: recording after server startup depends on a visitor opening the strike stream.**
-
-   The custom server starts upstream connections immediately, but the processing function and persistence timers are registered only when `/api/strikes` loads. Both the startup prewarm and the Docker health check request `/`, which does not execute browser JavaScript or open that stream. Incoming strikes remain in an unbounded memory queue until initialization.
-
-   Executing the actual server body with framework, transport, and timer stubs showed two connected sources, a homepage prewarm, no registered processor, and 600 queued strikes. A separate test of the actual route initialized 20 minutes after those strikes: the global total became **600**, but the raw archive and tracked storm history were both **empty**. The ten-minute admission cutoff discarded the queued locations/times from those paths. A restart before queue processing would also lose the queue itself.
-
-   This was a controlled startup reproduction, not a production restart or a measurement of past production downtime. Its impact depends on whether a browser or another service promptly opens `/api/strikes` after startup.
-
-   Source: [server startup and queue](../server.mjs), lines 61–68 and 132–174; [route initialization](../app/api/strikes/route.ts), lines 70–110; [health check](../docker-compose.nas.yml). Repair direction: initialize ingestion explicitly during server startup and check processor readiness independently of webpage availability.
 
 5. **Medium priority, confirmed on production: zooming out silently removes older map history.**
 
@@ -36,7 +26,7 @@ The review combined Chrome desktop/mobile navigation, ordinary production API re
 
 **Validation and scope**
 
-The original audit suite passed: **267 tests in 26 files**. The current suite passes **314 tests in 35 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
+The original audit suite passed: **267 tests in 26 files**. The current suite passes **321 tests in 37 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
 
 Desktop Chrome at 1500 px and mobile Chrome emulation at 390 px covered the homepage, archive, daily totals, country pages, storm list, active and finished storm details, replay controls, records, navigation, and saved preferences. The tested mobile pages had no horizontal overflow. Daily Totals remained selected after reload, its counts updated, and the Dutch locale persisted. Playback advanced and controls responded in the sampled finished storm. Hydration errors on storm detail pages are documented separately in the browser evidence; the pages recovered and remained usable.
 
@@ -44,4 +34,4 @@ The review did not observe an entire five-minute split/merge cycle on production
 
 Original reproduction scripts, compact result JSON, and screenshots are under `/tmp/lightning-website-audit-2026-09-09/` on this machine. Those scripts target the audited commit and may intentionally fail after the relevant defect is fixed.
 
-Suggested implementation order for remaining work: make startup and persistence independent of visitors; then repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.
+Suggested implementation order for remaining work: repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.

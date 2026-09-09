@@ -58,8 +58,8 @@ function markDisconnected(source) {
   console.log(`[blitz] disconnected: ${source} (${globalThis._activeSources.size} remaining)`);
 }
 
-// Strike processor — called by route.ts once it has loaded geo/db imports
-// Falls back to a queue if route.ts not yet initialised
+// Feeds start only after the processor is ready. Keep the queue fallback for
+// a temporary processor replacement during development reloads.
 function onStrike(lat, lon, time) {
   if (typeof globalThis._processStrike === 'function') {
     globalThis._processStrike(lat, lon, time);
@@ -134,11 +134,42 @@ const handle = app.getRequestHandler();
 
 await app.prepare();
 
-// Start lightning data connections after Next.js is ready
-LM_WS.forEach(connectLMWS);
+let ingestionStarted = false;
+
+// Load the Node route explicitly, without opening a long-lived SSE stream or
+// adding a viewer. Failed attempts stay unready and retry with feeds stopped.
+async function startIngestion() {
+  while (!ingestionStarted) {
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 30_000);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/strikes`, {
+        method: 'HEAD', cache: 'no-store', signal: abort.signal,
+      });
+      if (!response.ok || !globalThis._ingestionReady?.()) {
+        throw new Error(`processor not ready (HTTP ${response.status})`);
+      }
+      LM_WS.forEach(connectLMWS);
+      ingestionStarted = true;
+      console.log('[ingestion] ready; upstream feeds started');
+      if (dev) startDevStorm();
+    } catch (err) {
+      console.error('[ingestion] initialization failed; retrying in 5s:', err.message);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!ingestionStarted) await new Promise(resolve => setTimeout(resolve, 5_000));
+  }
+}
 
 const server = createServer(async (req, res) => {
   const parsedUrl = parse(req.url, true);
+  if (parsedUrl.pathname === '/healthz') {
+    const ready = ingestionStarted && globalThis._ingestionReady?.() === true;
+    res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ status: ready ? 'ready' : 'starting' }));
+    return;
+  }
   await handle(req, res, parsedUrl);
 });
 
@@ -165,7 +196,8 @@ setInterval(() => {
 }, 1000);
 
 server.listen(port, '0.0.0.0', () => {
-  console.log(`> Ready on http://0.0.0.0:${port}`);
+  console.log(`> Listening on http://0.0.0.0:${port}; initializing ingestion`);
+  void startIngestion();
   // Pre-warm the home page so Next.js compiles the LightningMap chunk before
   // the first user request. Without this, the initial page load triggers a
   // cold compile that shows "Loading map…" for several seconds.
@@ -177,9 +209,9 @@ server.listen(port, '0.0.0.0', () => {
 // ── Dev storm ──────────────────────────────────────────────────────────────
 // Always-live fake storm so the storm detail page can be inspected in dev
 // without waiting for real activity. Kept alive by refreshing end_time and
-// dripping one fake strike per 30 s through the normal SSE pipeline.
-if (dev) {
-  // Delay so the pre-warm request has time to fire and initialize the DB schema
+// sending synthetic strikes directly to storm stream subscribers.
+function startDevStorm() {
+  // Ingestion has initialized the schema before this development fixture starts.
   setTimeout(async () => {
     const { createRequire } = await import('module');
     const load = createRequire(import.meta.url);
@@ -227,7 +259,7 @@ if (dev) {
     }, 5 * 60_000);
 
     // Drip fake strikes at 2/s — dispatch directly to open storm SSE subscribers
-    // (bypasses _processStrike which only loads when /api/strikes is first hit)
+    // (bypasses official ingestion so synthetic strikes never affect totals)
     setInterval(() => {
       const lat = DEV_LAT + (Math.random() - 0.5) * 0.6;
       const lon = DEV_LON + (Math.random() - 0.5) * 0.9;
