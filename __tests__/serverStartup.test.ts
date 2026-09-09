@@ -25,7 +25,7 @@ class MockSocket {
   readyState = 1;
   handlers = new Map<string, Handler[]>();
   send = vi.fn();
-  constructor(readonly url: string) { upstreams.push(this); }
+  constructor(readonly url: string, readonly options: { rejectUnauthorized?: boolean } = {}) { upstreams.push(this); }
   on(event: string, handler: Handler) {
     this.handlers.set(event, [...this.handlers.get(event) ?? [], handler]);
     return this;
@@ -151,6 +151,8 @@ it('boots ingestion before connecting either feed and processes lightning with n
   await vi.advanceTimersByTimeAsync(0);
   await expectHealth(200, 'ready');
   expect(upstreams.map(socket => socket.url)).toEqual(['wss://live.lightningmaps.org', 'wss://live2.lightningmaps.org']);
+  // Both production feed connections must validate their certificates.
+  expect(upstreams.every(socket => socket.options.rejectUnauthorized === true)).toBe(true);
   expect(globals._sseControllers.size).toBe(0);
   expect(globals._wsClients.size).toBe(0);
 

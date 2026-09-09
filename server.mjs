@@ -80,7 +80,7 @@ function connectLMWS(url) {
     const ws = new WebSocket(url, {
       headers: { Origin: 'https://www.lightningmaps.org' },
       handshakeTimeout: 15_000,
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
     });
 
     let heartbeat = null;
