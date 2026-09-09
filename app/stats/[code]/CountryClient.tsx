@@ -7,19 +7,9 @@ import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmt, fmtRate, fmtClock } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
-import type { StormStrike } from '../../lib/db';
+import { watchCountryDetail, type CountryDetail } from '../../lib/countryDetailRefresh';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
-
-interface ArchiveRow { code: string; today: number; peakCount: number; peakDate: string; }
-interface HistoryRow { date: string; count: number; }
-interface BiggestStorm {
-  count: number; rate: number; lat: number; lon: number;
-  city: string | null; date: string;
-  originCity: string | null; startTime: number | null; endTime: number | null;
-  traveledKm: number | null; totalCount: number | null;
-  strikes: StormStrike[] | null;
-}
 
 export default function CountryClient() {
   const params = useParams();
@@ -28,28 +18,18 @@ export default function CountryClient() {
   const ts = useTranslations('storms');
   const countryName = useCountryName();
 
-  const [row, setRow] = useState<ArchiveRow | null>(null);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [biggestStorm, setBiggestStorm] = useState<BiggestStorm | null>(null);
+  const [data, setData] = useState<CountryDetail | null>(null);
+  const current = data?.row.code === code ? data : null;
+  const row = current?.row;
+  const history = current?.history;
+  const biggestStorm = current?.biggestStorm;
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [minStrikes, setMinStrikes] = useState('');
 
-  useEffect(() => {
-    fetch('/api/archive')
-      .then(r => r.json())
-      .then((data: ArchiveRow[]) => setRow(data.find(d => d.code === code) ?? null))
-      .catch(() => {});
-    fetch(`/api/country/${code}`)
-      .then(r => r.json())
-      .then((data: { history: HistoryRow[]; biggestStorm: BiggestStorm | null }) => {
-        setHistory(data.history);
-        setBiggestStorm(data.biggestStorm);
-      })
-      .catch(() => {});
-  }, [code]);
+  useEffect(() => watchCountryDetail(code, setData), [code]);
 
-  const filteredHistory = useMemo(() => history.filter(h => {
+  const filteredHistory = useMemo(() => (history ?? []).filter(h => {
     if (dateFrom && h.date < dateFrom) return false;
     if (dateTo && h.date > dateTo) return false;
     if (minStrikes && h.count < parseInt(minStrikes, 10)) return false;

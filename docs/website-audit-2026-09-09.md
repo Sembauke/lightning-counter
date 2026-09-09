@@ -6,7 +6,6 @@ The review combined Chrome desktop/mobile navigation, ordinary production API re
 
 **Remaining findings and risks**
 
-- **Country detail totals freeze after loading — production confirmed.** On [Italy's archive page](https://lightning-stats.com/stats/IT), Today stayed at 139,345 for 61 seconds while the API increased from 139,354 to 139,477. The country page fetches its data only once. Add refresh behavior comparable to the main archive. Source: [CountryClient](../app/stats/[code]/CountryClient.tsx), lines 38–50.
 - **Storm detail pages fail initial hydration in other timezones — production confirmed.** The same finished storm loaded without errors in a UTC browser, but produced React hydration errors in Europe/Amsterdam: server-rendered 07:42–08:41 became 09:42–10:41 in the browser. React rebuilt the root on the client; the page and replay remained usable afterward. Format the initial render consistently, then apply the viewer's timezone after mounting. Sources: [fmtClock](../app/lib/format.ts), lines 18–21; [storm timeline labels](../app/storms/[key]/StormDetailClient.tsx), lines 415–416.
 - **Restart durability gap — locally reproduced.** Counter persistence runs every 30 seconds and the custom server has no shutdown flush. A module reload restored a durable total of 250 after the live total had reached 300, losing 50 unflushed increments. Raw archival has a separate five-second batch window. Orderly shutdown flushing would reduce deployment loss; crash recovery needs durable ingestion/reconciliation rather than only shutdown handlers. Sources: [persistence timers](../app/api/strikes/route.ts), lines 413–417 and 669–675; [server](../server.mjs).
 - **Daily records use delivery date, not discharge date — locally reproduced.** A valid strike at 23:59:59 delivered at 00:00:01 was credited entirely to the following UTC date. This matters around reconnects and midnight. Confirm the intended meaning of daily totals before changing this behavior; there is no justified blanket historical correction from this test alone. Source: [processStrike](../app/api/strikes/route.ts), lines 70–92.
@@ -16,7 +15,7 @@ The review combined Chrome desktop/mobile navigation, ordinary production API re
 
 **Validation and scope**
 
-The original audit suite passed: **267 tests in 26 files**. The current suite passes **348 tests in 40 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
+The original audit suite passed: **267 tests in 26 files**. The current suite passes **362 tests in 42 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
 
 Desktop Chrome at 1500 px and mobile Chrome emulation at 390 px covered the homepage, archive, daily totals, country pages, storm list, active and finished storm details, replay controls, records, navigation, and saved preferences. The tested mobile pages had no horizontal overflow. Daily Totals remained selected after reload, its counts updated, and the Dutch locale persisted. Playback advanced and controls responded in the sampled finished storm. Hydration errors on storm detail pages are documented separately in the browser evidence; the pages recovered and remained usable.
 
@@ -24,4 +23,4 @@ The review did not observe an entire five-minute split/merge cycle on production
 
 Original reproduction scripts, compact result JSON, and screenshots are under `/tmp/lightning-website-audit-2026-09-09/` on this machine. Those scripts target the audited commit and may intentionally fail after the relevant defect is fixed.
 
-Suggested next work: repair stale page totals and storm-detail hydration. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.
+Suggested next work: repair storm-detail hydration. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.

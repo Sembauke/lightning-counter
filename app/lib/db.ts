@@ -36,6 +36,7 @@ function getDb(): Database.Database {
       count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (date, code)
     );
+    CREATE INDEX IF NOT EXISTS idx_daily_strikes_code_date ON daily_strikes(code, date);
     CREATE TABLE IF NOT EXISTS country_peaks (
       code TEXT PRIMARY KEY,
       count INTEGER NOT NULL,
@@ -286,6 +287,11 @@ export function loadDailyStrikes(date: string): Record<string, number> {
 export function getCountryPeaks(): Array<{ code: string; count: number; date: string }> {
   const db = getDb();
   return db.prepare('SELECT code, count, date FROM country_peaks ORDER BY count DESC').all() as Array<{ code: string; count: number; date: string }>;
+}
+
+export function getCountryPeak(code: string): { count: number; date: string } | null {
+  const db = getDb();
+  return db.prepare('SELECT count, date FROM country_peaks WHERE code = ?').get(code) as { count: number; date: string } | undefined ?? null;
 }
 
 export function getCountryPeakRates(): Array<{ code: string; rate: number }> {
