@@ -8,12 +8,12 @@ import { detectStormFootprints } from '../../lib/stormFootprint';
 import { combineStormLifecycle, lifecycleStrikeId, reconcileStormLifecycle, stormLifecycleSummaries, type StormLifecycleState } from '../../lib/stormLifecycle';
 import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from '../../lib/stormReplayTail';
 import { updateStormReplay } from '../../lib/db';
+import { compactStormCounting, emptyStormCounting, mergeStormCounting, remapStormCountingKeys, rememberCountedStrike, sharedStormStrikeCount, type StormCountingState } from '../../lib/stormCounting';
+import { restoreStormCounting } from '../../lib/stormCountingMigration';
 
-// When two DB-loaded storms merge with no ancestor tracking, absorbInto falls
-// into Branch 3 and returns small.totalStrikes — the full lifetime count, not
-// the genuine new contribution. We can't distinguish a restart re-merge from a
-// first-time merge of two long-lived storms at this point, so we suppress the
-// count (record null) to avoid showing a misleading number.
+// Merge events without a known relationship retain a null contribution: old
+// sampled snapshots cannot prove their historical overlap. Modern overlap
+// arithmetic is tracked independently of replay sampling and relationship labels.
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -178,14 +178,11 @@ interface TrackedStorm extends ReplayTailStorm {
   originSample: StormStrike[];
   lastStrikeTime: number;
   totalStrikes: number;
+  counting?: StormCountingState;
   // Ordered list of every country code the storm has passed through
   countryCodes: string[];
-  // Per-ancestor overlap map: ancestorKey → number of strikes that ancestor
-  // already counted from this storm's territory at the time of the split.
-  // Empty for storms that formed independently.
-  // Used by absorbInto to apply the exact double-count correction for any
-  // ancestor that re-absorbs this storm, regardless of how many intermediate
-  // merges or key-adoptions occurred in between.
+  // Birth/merge relationship metadata, also read when migrating old snapshots.
+  // New overlap arithmetic uses counting provenance, never inferred ancestry.
   initialStrikesByAncestor: Record<string, number>;
   // allStrikes thinning: once allStrikes exceeds ALL_STRIKES_MAX, keepEvery
   // doubles and the array is halved so memory stays bounded for long storms.
@@ -264,6 +261,8 @@ const trackedStorms: TrackedStorm[] = (() => {
         } catch { /* non-fatal */ }
       }
     }
+    restoreStormCounting(loaded, Date.now());
+    compactStormCounting(loaded, Date.now());
     return loaded;
   } catch { return []; }
 })();
@@ -383,6 +382,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   for (const m of members) {
     if (m.time <= st.lastStrikeTime) continue;
     st.totalStrikes++;
+    rememberCountedStrike(st, m);
     const p = roundPt(m);
     const id = `${p[0]},${p[1]},${p[2]}`;
     if (st.appendSeq++ % st.keepEvery === 0 && !saved.has(id)) {
@@ -467,6 +467,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         traveledKm: 0, travelAnchor: footprintCenter(members), posBuf: [],
         lastSeen: nowMs, currentRate: 0, inDb: false,
         allStrikes: [], originSample: [], lastStrikeTime: 0, totalStrikes: 0,
+        counting: emptyStormCounting(),
         countryCodes: Object.keys(ccCounts), initialStrikesByAncestor: {},
         keepEvery: 1, appendSeq: 0, splitDetected: !!parent, splitCandidateAt: null, fragmentLabel: null,
       } satisfies TrackedStorm;
@@ -494,15 +495,17 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       matched.add(st);
       for (const p of members) reserved.add(p);
     }
-    for (const { parent, child, overlap } of plan.splits) {
+    for (const { parent, child } of plan.splits) {
       // Historical replay stays intact, but fading-tail competition must use
       // each confirmed branch's current footprint rather than the old union.
       const retained = new Set(parent.lifecycle!.members.map(lifecycleStrikeId));
       parent.replayAnchors = parent.replayAnchors?.filter(([lat, lon, time]) => retained.has(lifecycleStrikeId({ lat, lon, time })));
       rememberReplayAnchors(child, child.lifecycle!.members.map(roundPt), nowMs);
-      child.initialStrikesByAncestor[parent.key] = overlap;
-      for (const [key, count] of Object.entries(parent.initialStrikesByAncestor)) {
-        child.initialStrikesByAncestor[key] = Math.min(overlap, count);
+      child.initialStrikesByAncestor[parent.key] = sharedStormStrikeCount(parent, child);
+      for (const other of trackedStorms) {
+        if (other === parent || other === child) continue;
+        const shared = sharedStormStrikeCount(other, child);
+        if (shared > 0) child.initialStrikesByAncestor[other.key] = shared;
       }
       try {
         const label = `F${countSplitEvents(parent.key) + 1}`;
@@ -525,44 +528,10 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       }
       big.traveledKm = Math.max(big.traveledKm, small.traveledKm);
 
-      // Per-ancestor overlap map lookup:
-      // overlapInBig   = strikes big already counted from small's territory (normal re-merge)
-      // overlapInSmall = strikes small already counted from big's territory (reverse re-merge)
-      const overlapInBig   = small.initialStrikesByAncestor[big.key];
-      const overlapInSmall = big.initialStrikesByAncestor[small.key];
-
-      let netNew: number;
-      if (overlapInBig !== undefined) {
-        // Normal re-merge: small is a descendant of big.
-        netNew = Math.max(0, small.totalStrikes - overlapInBig);
-        // Merge small's other ancestor overlaps into big by adding (they represent
-        // independent territory neither storm has fully reconciled yet).
-        for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
-          if (k === big.key) continue;
-          big.initialStrikesByAncestor[k] = (big.initialStrikesByAncestor[k] ?? 0) + v;
-        }
-        // Clean up any stale reverse-ancestry entry (small is being consumed).
-        delete big.initialStrikesByAncestor[small.key];
-      } else if (overlapInSmall !== undefined) {
-        // Reverse re-merge: big is a descendant of small (child outgrew parent).
-        netNew = Math.max(0, small.totalStrikes - overlapInSmall);
-        // Remove the consumed parent entry and inherit small's ancestor overlaps
-        // so any grandparent that later re-absorbs big gets the right correction.
-        delete big.initialStrikesByAncestor[small.key];
-        for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
-          big.initialStrikesByAncestor[k] = v;
-        }
-      } else {
-        // No direct ancestry (independent, sibling, or third-party).
-        netNew = small.totalStrikes;
-        // Accumulate small's ancestor overlaps into big by adding so any shared
-        // ancestor that re-absorbs big applies the combined correction.
-        for (const [k, v] of Object.entries(small.initialStrikesByAncestor)) {
-          big.initialStrikesByAncestor[k] = (big.initialStrikesByAncestor[k] ?? 0) + v;
-        }
-      }
-
-      big.totalStrikes += netNew;
+      const netNew = mergeStormCounting(big, small);
+      Object.assign(big.initialStrikesByAncestor, small.initialStrikesByAncestor);
+      delete big.initialStrikesByAncestor[big.key];
+      delete big.initialStrikesByAncestor[small.key];
       rememberReplayAnchors(big, small.replayAnchors ?? small.allStrikes, nowMs);
       for (const c of small.countryCodes) if (!big.countryCodes.includes(c)) big.countryCodes.push(c);
       // small.allStrikes can overlap big.allStrikes — e.g. a fragment that split
@@ -598,6 +567,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         matched.delete(small);
         trackedStorms.splice(trackedStorms.indexOf(small), 1);
         if (adopted) { big.key = small.key; big.inDb = true; }
+        remapStormCountingKeys(trackedStorms, adopted ? oldBigKey : oldSmallKey, big.key);
         // Bookmark redirects and event/record ownership change only at confirmation.
         recordStormAlias(adopted ? oldBigKey : oldSmallKey, big.key);
         if (!adopted) try { deleteStorm(small.key); } catch { /* non-fatal */ }
@@ -606,6 +576,11 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
           if (replaced in survivor.initialStrikesByAncestor) {
             survivor.initialStrikesByAncestor[big.key] = survivor.initialStrikesByAncestor[replaced];
             delete survivor.initialStrikesByAncestor[replaced];
+          }
+          if (survivor !== big) {
+            const shared = sharedStormStrikeCount(big, survivor);
+            if (shared > 0 || survivor.key in big.initialStrikesByAncestor) big.initialStrikesByAncestor[survivor.key] = shared;
+            if (shared > 0 || big.key in survivor.initialStrikesByAncestor) survivor.initialStrikesByAncestor[big.key] = shared;
           }
         }
         try { recordStormEvent(big.key, 'merge', nowMs, eventIdentity.key, eventIdentity.city, eventIdentity.cc, hadAncestor ? netNew : null, eventIdentity.fragment); } catch { /* non-fatal */ }
@@ -661,6 +636,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     }
 
     // Persist in-flight storm state so a server restart doesn't wipe live storms
+    compactStormCounting(trackedStorms, nowMs);
     saveTrackedStorms(trackedStorms);
     publishStormOwnership(trackedStorms, nowMs);
     // Both initial and periodic clients receive the same authoritative state.
