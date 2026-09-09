@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { detectStorms, type StrikePoint } from './stormClusters';
 import { recoverReplayEdges, REPLAY_EDGE_RADIUS_KM, REPLAY_EDGE_TIME_MS } from './stormReplayRecovery';
+import { selectStormReplaySnapshot } from './stormReplaySnapshot';
 
 const DB_DIR = process.env.DB_PATH ?? (fs.existsSync('/data') ? '/data' : './tmp');
 const DB_FILE = path.join(DB_DIR, 'lightning.db');
@@ -439,10 +440,7 @@ export type StormLogRow = Omit<BiggestStorm, 'strikes'> & { stormKey: string };
 export function upsertStorms(storms: BiggestStorm[]): void {
   if (storms.length === 0) return;
   const db = getDb();
-  // Use upsert syntax so we can protect the strikes blob: keep whichever version
-  // starts earlier (lower first-strike timestamp = more historical coverage).
-  // This prevents a post-restart short accumulation from overwriting a rich
-  // pre-restart history that spans the full storm lifetime.
+  const readReplay = db.prepare('SELECT strikes FROM storms WHERE storm_key = ?');
   const stmt = db.prepare(`
     INSERT INTO storms
       (storm_key, code, count, rate, lat, lon, city, date,
@@ -456,36 +454,44 @@ export function upsertStorms(storms: BiggestStorm[]): void {
       origin_city = excluded.origin_city, start_time = excluded.start_time,
       end_time = excluded.end_time, traveled_km = excluded.traveled_km,
       total_count = excluded.total_count,
-      strikes = CASE
-        WHEN excluded.strikes IS NULL THEN storms.strikes
-        WHEN storms.strikes IS NULL THEN excluded.strikes
-        WHEN json_array_length(excluded.strikes) >= json_array_length(COALESCE(storms.strikes, '[]'))
-             THEN excluded.strikes
-        ELSE storms.strikes
-      END,
+      strikes = excluded.strikes,
       country_path = excluded.country_path
   `);
   db.transaction(() => {
     for (const s of storms) {
       if (!s.stormKey) continue;
+      const existing = readReplay.get(s.stormKey) as { strikes: string | null } | undefined;
+      const replay = selectReplayJson(existing?.strikes ?? null, s.strikes);
       stmt.run(s.stormKey, s.code, s.count, s.rate, s.lat, s.lon, s.city, s.date,
         s.originLat, s.originLon, s.originCity, s.startTime, s.endTime,
-        s.traveledKm, s.totalCount, s.strikes ? JSON.stringify(s.strikes) : null,
+        s.traveledKm, s.totalCount, replay,
         s.countryPath ? JSON.stringify(s.countryPath) : null);
     }
   })();
 }
 
+function selectReplayJson(storedJson: string | null, incoming: StormStrike[] | null): string | null {
+  let stored: StormStrike[] | null = null;
+  try {
+    const parsed = storedJson ? JSON.parse(storedJson) : null;
+    if (Array.isArray(parsed)) stored = parsed;
+  } catch { /* A valid incoming sample can replace a corrupt replay. */ }
+  const selected = selectStormReplaySnapshot(stored, incoming);
+  if (selected === stored) return storedJson;
+  return selected ? JSON.stringify(selected) : null;
+}
+
 /** Persist fading lightning without extending the qualified storm's metrics. */
 export function updateStormReplay(stormKey: string, strikes: StormStrike[]): void {
   const db = getDb();
-  const json = JSON.stringify(strikes);
   db.transaction(() => {
     // UPDATE only: a replay continuation must not create a log entry, claim a
     // record, or resurrect a key that the tracker has absorbed into another one.
-    db.prepare('UPDATE storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-    db.prepare('UPDATE country_biggest_storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-    db.prepare('UPDATE storm_records SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
+    for (const table of ['storms', 'country_biggest_storms', 'storm_records']) {
+      const copies = db.prepare(`SELECT rowid, strikes FROM ${table} WHERE storm_key = ?`).all(stormKey) as Array<{ rowid: number; strikes: string | null }>;
+      const update = db.prepare(`UPDATE ${table} SET strikes = ? WHERE rowid = ?`);
+      for (const copy of copies) update.run(selectReplayJson(copy.strikes, strikes), copy.rowid);
+    }
   })();
 }
 

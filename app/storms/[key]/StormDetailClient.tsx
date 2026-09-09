@@ -10,17 +10,9 @@ import CountryFlag from '../../components/CountryFlag';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
 import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../../lib/stormReplayState';
+import { buildStormTimeline, type StormMinuteBucket } from '../../lib/stormTimeline';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
-
-const R = 6371;
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 function rankBadgeClass(rank: number): string {
   if (rank === 1) return ' storm-leaderboard-row--gold';
@@ -44,63 +36,21 @@ function stormLabel(
       : `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
 }
 
-interface MinuteBucket { count: number; ts: number; }
-interface StrikeStats {
-  timeline: { minute: number; count: number; ts: number }[];
-  peakMinute: number; peakTs: number; peakCount: number;
-  bboxWidthKm: number; bboxHeightKm: number;
-  minLat: number; maxLat: number; minLon: number; maxLon: number;
-}
-
-function computeStats(strikes: StormStrike[]): StrikeStats {
-  const sorted = [...strikes].sort((a, b) => a[2] - b[2]);
-  const firstMs = sorted[0][2];
-
-  const buckets = new Map<number, MinuteBucket>();
-  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  for (const [lat, lon, ts] of sorted) {
-    if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
-    if (lon < minLon) minLon = lon; if (lon > maxLon) maxLon = lon;
-    const min = Math.floor((ts - firstMs) / 60_000);
-    const b = buckets.get(min) ?? { count: 0, ts };
-    b.count++;
-    buckets.set(min, b);
-  }
-
-  const maxMin = Math.max(...buckets.keys());
-  const timeline: { minute: number; count: number; ts: number }[] = [];
-  for (let m = 0; m <= maxMin; m++) {
-    const b = buckets.get(m);
-    timeline.push({ minute: m, count: b?.count ?? 0, ts: b?.ts ?? firstMs + m * 60_000 });
-  }
-
-  let peakMinute = 0, peakCount = 0, peakTs = firstMs;
-  for (const t of timeline) {
-    if (t.count > peakCount) { peakCount = t.count; peakMinute = t.minute; peakTs = t.ts; }
-  }
-
-  const midLat = (minLat + maxLat) / 2;
-  const bboxWidthKm = haversineKm(midLat, minLon, midLat, maxLon);
-  const bboxHeightKm = haversineKm(minLat, minLon, maxLat, minLon);
-
-  return { timeline, peakMinute, peakTs, peakCount, bboxWidthKm, bboxHeightKm, minLat, maxLat, minLon, maxLon };
-}
-
-function TimelineChart({ timeline, peakMinute }: { timeline: StrikeStats['timeline']; peakMinute: number }) {
-  const window = timeline.slice(-60);
-  const maxCount = Math.max(...window.map(t => t.count), 1);
+function TimelineChart({ timeline }: { timeline: StormMinuteBucket[] }) {
+  const maxCount = Math.max(...timeline.map(t => t.count), 1);
+  const peakTs = timeline.find(t => t.count === maxCount)?.ts;
   const W = 800, H = 100, PX = 4, PY = 6;
-  const barW = (W - PX * 2) / Math.max(window.length, 1);
+  const barW = (W - PX * 2) / Math.max(timeline.length, 1);
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="timeline-chart" aria-label="Strike intensity chart">
-      {window.map((t, i) => {
+      {timeline.map((t, i) => {
         const h = (t.count / maxCount) * (H - PY * 2);
-        const isPeak = t.minute === peakMinute;
+        const isPeak = t.ts === peakTs;
         const alpha = (0.25 + 0.75 * (t.count / maxCount)).toFixed(2);
         const fill = isPeak ? '#ffe566' : `rgba(255,210,50,${alpha})`;
         return (
-          <rect key={i}
+          <rect key={t.ts}
             x={PX + i * barW}
             y={H - PY - h}
             width={Math.max(0.5, barW - 0.8)}
@@ -359,15 +309,15 @@ export default function StormDetailClient({
   const duration = liveStats.startTime != null && liveStats.endTime != null
     ? liveStats.endTime - liveStats.startTime : null;
 
-  // Merge server strikes with live-appended ones for the timeline chart and geo stats
+  // Merge server strikes with live-appended ones for the timeline chart.
   const allStrikesForStats = useMemo(() => {
     const base = storm.strikes ?? [];
     return appendedStrikes.length ? [...base, ...appendedStrikes] : base;
   }, [storm.strikes, appendedStrikes]);
 
-  const stats = useMemo(
-    () => (allStrikesForStats.length >= 2 ? computeStats(allStrikesForStats) : null),
-    [allStrikesForStats],
+  const timeline = useMemo(
+    () => buildStormTimeline(allStrikesForStats, liveStats.endTime),
+    [allStrikesForStats, liveStats.endTime],
   );
 
   const heldRecords = records.filter(r => r.stormKey && r.stormKey === storm.stormKey);
@@ -456,17 +406,16 @@ export default function StormDetailClient({
         </div>
 
         {/* ── Strike timeline chart — last 60 minutes ── */}
-        {stats && stats.timeline.length > 1 && (() => {
-          const window = stats.timeline.slice(-60);
-          const windowStart = window[0]?.ts;
-          const windowEnd = window[window.length - 1]?.ts;
+        {timeline.length > 1 && (() => {
+          const windowStart = timeline[0]?.ts;
+          const windowEnd = timeline[timeline.length - 1]?.ts;
           return (
             <div className="storm-section">
               <div className="storm-timeline-meta">
                 {windowStart != null && <span>{fmtClock(windowStart)}</span>}
                 {windowEnd != null && <span>{fmtClock(windowEnd)}</span>}
               </div>
-              <TimelineChart timeline={stats.timeline} peakMinute={stats.peakMinute} />
+              <TimelineChart timeline={timeline} />
             </div>
           );
         })()}
