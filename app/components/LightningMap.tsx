@@ -26,6 +26,8 @@ import { placeStormLabel, type LabelBox } from '../lib/stormLabelLayout';
 import { MAP_HISTORY_WINDOW_MS } from '../lib/mapHistory';
 import { ViewportHistoryLoader } from '../lib/viewportHistory';
 import { LiveMapHistory } from '../lib/liveMapHistory';
+import { GridArchivePager } from '../lib/gridArchivePager';
+import type { GridArchivePage } from '../lib/gridArchiveTypes';
 
 interface FlashRing {
   nx: number;
@@ -277,11 +279,10 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
 
   const [selectedCell, setSelectedCell] = useState<CellData | null>(null);
   const selectedCellRef = useRef<{ col: number; row: number; binZoom: number; displayPx: number; bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number } } | null>(null);
-  const [apiData, setApiData] = useState<{
-    strikes: Array<{ id: number; strike_time: number; lat: number; lon: number }>;
-    total: number; page: number; pages: number;
-  } | null>(null);
+  const [apiData, setApiData] = useState<GridArchivePage | null>(null);
   const [apiLoading, setApiLoading] = useState(false);
+  const [apiError, setApiError] = useState(false);
+  const archivePagerRef = useRef(new GridArchivePager());
 
 
   const fetchViewport = () => {
@@ -315,13 +316,15 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     viewportFetchTimerRef.current = setTimeout(() => fetchViewportRef.current?.(), 400);
   };
 
-  const fetchCellData = (bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number }, page = 1) => {
+  const fetchCellData = (bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number }, page?: number) => {
     setApiLoading(true);
-    const q = `minLat=${bounds.minLat}&maxLat=${bounds.maxLat}&minLon=${bounds.minLon}&maxLon=${bounds.maxLon}&page=${page}`;
-    fetch(`/api/grid/area?${q}`)
-      .then(r => r.json())
-      .then(data => { setApiData(data); setApiLoading(false); })
-      .catch(() => setApiLoading(false));
+    setApiError(false);
+    const callbacks = {
+      onComplete: (data: GridArchivePage) => { setApiData(data); setApiLoading(false); },
+      onError: () => { setApiError(true); setApiLoading(false); },
+    };
+    if (page === undefined) void archivePagerRef.current.open(bounds, callbacks);
+    else void archivePagerRef.current.goTo(page, callbacks);
   };
 
   const stateRef = useRef<MapState>({
@@ -1097,6 +1100,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       disposed = true;
       viewportMovingRef.current = false;
       viewportLoaderRef.current.cancel();
+      archivePagerRef.current.cancel();
       if (viewportFetchTimerRef.current) clearTimeout(viewportFetchTimerRef.current);
       const s = stateRef.current;
       if (s.heatmapTimer) clearInterval(s.heatmapTimer);
@@ -1753,16 +1757,19 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         <div className="cell-drawer open">
           <div className="cell-drawer-header">
             <span>{selectedCell.id === 'area' ? 'Area selection' : `Cell ${selectedCell.id}`}</span>
-            <button className="cell-drawer-close" onClick={() => { setSelectedCell(null); setApiData(null); }}>×</button>
+            <button className="cell-drawer-close" onClick={() => { archivePagerRef.current.cancel(); setSelectedCell(null); setApiData(null); }}>×</button>
           </div>
 
           <div className="cell-drawer-section">
             {apiLoading && <div className="cell-drawer-empty">Loading…</div>}
+            {apiError && <div className="cell-drawer-empty" role="status">
+              Archive temporarily unavailable. <button type="button" onClick={() => fetchCellData(selectedCell.bounds)}>Retry</button>
+            </div>}
 
             {apiData && (
               <>
                 <div className="cell-drawer-count">
-                  {apiData.total.toLocaleString()} <span>archived strikes</span>
+                  {apiData.total.toLocaleString()} <span>archived strikes · last 3 days</span>
                 </div>
 
                 {apiData.total === 0 ? (
@@ -1785,13 +1792,13 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                       <div className="cell-pagination">
                         <button
                           className="cell-pg-btn"
-                          disabled={apiData.page <= 1}
+                          disabled={apiLoading || apiData.page <= 1}
                           onClick={() => fetchCellData(selectedCell.bounds, apiData.page - 1)}
                         >‹</button>
                         <span className="cell-pg-info">{apiData.page} / {apiData.pages}</span>
                         <button
                           className="cell-pg-btn"
-                          disabled={apiData.page >= apiData.pages}
+                          disabled={apiLoading || !apiData.nextCursor}
                           onClick={() => fetchCellData(selectedCell.bounds, apiData.page + 1)}
                         >›</button>
                       </div>

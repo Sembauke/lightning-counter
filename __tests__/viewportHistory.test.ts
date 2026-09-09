@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { MAP_HISTORY_PAGE_SIZE, MAP_HISTORY_WINDOW_MS, type MapHistoryPage, type MapHistoryStrike } from '../app/lib/mapHistory';
+import { closeGridArchiveReaders } from '../app/lib/gridArchiveReader';
 
 const NOW = Date.UTC(2026, 8, 9, 12);
 const oldDbPath = process.env.DB_PATH;
@@ -29,7 +30,8 @@ beforeAll(async () => {
 
 beforeEach(() => { sql.exec('DELETE FROM grid_strikes'); });
 
-afterAll(() => {
+afterAll(async () => {
+  await closeGridArchiveReaders();
   vi.clearAllTimers();
   vi.useRealTimers();
   sql.close();
@@ -119,7 +121,9 @@ describe('bounded live-map history snapshots', () => {
     const first = await page();
     sql.exec('ALTER TABLE grid_strikes RENAME TO unavailable_grid_strikes');
     try {
-      await expect(request({ cursor: first.nextCursor! })).rejects.toThrow();
+      const unavailable = await request({ cursor: first.nextCursor! });
+      expect(unavailable.status).toBe(503);
+      expect(await unavailable.json()).not.toHaveProperty('complete');
     } finally {
       sql.exec('ALTER TABLE unavailable_grid_strikes RENAME TO grid_strikes');
     }

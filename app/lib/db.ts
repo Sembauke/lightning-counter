@@ -3,7 +3,6 @@ import path from 'path';
 import fs from 'fs';
 import { recoverOwnedReplay } from './stormReplayRecovery';
 import { selectStormReplaySnapshot } from './stormReplaySnapshot';
-import { MAP_HISTORY_PAGE_SIZE, type MapHistoryBounds, type MapHistoryStrike } from './mapHistory';
 
 const DB_DIR = process.env.DB_PATH ?? (fs.existsSync('/data') ? '/data' : './tmp');
 const DB_FILE = path.join(DB_DIR, 'lightning.db');
@@ -1339,103 +1338,6 @@ export function archiveGridStrikeBatch(strikes: Array<{ lat: number; lon: number
       upsertCell.run(cellId, time);
     }
   })();
-}
-
-export function getGridCellPage(
-  cellId: string,
-  page: number,
-  limit: number
-): {
-  cell: { cell_id: string; total_strikes: number; last_strike_time: number } | null;
-  strikes: Array<{ id: number; strike_time: number; lat: number; lon: number }>;
-  total: number;
-} {
-  const db = getDb();
-  const cell = db.prepare('SELECT cell_id, total_strikes, last_strike_time FROM grid_cells WHERE cell_id = ?').get(cellId) as
-    | { cell_id: string; total_strikes: number; last_strike_time: number }
-    | undefined;
-  if (!cell) return { cell: null, strikes: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const strikes = db.prepare(
-    'SELECT id, strike_time, lat, lon FROM grid_strikes WHERE cell_id = ? ORDER BY strike_time DESC LIMIT ? OFFSET ?'
-  ).all(cellId, limit, offset) as Array<{ id: number; strike_time: number; lat: number; lon: number }>;
-  return { cell, strikes, total: cell.total_strikes };
-}
-
-export interface ViewportHistoryPosition {
-  strikeTime: number;
-  id: number;
-}
-
-export function getViewportStrikes(
-  bounds: MapHistoryBounds,
-  since: number,
-  until: number,
-  snapshotId?: number,
-  after?: ViewportHistoryPosition,
-): { strikes: MapHistoryStrike[]; snapshotId: number; next: ViewportHistoryPosition | null } {
-  const db = getDb();
-  // Capture MAX(id) in the same read transaction as page one. Later deliveries,
-  // including old discharge times, cannot enter a partially downloaded snapshot.
-  return db.transaction(() => {
-    const snapshot = snapshotId ?? (db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM grid_strikes').get() as { id: number }).id;
-    const longitude = bounds.minLon <= bounds.maxLon ? 'lon BETWEEN ? AND ?' : '(lon >= ? OR lon <= ?)';
-    const geography = [bounds.minLat, bounds.maxLat, bounds.minLon, bounds.maxLon];
-    const strikes: MapHistoryStrike[] = [];
-    if (after) {
-      // SQLite does not seek into the implicit rowid using a row-value
-      // comparison here. Handle equal timestamps separately so a large burst
-      // cannot make every subsequent page scan all the preceding burst rows.
-      strikes.push(...db.prepare(`
-        SELECT id, lat, lon, strike_time FROM grid_strikes INDEXED BY idx_gs_time
-        WHERE strike_time = ? AND id <= ?
-          AND lat BETWEEN ? AND ? AND ${longitude}
-        ORDER BY id DESC LIMIT ?
-      `).all(after.strikeTime, Math.min(snapshot, after.id - 1), ...geography,
-        MAP_HISTORY_PAGE_SIZE + 1) as MapHistoryStrike[]);
-    }
-    if (strikes.length <= MAP_HISTORY_PAGE_SIZE) {
-      strikes.push(...db.prepare(`
-        SELECT id, lat, lon, strike_time FROM grid_strikes INDEXED BY idx_gs_time
-        WHERE strike_time >= ? AND strike_time ${after ? '<' : '<='} ? AND id <= ?
-          AND lat BETWEEN ? AND ? AND ${longitude}
-        ORDER BY strike_time DESC, id DESC LIMIT ?
-      `).all(since, after?.strikeTime ?? until, snapshot, ...geography,
-        MAP_HISTORY_PAGE_SIZE + 1 - strikes.length) as MapHistoryStrike[]);
-    }
-    const more = strikes.length > MAP_HISTORY_PAGE_SIZE;
-    if (more) strikes.pop();
-    const last = strikes[strikes.length - 1];
-    return { strikes, snapshotId: snapshot, next: more ? { strikeTime: last.strike_time, id: last.id } : null };
-  })();
-}
-
-/** Query raw archived strikes within geographic and time bounds, oldest first. */
-export function getGridStrikesInRange(
-  minLat: number, maxLat: number, minLon: number, maxLon: number,
-  fromMs: number, toMs: number, limit = 20_000
-): Array<{ lat: number; lon: number; strike_time: number }> {
-  const db = getDb();
-  return db.prepare(
-    `SELECT lat, lon, strike_time FROM grid_strikes INDEXED BY idx_gs_time
-     WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND strike_time > ? AND strike_time <= ?
-     ORDER BY strike_time ASC LIMIT ?`
-  ).all(minLat, maxLat, minLon, maxLon, fromMs, toMs, limit) as Array<{ lat: number; lon: number; strike_time: number }>;
-}
-
-export function getGridAreaPage(
-  minLat: number, maxLat: number, minLon: number, maxLon: number,
-  page: number, limit: number
-): { strikes: Array<{ id: number; strike_time: number; lat: number; lon: number }>; total: number } {
-  const db = getDb();
-  const { n } = db.prepare(
-    'SELECT COUNT(*) as n FROM grid_strikes WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?'
-  ).get(minLat, maxLat, minLon, maxLon) as { n: number };
-  const offset = (page - 1) * limit;
-  const strikes = db.prepare(
-    'SELECT id, strike_time, lat, lon FROM grid_strikes WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? ORDER BY strike_time DESC LIMIT ? OFFSET ?'
-  ).all(minLat, maxLat, minLon, maxLon, limit, offset) as Array<{ id: number; strike_time: number; lat: number; lon: number }>;
-  return { strikes, total: n };
 }
 
 // ── Storm events (merge / split log) ──────────────────────────────────────

@@ -1,6 +1,6 @@
-import { getViewportStrikes } from '../../../lib/db';
+import { readGridArchive } from '../../../lib/gridArchiveReader';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { MAP_HISTORY_WINDOW_MS, type MapHistoryBounds, type MapHistoryPage } from '../../../lib/mapHistory';
+import { MAP_HISTORY_WINDOW_MS, MAP_HISTORY_PAGE_SIZE, type MapHistoryBounds, type MapHistoryPage } from '../../../lib/mapHistory';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -67,6 +67,8 @@ export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   let bounds: MapHistoryBounds, since: number, until: number, snapshot: Snapshot | undefined;
   try {
+    if (params.toString().length > 4096) throw new Error('Query too long');
+    for (const name of params.keys()) if (![...fields, 'cursor'].includes(name)) throw new Error('Unsupported parameter');
     // Repeated keys are ambiguous when validating a snapshot continuation.
     for (const name of [...fields, 'cursor']) if (params.getAll(name).length > 1) throw new Error('Duplicate parameter');
     if (params.has('cursor')) {
@@ -101,8 +103,14 @@ export async function GET(req: Request) {
     return Response.json({ error: 'Invalid viewport parameters or cursor' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const page = getViewportStrikes(bounds, since, until, snapshot?.snapshotId,
-    snapshot ? { strikeTime: snapshot.strikeTime, id: snapshot.id } : undefined);
+  let page;
+  try {
+    page = await readGridArchive({ kind: 'viewport', bounds, since, until, limit: MAP_HISTORY_PAGE_SIZE,
+      snapshotId: snapshot?.snapshotId, after: snapshot ? { strikeTime: snapshot.strikeTime, id: snapshot.id } : undefined }, req.signal);
+  } catch {
+    return Response.json({ error: 'Archive temporarily unavailable' }, { status: 503,
+      headers: { 'Cache-Control': 'no-store', 'Retry-After': '2' } });
+  }
   const nextCursor = page.next ? encodeCursor({ ...bounds, version: 1, since, until,
     snapshotId: page.snapshotId, strikeTime: page.next.strikeTime, id: page.next.id }) : null;
   const body: MapHistoryPage = { strikes: page.strikes, nextCursor, complete: nextCursor === null, since, until };
