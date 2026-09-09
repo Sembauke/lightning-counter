@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 
 type Handler = (...args: any[]) => void;
 type BootstrapAttempt = {
@@ -16,6 +17,12 @@ let onListening: Handler;
 let upstreams: MockSocket[];
 let attempts: BootstrapAttempt[];
 let frameworkHandler: ReturnType<typeof vi.fn>;
+let serverEvents: EventEmitter;
+let viewerServer: EventEmitter & {
+  options: { noServer?: boolean };
+  handleUpgrade: ReturnType<typeof vi.fn>;
+};
+let viewerSocket: { readyState: number; send: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> };
 let fetchMock: ReturnType<typeof vi.fn>;
 let processor: ReturnType<typeof vi.fn>;
 let homepageFails: boolean;
@@ -49,6 +56,8 @@ beforeEach(() => {
   attempts = [];
   homepageFails = false;
   frameworkHandler = vi.fn(async (_request, response) => { response.end('homepage'); });
+  serverEvents = new EventEmitter();
+  viewerSocket = { readyState: 1, send: vi.fn(), on: vi.fn() };
   processor = vi.fn((lat: number, lon: number, time: number) => {
     globals._serverTotal++;
     globals._recentStrikes.push({ lat, lon, time });
@@ -66,14 +75,23 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   vi.doMock('http', () => ({ createServer: (handler: Handler) => {
     requestHandler = handler;
-    const server = { listen: vi.fn((_port: number, _host: string, callback: Handler) => {
+    const server = Object.assign(serverEvents, { listen: vi.fn((_port: number, _host: string, callback: Handler) => {
       onListening = callback;
       return server;
-    }) };
+    }) });
     return server;
   } }));
-  vi.doMock('next', () => ({ default: () => ({ prepare: async () => {}, getRequestHandler: () => frameworkHandler }) }));
-  vi.doMock('ws', () => ({ WebSocket: MockSocket, WebSocketServer: class { on = vi.fn(); } }));
+  vi.doMock('next', () => ({ default: () => ({
+    prepare: async () => {},
+    getRequestHandler: () => frameworkHandler,
+  }) }));
+  vi.doMock('ws', () => ({ WebSocket: MockSocket, WebSocketServer: class extends EventEmitter {
+    handleUpgrade = vi.fn((_request, _socket, _head, done: Handler) => done(viewerSocket));
+    constructor(readonly options: { noServer?: boolean }) {
+      super();
+      viewerServer = this;
+    }
+  } }));
 });
 
 afterEach(() => {
@@ -141,6 +159,33 @@ async function expectHealth(status: number, state: 'starting' | 'ready') {
   expect(JSON.parse(result.body)).toEqual({ status: state });
   expect(result.headers['cache-control']).toBe('no-store');
 }
+
+it.each(['development', 'production'])('routes framework upgrades separately from viewer connections in %s', async (mode) => {
+  vi.stubEnv('NODE_ENV', mode);
+  await startListening();
+  expect(viewerServer.options.noServer).toBe(true);
+  // Next installs a separate upgrade listener when it serves the first page.
+  // The viewer server must leave that listener's socket untouched.
+  const frameworkUpgradeHandler = vi.fn();
+  serverEvents.on('upgrade', frameworkUpgradeHandler);
+  const transport = { destroy: vi.fn() };
+  const head = Buffer.alloc(0);
+  const frameworkRequest = { url: '/_next/hmr?id=browser-session' };
+  serverEvents.emit('upgrade', frameworkRequest, transport, head);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(frameworkUpgradeHandler).toHaveBeenCalledExactlyOnceWith(frameworkRequest, transport, head);
+  expect(viewerServer.handleUpgrade).not.toHaveBeenCalled();
+  expect(globals._wsClients.size).toBe(0);
+
+  const viewerRequest = { url: '/ws?session=browser-session' };
+  serverEvents.emit('upgrade', viewerRequest, transport, head);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(viewerServer.handleUpgrade).toHaveBeenCalledExactlyOnceWith(viewerRequest, transport, head, expect.any(Function));
+  expect(frameworkUpgradeHandler).toHaveBeenCalledTimes(2);
+  expect(globals._wsClients.has(viewerSocket)).toBe(true);
+  expect(JSON.parse(viewerSocket.send.mock.calls.at(-1)![0])).toEqual({ total: 0, viewers: 1 });
+  expect(transport.destroy).not.toHaveBeenCalled();
+});
 
 it('boots ingestion before connecting either feed and processes lightning with no visitors', async () => {
   await startListening();

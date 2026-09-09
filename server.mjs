@@ -188,7 +188,13 @@ const server = createServer(async (req, res) => {
   await handle(req, res, parsedUrl);
 });
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+// Own only the viewer socket. Next installs its own upgrade listener for HMR;
+// an attached ws server would reject that connection before Next can accept it.
+const wss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  if (parse(req.url).pathname !== '/ws') return;
+  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+});
 
 const broadcast = () => {
   const msg = JSON.stringify({ total: globalThis._serverTotal, viewers: globalThis._wsClients.size });

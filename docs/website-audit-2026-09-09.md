@@ -10,11 +10,13 @@ None remaining from this audit. This records completion of the identified repair
 
 **Validation and scope**
 
-The original audit suite passed: **267 tests in 26 files**. The final combined suite passes **395 tests in 47 files**, TypeScript passes with `--noEmit --incremental false`, and the Next.js 16.3.4 production build succeeds. A clean dependency installation reports **zero npm audit vulnerabilities**, including development dependencies. Current regression coverage lives in `__tests__`.
+The original audit suite passed: **267 tests in 26 files**. The final combined suite passes **397 tests in 47 files**, TypeScript passes with `--noEmit --incremental false`, and the Next.js 16.3.4 production build succeeds. A clean dependency installation reports **zero npm audit vulnerabilities**, including development dependencies. Current regression coverage lives in `__tests__`.
 
 ESLint completes with no errors and 61 warnings, primarily existing hook dependencies and newer React Compiler diagnostics. React Compiler is not enabled; its adoption diagnostics remain warnings while the existing hook correctness rules stay enabled.
 
 Final verification also exercised durable ingestion through actual production-server SIGTERM and SIGKILL restarts: 600 accepted strikes were recovered across the counters, raw archive, storm ownership and replay, without double counting on redelivery. Both upstream WebSocket connections succeeded with certificate verification enabled. Docker build and native SQLite runtime checks passed for both amd64 and arm64.
+
+A final development-server check caught the viewer WebSocket rejecting Next.js's HMR connection, preventing initial client rendering with the upgraded framework. The viewer handler now owns only `/ws`, leaving framework upgrades to Next.js. Regression checks cover both server modes; native browser checks confirm map hydration, working viewer counts, local storm clocks, replay progress and live CSS updates without reloading.
 
 Desktop Chrome at 1500 px and mobile Chrome emulation at 390 px covered the homepage, archive, daily totals, country pages, storm list, active and finished storm details, replay controls, records, navigation, and saved preferences. Final browser checks confirmed worker-backed archive paging forwards and backwards, saved Daily Totals selection, increasing country totals, replay playback, Dutch locale persistence and mobile navigation, with no page errors or local HTTP 5xx responses. Separate hydration checks passed in UTC, Amsterdam and New York, including a German browser locale.
 
