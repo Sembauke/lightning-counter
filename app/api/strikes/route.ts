@@ -47,6 +47,24 @@ const dailyCounts = new Map<string, Record<string, number>>([[currentDay, todayC
 (globalThis as any)._todayCounts = todayCounts;
 (globalThis as any)._todayDate = currentDay;
 
+function countsForDate(date: string): Record<string, number> {
+  let counts = dailyCounts.get(date);
+  if (!counts) {
+    counts = { ...loadDailyStrikes(date) };
+    dailyCounts.set(date, counts);
+  }
+  return counts;
+}
+
+function publishTodayCounts() {
+  // A late discharge can update an older bucket, and an admitted provider
+  // timestamp can already credit tomorrow. The live header still means today.
+  currentDay = todayDate();
+  todayCounts = countsForDate(currentDay);
+  (globalThis as any)._todayDate = currentDay;
+  (globalThis as any)._todayCounts = todayCounts;
+}
+
 // ── Strike buffers ─────────────────────────────────────────────────────
 interface RecentStrike { lat: number; lon: number; cc: string | null; time: number }
 // Keep the array reference stable for readers; reloads rebuild its contents
@@ -92,20 +110,15 @@ function broadcastSSE(chunk: string) {
 // ── Core strike processor — registered on globalThis for server.mjs ────
 function applyAcceptedStrike(point: IntakeStrike, publish: boolean) {
   const { lat, lon, cc, time: t } = point;
-  let dayCounts = dailyCounts.get(point.countDate);
-  if (!dayCounts) {
-    dayCounts = { ...loadDailyStrikes(point.countDate) };
-    dailyCounts.set(point.countDate, dayCounts);
-  }
-  currentDay = point.countDate;
-  todayCounts = dayCounts;
-  (globalThis as any)._todayDate = currentDay;
-  (globalThis as any)._todayCounts = todayCounts;
+  // Keep the date already recorded by the journal. Deploying this correction
+  // must not reinterpret older accepted rows or rewrite historical baselines.
+  const dayCounts = countsForDate(point.countDate);
   serverTotal++;
   (globalThis as any)._serverTotal = serverTotal;
   const countCc = cc ?? 'XO';
   serverCountryCounts[countCc] = (serverCountryCounts[countCc] ?? 0) + 1;
-  todayCounts[countCc] = (todayCounts[countCc] ?? 0) + 1;
+  dayCounts[countCc] = (dayCounts[countCc] ?? 0) + 1;
+  publishTodayCounts();
   intakeThrough = point.id;
   if (point.live) {
     recentStrikes.push({ lat, lon, cc, time: t });
@@ -120,13 +133,14 @@ function applyAcceptedStrike(point: IntakeStrike, publish: boolean) {
 function processStrikes(points: Array<{ lat: number; lon: number; time?: number }>) {
   if (!accepting) throw new Error('Ingestion is stopped');
   const now = Date.now();
-  const countDate = todayDate();
+  publishTodayCounts();
   const deliveries: Array<Omit<IntakeStrike, 'id'>> = [];
   for (const { lat, lon, time } of points) {
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
     let cc: string | null = null;
     try { cc = getCountryCode(lat, lon); } catch { /* non-fatal */ }
-    const t = typeof time === 'number' && Number.isFinite(time) && time <= now + 60_000 ? time : now;
+    const t = typeof time === 'number' && Number.isFinite(time) && time >= 0 && time <= now + 60_000 ? time : now;
+    const countDate = new Date(t).toISOString().slice(0, 10);
     deliveries.push({ identity: `${lat},${lon},${time ?? t}`, lat, lon, cc, time: t,
       receivedAt: now, countDate, live: Number(t > now - HISTORY_LIFETIME_MS) });
   }
@@ -442,6 +456,8 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
 }
 
 function flushIngestion(nowMs = Date.now(), publish = true) {
+  publishTodayCounts();
+  const stormDate = new Date(nowMs).toISOString().slice(0, 10);
   // SQLite can roll back writes, but the lifecycle planner also mutates memory.
   // Restore that memory on failure so a retry cannot double events or lose a
   // split/merge already removed from its original snapshot.
@@ -649,7 +665,7 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
       const maxTravel = ((st.lastSeen - st.startTime) / 3_600_000) * STORM_MAX_KMH;
       records.push({
         code: st.cc, count: st.peakCount, rate: st.peakRate,
-        lat: st.lat, lon: st.lon, city: st.city, date: currentDay,
+        lat: st.lat, lon: st.lon, city: st.city, date: stormDate,
         originLat: st.originLat, originLon: st.originLon, originCity: st.originCity,
         startTime: st.startTime, endTime: st.lastSeen, stormKey: st.key,
         traveledKm: Math.round(Math.min(st.traveledKm, maxTravel)), totalCount: st.totalStrikes,

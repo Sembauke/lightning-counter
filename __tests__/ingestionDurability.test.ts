@@ -68,6 +68,7 @@ describe('durable intake and atomic tracking checkpoints', () => {
     expect(storms()).toHaveLength(1);
     expect(storms()[0].totalStrikes).toBe(600);
     expect(storms()[0].allStrikes).toHaveLength(600);
+    expect(db.getBiggestStorm('IT')?.date).toBe('2026-09-09');
     expect(globals._recentStrikes).toEqual([]);
     expect(globals._sseControllers.size).toBe(0);
     const key = storms()[0].key;
@@ -91,7 +92,7 @@ describe('durable intake and atomic tracking checkpoints', () => {
     expect(storms()[0].allStrikes).toHaveLength(120);
   });
 
-  it('does not duplicate raw rows already archived before a crash and preserves cross-midnight arrival buckets', async () => {
+  it('does not duplicate raw rows already archived before a crash and preserves cross-midnight discharge buckets', async () => {
     vi.setSystemTime(Date.UTC(2026, 8, 9, 23, 59, 59));
     const first = points(120);
     globals._processStrikes(first);
@@ -101,8 +102,10 @@ describe('durable intake and atomic tracking checkpoints', () => {
     globals._processStrikes(second);
     await restart(Date.UTC(2026, 8, 10, 0, 0, 20));
     expect(db.loadCounters()).toEqual({ total: 240, countries: { IT: 120, XO: 120 } });
-    expect(db.loadDailyStrikes('2026-09-09')).toEqual({ IT: 120 });
-    expect(db.loadDailyStrikes('2026-09-10')).toEqual({ XO: 120 });
+    expect(db.loadDailyStrikes('2026-09-09')).toEqual({ IT: 120, XO: 120 });
+    expect(db.loadDailyStrikes('2026-09-10')).toEqual({});
+    expect(globals._todayDate).toBe('2026-09-10');
+    expect(globals._todayCounts).toEqual({});
     expect(scalar('SELECT COUNT(*) n FROM grid_strikes')).toBe(240);
     expect(scalar('SELECT SUM(total_strikes) n FROM grid_cells')).toBe(240);
     globals._processStrikes([...first, ...second]);

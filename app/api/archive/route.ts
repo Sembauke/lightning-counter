@@ -1,10 +1,17 @@
-import { getCountryPeaks, getCountryPeakRates, loadCounters } from '../../lib/db';
+import { getCountryPeaks, getCountryPeakRates, loadCounters, loadDailyStrikes } from '../../lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET() {
-  const todayCounts: Record<string, number> = (globalThis as any)._todayCounts ?? {};
+  const today = new Date().toISOString().slice(0, 10);
+  const live = globalThis as typeof globalThis & {
+    _todayDate?: string;
+    _todayCounts?: Record<string, number>;
+  };
+  // No new delivery is needed to stop yesterday's counters appearing as today.
+  const todayCounts = live._todayDate === today && live._todayCounts
+    ? live._todayCounts : loadDailyStrikes(today);
   // Live in-memory totals; falls back to the DB if the strike stream hasn't started yet
   const totalCounts: Record<string, number> = (globalThis as any)._serverCountryCounts ?? loadCounters().countries;
   const peaks = getCountryPeaks();
