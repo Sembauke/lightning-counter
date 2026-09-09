@@ -1,18 +1,8 @@
 **Website audit — 9 September 2026**
 
-Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining findings affect replay ownership, recording after startup, and map history. Findings retain their original numbers as verified fixes are removed.
+Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining findings affect recording after startup and map history. Findings retain their original numbers as verified fixes are removed.
 
 The review combined Chrome desktop/mobile navigation, ordinary production API requests, source inspection, and disposable SQLite reproductions. Production was not restarted or load-tested. The live bundle contains the recent shared transition display code, although bundle markers alone do not establish an exact deployed commit. Local findings below identify their reproduction boundaries explicitly.
-
-3. **High priority: opening a finished replay can permanently add another storm's strikes.**
-
-   Replay recovery accepts raw strikes within 25 km and 150 seconds of a saved point without excluding another storm's ownership. After an hour of inactivity, a normal replay read can persist those additions and mark the repair complete.
-
-   Reproduction: the real footprint detector identified two separate storms about 22.8 km apart, each containing 200 points. Reading the first storm's replay expanded it from **200 to 400 points**, including all 200 points belonging to the other storm. Reading the database again confirmed that these foreign points had been saved. The official total was unchanged.
-
-   This allows a finished replay to contradict the identities established by the split/merge tracker. The reproduction used a disposable database; it does not establish which existing production replays have already been affected.
-
-   Source: [proximity recovery](../app/lib/stormReplayRecovery.ts), lines 68–87; [recovery and persistence](../app/lib/db.ts), lines 646–740. Repair direction: use ownership-aware recovery and exclude points assigned to competing storms. Preserve provenance for repaired samples and review existing recovery markers before attempting historical corrections.
 
 4. **High priority: recording after server startup depends on a visitor opening the strike stream.**
 
@@ -46,7 +36,7 @@ The review combined Chrome desktop/mobile navigation, ordinary production API re
 
 **Validation and scope**
 
-The original audit suite passed: **267 tests in 26 files**. The current suite passes **307 tests in 33 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
+The original audit suite passed: **267 tests in 26 files**. The current suite passes **314 tests in 35 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
 
 Desktop Chrome at 1500 px and mobile Chrome emulation at 390 px covered the homepage, archive, daily totals, country pages, storm list, active and finished storm details, replay controls, records, navigation, and saved preferences. The tested mobile pages had no horizontal overflow. Daily Totals remained selected after reload, its counts updated, and the Dutch locale persisted. Playback advanced and controls responded in the sampled finished storm. Hydration errors on storm detail pages are documented separately in the browser evidence; the pages recovered and remained usable.
 
@@ -54,4 +44,4 @@ The review did not observe an entire five-minute split/merge cycle on production
 
 Original reproduction scripts, compact result JSON, and screenshots are under `/tmp/lightning-website-audit-2026-09-09/` on this machine. Those scripts target the audited commit and may intentionally fail after the relevant defect is fixed.
 
-Suggested implementation order for remaining work: make finished-replay recovery respect ownership; make startup and persistence independent of visitors; then repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.
+Suggested implementation order for remaining work: make startup and persistence independent of visitors; then repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.

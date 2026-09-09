@@ -27,6 +27,7 @@ beforeEach(() => {
     DELETE FROM country_biggest_storms;
     DELETE FROM storm_records;
     DELETE FROM grid_strikes;
+    DELETE FROM storm_replay_points;
     DELETE FROM counters WHERE key LIKE 'replay_edges_v1:%';
   `);
 });
@@ -53,6 +54,10 @@ function saveStorm(overrides: Partial<BiggestStorm> = {}): BiggestStorm {
 
 function archive(points: StormStrike[]) {
   dbModule.archiveGridStrikeBatch(points.map(([lat, lon, time]) => ({ lat, lon, time })));
+}
+
+function own(points: StormStrike[], stormKey = 'TEST:replay') {
+  dbModule.saveStormReplayOwnership([{ stormKey, strikes: points }], now);
 }
 
 function marker(key = 'TEST:replay') {
@@ -123,7 +128,7 @@ describe('updateStormReplay', () => {
 });
 
 describe('getStormReplayByKey', () => {
-  it('persists recovered edges in every replay copy without changing metrics or ranks', () => {
+  it('persists recorded owned points in every replay copy without changing metrics or ranks', () => {
     const storm = saveStorm();
     dbModule.upsertBiggestStorms([storm]);
     dbModule.upsertStormRecords([storm]);
@@ -133,6 +138,7 @@ describe('getStormReplayByKey', () => {
     const rank = dbModule.getStormRank(storm.totalCount!);
     const edge: StormStrike = [0, 0.18, strikeTime + 1000];
     archive([storm.strikes![0], edge, [5, 5, strikeTime + 1000]]);
+    own([edge]);
 
     const result = dbModule.getStormReplayByKey(storm.stormKey!, now)!;
 
@@ -144,17 +150,18 @@ describe('getStormReplayByKey', () => {
     }
     expect(tables.map(tableMetrics)).toEqual(metrics);
     expect(dbModule.getStormRank(storm.totalCount!)).toBe(rank);
-    expect(marker()).toBeDefined();
+    expect(marker()).toBeUndefined();
   });
 
-  it('records completion durably so recovered edge points never become new anchors', () => {
+  it('repeated reads never treat recovered points as ownership of nearby raw strikes', () => {
     const storm = saveStorm();
     const edge: StormStrike = [0, 0.18, strikeTime + 1000];
     const chained: StormStrike = [0, 0.36, strikeTime + 2000];
     archive([edge, chained]);
+    own([edge]);
     const once = dbModule.getStormReplayByKey(storm.stormKey!, now)!;
     expect(once.strikes).toEqual([storm.strikes![0], edge, storm.strikes![1]]);
-    expect(marker()).toBeDefined();
+    expect(marker()).toBeUndefined();
 
     const again = dbModule.getStormReplayByKey(storm.stormKey!, now + 60_000)!;
     expect(again.strikes).toEqual(once.strikes);
@@ -166,21 +173,23 @@ describe('getStormReplayByKey', () => {
     const storm = saveStorm();
     const dense: StormStrike[] = Array.from({ length: 20_025 }, (_, i) => [0, 0.1, strikeTime + i + 1]);
     archive(dense);
+    own(dense);
 
     const result = dbModule.getStormReplayByKey(storm.stormKey!, now)!;
     expect(result.strikes).toHaveLength(dense.length + storm.strikes!.length);
     expect(result.strikes).toContainEqual(dense[dense.length - 1]);
   });
 
-  it('leaves missing archives unchanged and retryable after raw data is restored', () => {
+  it('leaves missing ownership unchanged and retryable after membership is restored', () => {
     const storm = saveStorm();
     expect(dbModule.getStormReplayByKey(storm.stormKey!, now)!.strikes).toEqual(storm.strikes);
     expect(marker()).toBeUndefined();
     const edge: StormStrike = [0, 0.18, strikeTime + 1000];
     archive([edge]);
+    own([edge]);
 
     expect(dbModule.getStormReplayByKey(storm.stormKey!, now)!.strikes).toContainEqual(edge);
-    expect(marker()).toBeDefined();
+    expect(marker()).toBeUndefined();
   });
 
   it('does not repair live, dormant, unknown-end, empty, missing, or expired replays', () => {
@@ -211,21 +220,23 @@ describe('getStormReplayByKey', () => {
     dbModule.updateStormReplay(storm.stormKey!, fadingReplay);
     const edge: StormStrike = [0, 0.18, strikeTime + 1000];
     archive([edge]);
+    own([edge]);
 
     expect(dbModule.getStormReplayByKey(storm.stormKey!, now)!.strikes).toEqual(fadingReplay);
     expect(marker()).toBeUndefined();
     expect(dbModule.getStormReplayByKey(storm.stormKey!, now + 55 * 60_000)!.strikes).toEqual(fadingReplay);
     expect(marker()).toBeUndefined();
     expect(dbModule.getStormReplayByKey(storm.stormKey!, now + 55 * 60_000 + 1)!.strikes).toContainEqual(edge);
-    expect(marker()).toBeDefined();
+    expect(marker()).toBeUndefined();
     expect(dbModule.getStormByKey(storm.stormKey!)!.endTime).toBe(storm.endTime);
   });
 
-  it('rolls back all replay copies and the completion marker when persistence fails', () => {
+  it('rolls back all replay copies when persistence fails and keeps ownership retryable', () => {
     const storm = saveStorm();
     dbModule.upsertBiggestStorms([storm]);
     dbModule.upsertStormRecords([storm]);
     archive([[0, 0.18, strikeTime + 1000]]);
+    own([[0, 0.18, strikeTime + 1000]]);
     sql.exec(`
       CREATE TRIGGER reject_replay_copy BEFORE UPDATE OF strikes ON storm_records
       BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;

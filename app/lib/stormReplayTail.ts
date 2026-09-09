@@ -45,6 +45,7 @@ export function rememberReplayAnchors(st: ReplayTailStorm, points: StormStrike[]
 export function collectReplayTails<T extends ReplayTailStorm>(
   storms: T[], candidates: StrikePoint[], reserved: Set<StrikePoint>, active: Set<T>,
   now: number, maxSamples = 24_000,
+  onAccepted?: (storm: T, strikes: StormStrike[]) => void,
 ): Set<T> {
   const index = new Map<string, Array<{ point: StormStrike; storm: T }>>();
   const seen = new Set<string>();
@@ -99,6 +100,7 @@ export function collectReplayTails<T extends ReplayTailStorm>(
     st.allStrikes.push(...batch.sort((a, b) => a[2] - b[2]));
     rememberReplayAnchors(st, batch, now);
     st.replayDirty = true;
+    onAccepted?.(st, batch);
   }
   return new Set(additions.keys());
 }

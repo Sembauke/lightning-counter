@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { detectStorms, type StrikePoint } from './stormClusters';
-import { recoverReplayEdges, REPLAY_EDGE_RADIUS_KM, REPLAY_EDGE_TIME_MS } from './stormReplayRecovery';
+import { recoverOwnedReplay } from './stormReplayRecovery';
 import { selectStormReplaySnapshot } from './stormReplaySnapshot';
 
 const DB_DIR = process.env.DB_PATH ?? (fs.existsSync('/data') ? '/data' : './tmp');
 const DB_FILE = path.join(DB_DIR, 'lightning.db');
+const GRID_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 let _db: Database.Database | null = null;
 
@@ -128,7 +128,16 @@ function getDb(): Database.Database {
       alias_key TEXT PRIMARY KEY,
       canonical_key TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS storm_replay_points (
+      storm_key TEXT NOT NULL,
+      strike_time INTEGER NOT NULL,
+      lat_milli INTEGER NOT NULL,
+      lon_milli INTEGER NOT NULL,
+      PRIMARY KEY (storm_key, strike_time, lat_milli, lon_milli)
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS idx_storm_replay_points_time ON storm_replay_points(strike_time);
   `);
+  _db.prepare('DELETE FROM storm_replay_points WHERE strike_time < ?').run(Date.now() - GRID_RETENTION_MS);
   // Migrations for databases created before the replay / storm-tracking features
   const migrations = [
     'ALTER TABLE storms ADD COLUMN country_path TEXT',
@@ -245,7 +254,11 @@ export function hasTimestampBurst(points: StormStrike[]): boolean {
 // needs this called periodically or grid_strikes grows without bound
 export function pruneGridStrikes(): void {
   const db = getDb();
-  db.prepare('DELETE FROM grid_strikes WHERE strike_time < ?').run(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const cutoff = Date.now() - GRID_RETENTION_MS;
+  db.transaction(() => {
+    db.prepare('DELETE FROM grid_strikes WHERE strike_time < ?').run(cutoff);
+    db.prepare('DELETE FROM storm_replay_points WHERE strike_time < ?').run(cutoff);
+  })();
   db.pragma('wal_checkpoint(TRUNCATE)');
 }
 
@@ -609,6 +622,11 @@ export function recordStormAlias(aliasKey: string, survivorKey: string): void {
   const canonical = resolveStormKey(survivorKey);
   if (aliasKey === canonical) return;
   db.transaction(() => {
+    // A split legitimately shares pre-split history. A confirmed merge unions
+    // that history without losing either owner's missing replay points.
+    db.prepare(`INSERT OR IGNORE INTO storm_replay_points (storm_key, strike_time, lat_milli, lon_milli)
+      SELECT ?, strike_time, lat_milli, lon_milli FROM storm_replay_points WHERE storm_key = ?`).run(canonical, aliasKey);
+    db.prepare('DELETE FROM storm_replay_points WHERE storm_key = ?').run(aliasKey);
     db.prepare('UPDATE storm_aliases SET canonical_key = ? WHERE canonical_key = ?').run(canonical, aliasKey);
     db.prepare('INSERT OR REPLACE INTO storm_aliases (alias_key, canonical_key) VALUES (?, ?)').run(aliasKey, canonical);
     // Preserve the absorbed system's event history and country/record links.
@@ -638,109 +656,85 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
   return { ...row, strikes, countryPath };
 }
 
-/**
- * Recover the geographic edges of a finished replay while its raw archive is
- * still available. Tracking and ranking keep using getStormByKey: this changes
- * only replay samples, never the independently accumulated storm metrics.
- */
-export function getStormReplayByKey(stormKey: string, nowMs = Date.now()): BiggestStorm | null {
-  stormKey = resolveStormKey(stormKey);
-  const storm = getStormByKey(stormKey);
-  if (!storm || storm.endTime == null
-      || !Array.isArray(storm.strikes) || storm.strikes.length === 0) return storm;
-  // A storm's official end time stops advancing below the detection threshold,
-  // while its replay may still follow fading lightning. Wait for both to settle
-  // before replacing the tracker-owned sample or writing a durable repair marker.
-  let latestActivity = storm.endTime;
-  for (const point of storm.strikes) {
-    if (Array.isArray(point) && Number.isFinite(point[2])) latestActivity = Math.max(latestActivity, point[2]);
+/** Archive only replay membership accepted by the tracker, never raw proximity. */
+export function saveStormReplayOwnership(
+  assignments: Iterable<{ stormKey: string; strikes: StormStrike[] }>,
+  nowMs = Date.now(),
+): void {
+  const db = getDb();
+  const insert = db.prepare(`INSERT OR IGNORE INTO storm_replay_points
+    (storm_key, strike_time, lat_milli, lon_milli) VALUES (?, ?, ?, ?)`);
+  const keys = new Map<string, string>();
+  db.transaction(() => {
+    for (const assignment of assignments) {
+      if (!assignment.stormKey) continue;
+      let key = keys.get(assignment.stormKey);
+      if (!key) { key = resolveStormKey(assignment.stormKey); keys.set(assignment.stormKey, key); }
+      for (const point of assignment.strikes) {
+        if (!Array.isArray(point) || point.length !== 3 || !point.every(Number.isFinite)) continue;
+        const [lat, lon, time] = point;
+        if (Math.abs(lat) > 90 || Math.abs(lon) > 180 || time <= nowMs - GRID_RETENTION_MS || time > nowMs) continue;
+        insert.run(key, time, Math.round(lat * 1000), Math.round(lon * 1000));
+      }
+    }
+  })();
+}
+
+function ownedReplayPoints(stormKey: string, nowMs: number, after = -Infinity, until = nowMs): StormStrike[] {
+  const rows = getDb().prepare(`SELECT lat_milli, lon_milli, strike_time FROM storm_replay_points
+    WHERE storm_key = ? AND strike_time > ? AND strike_time <= ? ORDER BY strike_time, lat_milli, lon_milli`)
+    .all(stormKey, Math.max(nowMs - GRID_RETENTION_MS, after), Math.min(nowMs, until)) as
+    Array<{ lat_milli: number; lon_milli: number; strike_time: number }>;
+  return rows.map(row => [row.lat_milli / 1000, row.lon_milli / 1000, row.strike_time]);
+}
+
+/** Caller holds the transaction so concurrent tracking cannot be overwritten. */
+function persistOwnedReplay(storm: BiggestStorm, owned: StormStrike[]) {
+  const recovered = recoverOwnedReplay(storm.strikes ?? [], owned);
+  if (owned.length) {
+    for (const table of ['storms', 'country_biggest_storms', 'storm_records']) {
+      const copies = getDb().prepare(`SELECT rowid, strikes FROM ${table} WHERE storm_key = ?`)
+        .all(storm.stormKey) as Array<{ rowid: number; strikes: string | null }>;
+      const update = getDb().prepare(`UPDATE ${table} SET strikes = ? WHERE rowid = ?`);
+      for (const copy of copies) {
+        let original: StormStrike[];
+        try { original = copy.strikes ? JSON.parse(copy.strikes) : []; } catch { continue; }
+        if (!Array.isArray(original)) continue;
+        // Each copy may preserve history absent from another sampled snapshot.
+        // Retain it locally without promoting it to proof for the other copies.
+        const repaired = recoverOwnedReplay(original, owned);
+        if (repaired.recoveredCount) update.run(JSON.stringify(repaired.strikes), copy.rowid);
+      }
+    }
   }
-  if (nowMs - latestActivity <= 60 * 60_000) return storm;
+  return recovered;
+}
 
+/** Restore only recorded replay ownership after both the storm and its tail settle. */
+export function getStormReplayByKey(stormKey: string, nowMs = Date.now()): BiggestStorm | null {
   try {
-    const db = getDb();
-    const markerKey = `replay_edges_v1:${stormKey}`;
-    const marker = db.prepare('SELECT value FROM counters WHERE key = ?');
-    if (marker.get(markerKey)) return storm;
-
-    const archiveStart = nowMs - GRID_RETENTION_MS;
-    const bucketMs = 5 * 60_000;
-    const buckets = new Map<number, { minLat: number; maxLat: number; minLon: number; maxLon: number }>();
-    for (const point of storm.strikes) {
-      if (!Array.isArray(point) || point.length !== 3 || !point.every(Number.isFinite)) continue;
-      const [lat, lon, time] = point;
-      if (Math.abs(lat) > 90 || Math.abs(lon) > 180 || time + REPLAY_EDGE_TIME_MS < archiveStart) continue;
-      const bucket = Math.floor(time / bucketMs) * bucketMs;
-      const bounds = buckets.get(bucket);
-      if (bounds) {
-        bounds.minLat = Math.min(bounds.minLat, lat);
-        bounds.maxLat = Math.max(bounds.maxLat, lat);
-        bounds.minLon = Math.min(bounds.minLon, lon);
-        bounds.maxLon = Math.max(bounds.maxLon, lon);
-      } else {
-        buckets.set(bucket, { minLat: lat, maxLat: lat, minLon: lon, maxLon: lon });
+    // Keep the snapshot, ownership read, and all three writes in one transaction.
+    // Another process cannot revive the storm between the age check and update.
+    return getDb().transaction(() => {
+      const key = resolveStormKey(stormKey);
+      const storm = getStormByKey(key);
+      if (!storm || storm.endTime == null || !Array.isArray(storm.strikes) || !storm.strikes.length) return storm;
+      const owned = ownedReplayPoints(key, nowMs);
+      if (!owned.length) return storm;
+      let latestActivity = storm.endTime;
+      for (const point of [...storm.strikes, ...owned]) {
+        if (Array.isArray(point) && Number.isFinite(point[2])) latestActivity = Math.max(latestActivity, point[2]);
       }
-    }
-    if (buckets.size === 0) return storm;
-
-    // Iterate every candidate instead of using getGridStrikesInRange's 20,000
-    // row limit, which can itself cut a dense storm's replay short.
-    const query = db.prepare(`
-      SELECT lat, lon, strike_time FROM grid_strikes INDEXED BY idx_gs_time
-      WHERE strike_time >= ? AND strike_time <= ?
-        AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-    `);
-    let archiveRows = 0;
-    function* candidates(): Generator<StormStrike> {
-      // Use a conservative latitude conversion so the SQL bounds cannot
-      // discard points that the exact spatial check would accept.
-      const latPad = REPLAY_EDGE_RADIUS_KM / 110.574;
-      for (const [time, bounds] of buckets) {
-        const minLat = Math.max(-90, bounds.minLat - latPad);
-        const maxLat = Math.min(90, bounds.maxLat + latPad);
-        const cosLat = Math.cos(Math.max(Math.abs(minLat), Math.abs(maxLat)) * Math.PI / 180);
-        const lonPad = cosLat > 0 ? Math.min(180, latPad / cosLat) : 180;
-        let minLon = bounds.minLon - lonPad;
-        let maxLon = bounds.maxLon + lonPad;
-        // A box crossing the date line needs both longitude ends. Fetch the
-        // whole longitude range there; the helper still applies exact distance.
-        if (minLon < -180 || maxLon > 180 || bounds.maxLon - bounds.minLon > 180) {
-          minLon = -180; maxLon = 180;
-        }
-        const rows = query.iterate(
-          Math.max(archiveStart, time - REPLAY_EDGE_TIME_MS),
-          Math.min(nowMs, time + bucketMs + REPLAY_EDGE_TIME_MS),
-          minLat, maxLat, minLon, maxLon,
-        ) as Iterable<{ lat: number; lon: number; strike_time: number }>;
-        for (const row of rows) {
-          archiveRows++;
-          yield [row.lat, row.lon, row.strike_time];
-        }
-      }
-    }
-
-    const recovered = recoverReplayEdges(storm.strikes, candidates());
-    // An absent archive is not a completed repair: leave the sample and marker
-    // untouched so a restored raw archive can still repair it on a later read.
-    if (archiveRows === 0) return storm;
-
-    const persisted = db.transaction(() => {
-      // Another process may have repaired the same storm while we scanned.
-      if (marker.get(markerKey)) return false;
-      if (recovered.recoveredCount > 0) {
-        const json = JSON.stringify(recovered.strikes);
-        db.prepare('UPDATE storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-        db.prepare('UPDATE country_biggest_storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-        db.prepare('UPDATE storm_records SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-      }
-      db.prepare('INSERT INTO counters (key, value) VALUES (?, ?)').run(markerKey, String(nowMs));
-      return true;
-    })();
-    if (!persisted) return getStormByKey(stormKey);
-    return recovered.recoveredCount > 0 ? { ...storm, strikes: recovered.strikes } : storm;
+      if (nowMs - latestActivity <= 60 * 60_000) return storm;
+      // Old replay_edges_v1 markers neither prove ownership nor identify which
+      // saved points were inferred. Preserve old samples; never use them to
+      // claim additional raw strikes or mark missing ownership as complete.
+      const recovered = persistOwnedReplay(storm, owned);
+      return recovered.recoveredCount > 0 ? { ...storm, strikes: recovered.strikes } : storm;
+    }).immediate();
   } catch (err) {
-    console.error(`[db] replay edge recovery failed for ${stormKey}:`, err);
-    return storm;
+    console.error(`[db] owned replay recovery failed for ${stormKey}:`, err);
+    return getStormByKey(stormKey);
   }
 }
 
@@ -826,6 +820,7 @@ export function deleteStorm(stormKey: string): void {
   db.prepare('DELETE FROM storms WHERE storm_key = ?').run(stormKey);
   db.prepare('DELETE FROM storm_records WHERE storm_key = ?').run(stormKey);
   db.prepare('DELETE FROM country_biggest_storms WHERE storm_key = ?').run(stormKey);
+  db.prepare('DELETE FROM storm_replay_points WHERE storm_key = ?').run(stormKey);
 }
 
 /**
@@ -1185,34 +1180,16 @@ export function reconcileCountryPaths(lookupCC: (lat: number, lon: number) => st
   return fixed;
 }
 
-// ── Backfill a storm's thinned/truncated replay tail from the raw archive ──
+// ── Backfill a storm's thinned/truncated replay tail from recorded ownership ──
 // accumulateStrikes (api/strikes/route.ts) sub-samples the replay blob once a
 // storm exceeds ALL_STRIKES_MAX; before the tail-guarantee fix landed, a quiet
 // pass late in a long storm's life could be skipped entirely, leaving the
 // stored blob's last point far short of the storm's real end_time. The
 // numeric total_count is NOT affected (it's an unconditional counter,
 // unrelated to the blob) — only the map/replay's geographic sample is thin.
-// grid_strikes independently archives every incoming strike for 3 days
-// regardless of storm tracking, so for a storm that ended recently enough the
-// missing tail may still be sitting there. This walks forward from the
-// storm's last known point in 5-minute chunks, re-running detectStorms on a
-// small bounding box around wherever the storm was last seen (the same
-// velocity-capped search radius the live tracker uses) to find the next
-// step's likely continuation — the localized, shrinking search window is
-// what keeps this from latching onto an unrelated storm system elsewhere in
-// the same archive. Gives up after a few consecutive misses (the storm
-// genuinely dissipated) rather than guessing further.
+// Startup tail repair uses the same durable membership as replay reads. It
+// must never retrack raw geographic neighbors and persist a guessed identity.
 const BACKFILL_CHUNK_MS = 5 * 60_000;
-const BACKFILL_MATCH_KM = 60;
-const BACKFILL_MATCH_MIN_KM = 15;
-const BACKFILL_MAX_KMH = 120;
-const BACKFILL_MAX_CONSECUTIVE_MISSES = 3;
-const BACKFILL_MAX_CHUNKS = 2000; // safety cap (~7 days of 5-min chunks)
-// grid_strikes is pruned past this age (pruneGridStrikes) — mirror that cutoff
-// so we don't waste a query on a window that's already gone.
-const GRID_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
-// Below this, the gap is within what the (now-fixed) tail guarantee already
-// bounds live tracking to — not worth a backfill pass.
 const BACKFILL_MIN_GAP_MS = 15 * 60_000;
 
 export interface BackfillResult {
@@ -1224,131 +1201,36 @@ export interface BackfillResult {
   reachedEnd: boolean;
 }
 
-/**
- * Attempts to recover a storm's missing replay tail from the grid_strikes
- * archive. Only ever appends to the stored `strikes` sample — never touches
- * total_count/count/rate, which were already correct. Returns null if there's
- * nothing to attempt (no gap, or the gap has already aged out of the archive).
- */
-export function backfillStormTail(stormKey: string, nowMs: number = Date.now()): BackfillResult | null {
-  const db = getDb();
-  const row = db.prepare(
-    'SELECT storm_key, lat, lon, end_time, strikes FROM storms WHERE storm_key = ?'
-  ).get(stormKey) as { storm_key: string; lat: number; lon: number; end_time: number | null; strikes: string | null } | undefined;
-  if (!row || !row.strikes || row.end_time == null) return null;
-
-  let strikes: StormStrike[];
-  try { strikes = JSON.parse(row.strikes); } catch { return null; }
-  if (strikes.length === 0) return null;
-
-  let lastPoint = strikes[0];
-  for (const p of strikes) if (p[2] > lastPoint[2]) lastPoint = p;
-  if (row.end_time - lastPoint[2] < BACKFILL_MIN_GAP_MS) return null;
-  if (nowMs - lastPoint[2] > GRID_RETENTION_MS) return null;
-
-  let current = { lat: lastPoint[0], lon: lastPoint[1], time: lastPoint[2] };
-  let cursor = lastPoint[2];
-  let misses = 0;
-  let chunksMatched = 0;
-  let chunksMissed = 0;
-  let chunkCount = 0;
-  const recovered: StormStrike[] = [];
-
-  while (cursor < row.end_time && misses < BACKFILL_MAX_CONSECUTIVE_MISSES && chunkCount < BACKFILL_MAX_CHUNKS) {
-    chunkCount++;
-    const chunkEnd = Math.min(cursor + BACKFILL_CHUNK_MS, row.end_time);
-    const elapsedHours = Math.max(0, (chunkEnd - current.time) / 3_600_000);
-    const matchKm = Math.min(BACKFILL_MATCH_KM, Math.max(BACKFILL_MATCH_MIN_KM, elapsedHours * BACKFILL_MAX_KMH));
-    const matchDeg = matchKm / 111.32;
-    const cosLat = Math.max(0.2, Math.cos(current.lat * Math.PI / 180));
-
-    const gridRows = getGridStrikesInRange(
-      current.lat - matchDeg, current.lat + matchDeg,
-      current.lon - matchDeg / cosLat, current.lon + matchDeg / cosLat,
-      cursor, chunkEnd,
-    );
-
-    if (gridRows.length === 0) {
-      misses++; chunksMissed++; cursor = chunkEnd;
-      continue;
+/** Restore missing tail points only when their replay membership was recorded. */
+export function backfillStormTail(stormKey: string, nowMs = Date.now()): BackfillResult | null {
+  return getDb().transaction(() => {
+    const key = resolveStormKey(stormKey);
+    const storm = getStormByKey(key);
+    if (!storm || storm.endTime == null || !Array.isArray(storm.strikes) || !storm.strikes.length) return null;
+    let last = -Infinity;
+    for (const point of storm.strikes) {
+      if (Array.isArray(point) && Number.isFinite(point[2])) last = Math.max(last, point[2]);
     }
-
-    const points: StrikePoint[] = gridRows.map(r => ({ lat: r.lat, lon: r.lon, time: r.strike_time }));
-    const cells = detectStorms(points, BACKFILL_CHUNK_MS);
-
-    let best = null as (typeof cells)[number] | null;
-    let bestKm = Infinity;
-    for (const cell of cells) {
-      const dLat = (cell.lat - current.lat) * 111.32;
-      const dLon = (cell.lon - current.lon) * 111.32 * cosLat;
-      const km = Math.hypot(dLat, dLon);
-      if (km <= matchKm && km < bestKm) { bestKm = km; best = cell; }
-    }
-
-    if (!best) {
-      misses++; chunksMissed++; cursor = chunkEnd;
-      continue;
-    }
-
-    let maxMemberTime = current.time;
-    for (const m of best.members) {
-      recovered.push([Math.round(m.lat * 1000) / 1000, Math.round(m.lon * 1000) / 1000, m.time]);
-      if (m.time > maxMemberTime) maxMemberTime = m.time;
-    }
-    current = { lat: best.lat, lon: best.lon, time: maxMemberTime };
-    misses = 0;
-    chunksMatched++;
-    cursor = chunkEnd;
-  }
-
-  if (recovered.length === 0) {
-    return { stormKey, recoveredStrikes: 0, chunksMatched, chunksMissed, reconstructedUntilMs: null, reachedEnd: false };
-  }
-
-  const existingKeys = new Set(strikes.map(s => `${s[0]},${s[1]},${s[2]}`));
-  const merged = strikes.slice();
-  let added = 0;
-  for (const p of recovered) {
-    const key = `${p[0]},${p[1]},${p[2]}`;
-    if (existingKeys.has(key)) continue;
-    existingKeys.add(key);
-    merged.push(p);
-    added++;
-  }
-  merged.sort((a, b) => a[2] - b[2]);
-  const json = JSON.stringify(merged);
-
-  db.transaction(() => {
-    db.prepare('UPDATE storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-    // Mirror into the cache tables that keep their own copy of this storm's blob.
-    db.prepare('UPDATE country_biggest_storms SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-    db.prepare('UPDATE storm_records SET strikes = ? WHERE storm_key = ?').run(json, stormKey);
-  })();
-
-  return {
-    stormKey,
-    recoveredStrikes: added,
-    chunksMatched,
-    chunksMissed,
-    reconstructedUntilMs: current.time,
-    reachedEnd: current.time >= row.end_time - BACKFILL_CHUNK_MS,
-  };
+    if (!Number.isFinite(last) || storm.endTime - last < BACKFILL_MIN_GAP_MS || nowMs - last > GRID_RETENTION_MS) return null;
+    const owned = ownedReplayPoints(key, nowMs, last, storm.endTime);
+    const recovered = persistOwnedReplay(storm, owned);
+    const chunks = new Set(owned.map(point => Math.floor((point[2] - last - 1) / BACKFILL_CHUNK_MS)));
+    const latest = owned.length ? owned[owned.length - 1][2] : null;
+    return {
+      stormKey: key, recoveredStrikes: recovered.recoveredCount,
+      chunksMatched: chunks.size,
+      chunksMissed: Math.max(0, Math.ceil((storm.endTime - last) / BACKFILL_CHUNK_MS) - chunks.size),
+      reconstructedUntilMs: latest,
+      reachedEnd: latest != null && latest >= storm.endTime - BACKFILL_CHUNK_MS,
+    };
+  }).immediate();
 }
 
-/**
- * Scans for storms with a still-recoverable tail gap and backfills each.
- * Run once at startup (gated) — by the time this has run once, any storm
- * whose gap is still within the grid_strikes retention window has been
- * attempted; running it again later would just find the same storms already
- * patched (or their window since aged out).
- */
-export function backfillGappedStormTails(nowMs: number = Date.now()): BackfillResult[] {
-  const db = getDb();
-  const cutoff = nowMs - GRID_RETENTION_MS;
-  const rows = db.prepare(
-    `SELECT storm_key FROM storms WHERE strikes IS NOT NULL AND end_time IS NOT NULL AND end_time > ?`
-  ).all(cutoff) as Array<{ storm_key: string }>;
-
+/** Retry gaps when durable ownership is available; missing evidence stays missing. */
+export function backfillGappedStormTails(nowMs = Date.now()): BackfillResult[] {
+  const rows = getDb().prepare(`SELECT storm_key FROM storms
+    WHERE strikes IS NOT NULL AND end_time IS NOT NULL AND end_time > ?`)
+    .all(nowMs - GRID_RETENTION_MS) as Array<{ storm_key: string }>;
   const results: BackfillResult[] = [];
   for (const { storm_key } of rows) {
     try {
@@ -1475,8 +1357,7 @@ export function getViewportStrikes(
   ).all(minLat, maxLat, minLon, maxLon, since, limit) as Array<{ lat: number; lon: number; strike_time: number }>;
 }
 
-/** Bounded time RANGE (not just a lower bound) query, ascending by time — used
- *  by backfillStormTail to walk a storm's raw archived footprint chunk by chunk. */
+/** Query raw archived strikes within geographic and time bounds, oldest first. */
 export function getGridStrikesInRange(
   minLat: number, maxLat: number, minLon: number, maxLon: number,
   fromMs: number, toMs: number, limit = 20_000

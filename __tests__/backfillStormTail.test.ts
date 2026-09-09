@@ -1,17 +1,4 @@
-/**
- * Integration tests for backfillStormTail / backfillGappedStormTails —
- * reconstructing a storm's truncated replay tail from the independent
- * grid_strikes archive (see replayTailContinuity.test.ts for why the tail
- * gets truncated in the first place).
- *
- * grid_strikes keeps every incoming strike globally for 3 days regardless of
- * storm tracking, so a storm's real continuation may still be sitting there
- * even though accumulateStrikes' sub-sampling never wrote it into the
- * storm's own `strikes` blob. This walks forward from the storm's last known
- * point in small, localized, velocity-capped search windows — the key safety
- * property under test is that an unrelated storm elsewhere in the archive
- * must never get pulled in just because it's active in the same time range.
- */
+/** Integration tests: startup repair uses durable replay ownership, never raw proximity. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'fs';
 import os from 'os';
@@ -32,22 +19,25 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** A dense, tight cluster easily clears detectStorms' MIN_RATE_PER_MIN/MIN_CELL_STRIKES
- *  thresholds for a 5-minute chunk (needs ~75+ strikes concentrated in adjacent cells). */
+/** A deterministic cluster of strikes spread across the requested interval. */
 function denseCluster(centerLat: number, centerLon: number, fromMs: number, toMs: number, count = 120) {
   const out: Array<{ lat: number; lon: number; time: number }> = [];
   for (let i = 0; i < count; i++) {
     out.push({
-      lat: centerLat + (Math.random() - 0.5) * 0.05,
-      lon: centerLon + (Math.random() - 0.5) * 0.05,
+      lat: centerLat + ((i % 7) / 7 - 0.5) * 0.05,
+      lon: centerLon + ((i % 11) / 11 - 0.5) * 0.05,
       time: fromMs + Math.floor((i / count) * (toMs - fromMs)),
     });
   }
   return out;
 }
 
+function own(stormKey: string, points: Array<{ lat: number; lon: number; time: number }>, now: number) {
+  dbModule.saveStormReplayOwnership([{ stormKey, strikes: points.map(p => [p.lat, p.lon, p.time]) }], now);
+}
+
 describe('backfillStormTail', () => {
-  it('reconstructs a truncated tail by walking the archived continuation, chunk by chunk', () => {
+  it('restores a truncated tail from recorded membership across the missing interval', () => {
     const t0 = 10_000_000;
     // Storm's known strikes end at t0; it was tracked (end_time) for another 20 minutes.
     dbModule.upsertStorms([{
@@ -57,18 +47,19 @@ describe('backfillStormTail', () => {
       totalCount: 5000, traveledKm: 50, strikes: [[44.0, 9.0, t0]], countryPath: ['IT'],
     }]);
 
-    // Archive the real continuation, drifting gradually — well within the
-    // velocity-capped match radius each 5-minute step.
+    // Archive the real continuation and its recorded membership as it moves.
     let cursor = t0;
     let lat = 44.0, lon = 9.0;
     for (let chunk = 0; chunk < 4; chunk++) {
       const chunkEnd = cursor + 5 * 60_000;
-      dbModule.archiveGridStrikeBatch(denseCluster(lat, lon, cursor + 1000, chunkEnd - 1000));
+      const batch = denseCluster(lat, lon, cursor + 1000, chunkEnd - 1000);
+      dbModule.archiveGridStrikeBatch(batch);
+      own('TEST:backfill:1', batch, t0 + 30 * 60_000);
       lat += 0.05; lon += 0.05;
       cursor = chunkEnd;
     }
 
-    const result = dbModule.backfillStormTail('TEST:backfill:1', t0 + 60_000);
+    const result = dbModule.backfillStormTail('TEST:backfill:1', t0 + 30 * 60_000);
     expect(result).not.toBeNull();
     expect(result!.recoveredStrikes).toBeGreaterThan(0);
     expect(result!.chunksMatched).toBeGreaterThan(0);
@@ -81,7 +72,7 @@ describe('backfillStormTail', () => {
     expect(maxTime).toBeGreaterThan(t0 + 15 * 60_000);
   });
 
-  it('does not pull in an unrelated storm active elsewhere in the archive during the same gap', () => {
+  it('never fills a gap from a nearby storm, including during the automatic startup scan', () => {
     const t0 = 20_000_000;
     dbModule.upsertStorms([{
       code: 'IT', count: 100, rate: 20, lat: 44.0, lon: 9.0, city: null, date: '2026-08-20',
@@ -90,17 +81,20 @@ describe('backfillStormTail', () => {
       totalCount: 5000, traveledKm: 50, strikes: [[44.0, 9.0, t0]], countryPath: ['IT'],
     }]);
 
-    // No real continuation near (44.0, 9.0) — only a large, unrelated storm
-    // far away (e.g. northern Germany) active during the exact same window.
-    dbModule.archiveGridStrikeBatch(denseCluster(53.0, 10.0, t0 + 1000, t0 + 4 * 60_000, 200));
+    // Proximity alone would accept this storm, only a few kilometres away.
+    const neighbor = denseCluster(44.02, 9.02, t0 + 1000, t0 + 4 * 60_000, 200);
+    dbModule.archiveGridStrikeBatch(neighbor);
+    own('TEST:neighbor', neighbor, t0 + 30 * 60_000);
 
-    const result = dbModule.backfillStormTail('TEST:backfill:2', t0 + 60_000);
+    const result = dbModule.backfillStormTail('TEST:backfill:2', t0 + 30 * 60_000);
     expect(result).not.toBeNull();
     expect(result!.recoveredStrikes).toBe(0); // gave up rather than latching onto the distractor
     expect(result!.reachedEnd).toBe(false);
 
     const after = dbModule.getStormByKey('TEST:backfill:2');
     expect(after!.strikes!.length).toBe(1); // untouched
+    dbModule.backfillGappedStormTails(t0 + 30 * 60_000);
+    expect(dbModule.getStormByKey('TEST:backfill:2')!.strikes).toEqual(after!.strikes);
   });
 
   it('ignores a distant distractor even when a real nearby continuation also exists', () => {
@@ -113,11 +107,13 @@ describe('backfillStormTail', () => {
     }]);
 
     // Real continuation right next to the last known point...
-    dbModule.archiveGridStrikeBatch(denseCluster(44.02, 9.02, t0 + 1000, t0 + 4 * 60_000, 120));
+    const continuation = denseCluster(44.02, 9.02, t0 + 1000, t0 + 4 * 60_000, 120);
+    dbModule.archiveGridStrikeBatch(continuation);
+    own('TEST:backfill:3', continuation, t0 + 30 * 60_000);
     // ...plus an unrelated, larger storm far away in the same window.
     dbModule.archiveGridStrikeBatch(denseCluster(53.0, 10.0, t0 + 1000, t0 + 4 * 60_000, 300));
 
-    const result = dbModule.backfillStormTail('TEST:backfill:3', t0 + 60_000);
+    const result = dbModule.backfillStormTail('TEST:backfill:3', t0 + 30 * 60_000);
     expect(result!.recoveredStrikes).toBeGreaterThan(0);
     const after = dbModule.getStormByKey('TEST:backfill:3');
     for (const [lat, lon] of after!.strikes!) {
@@ -138,7 +134,7 @@ describe('backfillStormTail', () => {
     expect(dbModule.backfillStormTail('TEST:backfill:4', t0 + 60_000)).toBeNull();
   });
 
-  it('returns null once the gap has aged out of the grid_strikes retention window', () => {
+  it('returns null once the gap has aged out of the ownership retention window', () => {
     const t0 = 1_000_000;
     dbModule.upsertStorms([{
       code: 'IT', count: 10, rate: 5, lat: 44.0, lon: 9.0, city: null, date: '2026-08-01',
@@ -165,8 +161,10 @@ describe('backfillStormTail', () => {
       totalCount: 5000, traveledKm: 50, strikes: [[44.0, 9.0, t0]], countryPath: ['IT'],
     }]);
 
-    dbModule.archiveGridStrikeBatch(denseCluster(44.01, 9.01, t0 + 1000, t0 + 4 * 60_000, 120));
-    dbModule.backfillStormTail('TEST:backfill:6', t0 + 60_000);
+    const continuation = denseCluster(44.01, 9.01, t0 + 1000, t0 + 4 * 60_000, 120);
+    dbModule.archiveGridStrikeBatch(continuation);
+    own('TEST:backfill:6', continuation, t0 + 30 * 60_000);
+    dbModule.backfillStormTail('TEST:backfill:6', t0 + 30 * 60_000);
 
     const countryAfter = dbModule.getBiggestStorm('ITBK');
     expect(countryAfter!.strikes!.length).toBeGreaterThan(1);

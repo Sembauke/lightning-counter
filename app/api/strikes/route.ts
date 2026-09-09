@@ -7,7 +7,7 @@ import { nearestCity, MIN_STORM_RATE, type CityTuple, type StrikePoint } from '.
 import { detectStormFootprints } from '../../lib/stormFootprint';
 import { combineStormLifecycle, lifecycleStrikeId, reconcileStormLifecycle, stormLifecycleSummaries, type StormLifecycleState } from '../../lib/stormLifecycle';
 import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from '../../lib/stormReplayTail';
-import { updateStormReplay } from '../../lib/db';
+import { saveStormReplayOwnership, updateStormReplay } from '../../lib/db';
 import { compactStormCounting, countStormStrike, emptyStormCounting, mergeStormCounting, remapStormCountingKeys, sharedStormStrikeCount, type StormCountingState } from '../../lib/stormCounting';
 import { restoreStormCounting } from '../../lib/stormCountingMigration';
 
@@ -301,10 +301,8 @@ publishStormOwnership(trackedStorms, Date.now());
 setImmediate(() => {
   try { if (hasMissingCountryPaths()) enrichStormCountryPaths(getCountryCode); } catch { /* non-fatal */ }
   try { reconcileCountryPaths(getCountryCode); } catch { /* non-fatal */ }
-  // Self-limiting (only storms with an end_time inside grid_strikes' 3-day
-  // retention are even considered), so safe to attempt on every startup —
-  // a storm already fully reconstructed, or whose window has since aged out
-  // of the archive, is just a no-op.
+  // Restore missing tail points from the three-day ownership archive.
+  // Repeated attempts are safe; missing membership never triggers proximity matching.
   try {
     const backfilled = backfillGappedStormTails();
     if (backfilled.length > 0) {
@@ -475,7 +473,11 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
         keepEvery: 1, appendSeq: 0, splitDetected: !!parent, splitCandidateAt: null, fragmentLabel: null,
       } satisfies TrackedStorm;
     });
+    const replayOwnership: Array<{ stormKey: string; strikes: StormStrike[] }> = [];
     for (const [st, members] of plan.assignments) {
+      // Persist the actual replay seed, not the older ten-minute geometry or
+      // inherited anchors that a new child uses only for continued tracking.
+      replayOwnership.push({ stormKey: st.key, strikes: members.map(roundPt) });
       const { ccCounts, cc, lat, lon, city } = memberLocation(members, st);
       for (const code of Object.keys(ccCounts)) if (!st.countryCodes.includes(code)) st.countryCodes.push(code);
       st.cc = cc;
@@ -595,7 +597,12 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       }
     }
 
-    collectReplayTails(trackedStorms, allRecentStrikes, reserved, matched, nowMs);
+    collectReplayTails(trackedStorms, allRecentStrikes, reserved, matched, nowMs, undefined, (storm, strikes) => {
+      replayOwnership.push({ stormKey: storm.key, strikes });
+    });
+    // Confirmed merges above may have adopted another key. The durable writer
+    // resolves those aliases so this pass joins the same canonical history.
+    saveStormReplayOwnership(replayOwnership, nowMs);
 
     // Offer every storm seen this pass as a record candidate; the upsert only
     // accepts ones that beat the stored count or already hold the record
