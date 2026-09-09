@@ -15,7 +15,9 @@ import { useTornado } from '../context/TornadoContext';
 import { useStormOutline } from '../context/StormOutlineContext';
 import { useStormMerge, type MergeStatus } from '../context/StormMergeContext';
 import { useCountryName } from '../hooks/useCountryName';
-import { densityCore, rasteriseBuffer, marchingSquares } from '../lib/stormOutline';
+import { buildGeographicOutline } from '../lib/stormOutline';
+import { assignOutlinePoints } from '../lib/stormOutlineMembership';
+import { replayStrikeKey } from '../lib/stormReplayState';
 
 interface FlashRing {
   nx: number;
@@ -195,7 +197,6 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   mergeMapRef.current = mergeMap;
   const prevStormPositionsRef = useRef<Map<string, { lat: number; lon: number; t: number }>>(new Map());
   const stormVelocitiesRef = useRef<Map<string, { dlatS: number; dlonS: number }>>(new Map());
-  const suppressedMergeKeysRef = useRef<Set<string>>(new Set());
   const weakClusterKeysRef = useRef<Set<string>>(new Set());
   const [mapReady, setMapReady] = useState(false);
   const seenAlertIdsRef = useRef<Set<string>>(new Set());
@@ -510,7 +511,6 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         const cells = [...s.stormRankCells].sort((a, b) => (b.stormKey ? 1 : 0) - (a.stormKey ? 1 : 0));
         for (const cell of cells) {
           const _cellKeyS = cell.stormKey ?? `rank-${cell.rank}`;
-          if (suppressedMergeKeysRef.current.has(_cellKeyS)) continue;
           if (weakClusterKeysRef.current.has(_cellKeyS)) continue;
           const pt = s.map.latLngToContainerPoint([cell.lat, cell.lon]);
           const tooClose = placed.some(p => Math.hypot(pt.x - p.x, pt.y - p.y) < MIN_PX);
@@ -616,6 +616,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       // Five stepped zoom groups, each with a fixed display cell size and a fixed
       // geographic bin zoom. Within a group, zooming doesn't add geographic detail —
       // adjacent display cells share the same bin value (blocky but stable).
+      // Geographic contours survive viewport changes; only their projection changes.
+      const outlineCache = new Map<string, { signature: string; geometry: ReturnType<typeof buildGeographicOutline> }>();
       s.drawHeatmap = () => {
         const hCtx = s.heatCtx;
         const hCnv = s.heatCanvas;
@@ -839,67 +841,39 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         }
         } // end heatmap-only else
 
-        // Storm cluster outlines — neon green convex hull (or circle fallback) per storm cell
+        // Storm outlines use fixed geographic distances, independent of map zoom.
         if (stormOutlineEnabledRef.current && s.stormRankCells.length > 0) {
           const OUTLINE_KM = 80;
-          // Hull drawn from a tighter radius to exclude sparse outliers far from the storm core
-          const HULL_KM = 55;
-          // Collect strikes within a wider radius so a drifted server centroid still catches nearby activity
-          const COLLECT_KM = 120;
-          // Per-strike expansion radius: each strike adds this buffer to the storm region
           const BUFFER_KM = 10;
-          const allPts = [...heatmapBufferRef.current, ...dbBufferRef.current];
           const outlineCutoff = Date.now() - 10 * 60 * 1000;
+          const recent = new Map<string, HeatPoint>();
+          for (const point of [...heatmapBufferRef.current, ...dbBufferRef.current]) {
+            if (point.time < outlineCutoff) continue;
+            recent.set(replayStrikeKey([point.lat, point.lon, point.time]), point);
+          }
+          const owned = assignOutlinePoints(s.stormRankCells, [...recent.values()]);
+          const activeKeys = new Set(s.stormRankCells.map(cell => cell.stormKey ?? `rank-${cell.rank}`));
+          for (const key of outlineCache.keys()) if (!activeKeys.has(key)) outlineCache.delete(key);
 
-          // Phase 1: compute per-storm canvas coords + nearby strike points
           const stormData = s.stormRankCells.map(cell => {
-            const cnx = mercNX(cell.lon);
-            const cny = mercNY(cell.lat);
-            const cx = cnx * drawScale + heatDrawOx;
-            const cy = cny * drawScale + heatDrawOy;
-            const lonDegR = OUTLINE_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
-            const enx = mercNX(cell.lon + lonDegR);
-            const radiusPx = Math.max(20, Math.abs((enx * drawScale + heatDrawOx) - cx));
-            const hullLonDegR = HULL_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
-            const hullEnx = mercNX(cell.lon + hullLonDegR);
-            const hullRadiusPx = Math.max(15, Math.abs((hullEnx * drawScale + heatDrawOx) - cx));
-            const collectLonDeg = COLLECT_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
-            const dLat = COLLECT_KM / 111.32;
-            const latMin = cell.lat - dLat, latMax = cell.lat + dLat;
-            const lonMin = cell.lon - collectLonDeg, lonMax = cell.lon + collectLonDeg;
-            const screenPts: Array<{ x: number; y: number }> = [];
-            for (const pt of allPts) {
-              if (pt.time < outlineCutoff) continue;
-              if (pt.lat < latMin || pt.lat > latMax || pt.lon < lonMin || pt.lon > lonMax) continue;
-              const dLt = (pt.lat - cell.lat) * 111.32;
-              const dLn = (pt.lon - cell.lon) * 111.32 * Math.cos(cell.lat * Math.PI / 180);
-              if (dLt * dLt + dLn * dLn > COLLECT_KM * COLLECT_KM) continue;
-              screenPts.push({ x: pt.nx * drawScale + heatDrawOx, y: pt.ny * drawScale + heatDrawOy });
+            const key = cell.stormKey ?? `rank-${cell.rank}`;
+            const points = owned.get(cell)!;
+            const signature = `${cell.lat}:${cell.lon}:` + points
+              .map(point => replayStrikeKey([point.lat, point.lon, point.time])).sort().join(';');
+            let cached = outlineCache.get(key);
+            if (!cached || cached.signature !== signature) {
+              cached = { signature, geometry: buildGeographicOutline(points, cell, BUFFER_KM) };
+              outlineCache.set(key, cached);
             }
-            // Hull uses tighter HULL_KM radius to stay close to the storm core
-            const hullPts = screenPts.filter(p => Math.hypot(p.x - cx, p.y - cy) <= hullRadiusPx);
-            let maxDistPx = 0;
-            for (const p of hullPts) {
-              const d = Math.hypot(p.x - cx, p.y - cy);
-              if (d > maxDistPx) maxDistPx = d;
-            }
-            // Minimum hull extent in km-scaled pixels (avoids zoom-dependent false merges)
-            const minHullPx = 15 * radiusPx / OUTLINE_KM;
-            maxDistPx = Math.max(minHullPx, maxDistPx);
-            const _cellKey = cell.stormKey ?? `rank-${cell.rank}`;
-            const vel = stormVelocitiesRef.current.get(_cellKey) ?? null;
-            // Buffer extent: farthest strike from centroid + BUFFER_KM. Used by
-            // the union-find and convergence timers instead of the old hull radius.
-            let maxScreenDistPx = 0;
-            for (const p of screenPts) {
-              const d = Math.hypot(p.x - cx, p.y - cy);
-              if (d > maxScreenDistPx) maxScreenDistPx = d;
-            }
-            const bufLonDeg = BUFFER_KM / (111.32 * Math.cos(cell.lat * Math.PI / 180));
-            const bufExtNx = mercNX(cell.lon + bufLonDeg);
-            const _bufPx = Math.max(12, Math.abs((bufExtNx * drawScale + heatDrawOx) - cx));
-            const bufferExtentPx = maxScreenDistPx + _bufPx;
-            return { cx, cy, radiusPx, hullPts, screenPts, maxDistPx, bufferExtentPx, lat: cell.lat, lon: cell.lon, vel, rate: cell.rate, rank: cell.rank, hasPage: cell.hasPage };
+            const geometry = cached.geometry;
+            const cx = mercNX(cell.lon) * drawScale + heatDrawOx;
+            const cy = mercNY(cell.lat) * drawScale + heatDrawOy;
+            const kmToPx = drawScale / (40075.016686 * Math.cos(cell.lat * Math.PI / 180));
+            const screenPts = points.map(point => ({ x: point.nx * drawScale + heatDrawOx, y: point.ny * drawScale + heatDrawOy }));
+            const vel = stormVelocitiesRef.current.get(key) ?? null;
+            return { cx, cy, screenPts, geometry, bufferPx: BUFFER_KM * kmToPx,
+              extentKm: geometry?.extentKm ?? BUFFER_KM,
+              lat: cell.lat, lon: cell.lon, vel, rate: cell.rate, rank: cell.rank, hasPage: cell.hasPage };
           });
 
           const timeToThresholdMin = (
@@ -928,7 +902,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             return tMerge !== null ? tMerge / 60 : null;
           };
 
-          // Phase 2: union-find — merge storms whose green hull edges overlap (km-space, zoom-independent)
+          // Geographic proximity groups are used only for merge/split predictions.
           const parent = stormData.map((_, i) => i);
           const findRoot = (i: number): number => {
             while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
@@ -942,15 +916,15 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 Math.pow((sj.lon - si.lon) * 111.32 * cosLat, 2) +
                 Math.pow((sj.lat - si.lat) * 111.32, 2)
               );
-              const iExtentKm = (si.bufferExtentPx / si.radiusPx) * OUTLINE_KM;
-              const jExtentKm = (sj.bufferExtentPx / sj.radiusPx) * OUTLINE_KM;
+              const iExtentKm = si.extentKm;
+              const jExtentKm = sj.extentKm;
               if (distKm < iExtentKm + jExtentKm) {
                 parent[findRoot(i)] = findRoot(j);
               }
             }
           }
 
-          // Phase 3: collect groups and draw one hull + circle per group
+          // Collect nearby groups for the existing convergence predictions.
           const groups = new Map<number, typeof stormData>();
           for (let i = 0; i < stormData.length; i++) {
             const root = findRoot(i);
@@ -958,41 +932,12 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             groups.get(root)!.push(stormData[i]);
           }
 
-          // Suppress labels for non-primary storms within the same merged group
-          {
-            const suppressed = new Set<string>();
-            for (const group of groups.values()) {
-              if (group.length <= 1) continue;
-              const indices = group.map(sd => stormData.indexOf(sd));
-              let primaryIdx = indices[0];
-              let primaryRank = s.stormRankCells[primaryIdx].rank;
-              for (const idx of indices.slice(1)) {
-                const r = s.stormRankCells[idx].rank;
-                if (r < primaryRank) { primaryRank = r; primaryIdx = idx; }
-              }
-              for (const idx of indices) {
-                if (idx === primaryIdx) continue;
-                const cell = s.stormRankCells[idx];
-                suppressed.add(cell.stormKey ?? `rank-${cell.rank}`);
-              }
-            }
-            suppressedMergeKeysRef.current = suppressed;
-          }
-
           // Track weak untracked clusters — red circle, no DOM label
           {
             const weakKeys = new Set<string>();
-            for (const group of groups.values()) {
-              const peakRate = Math.max(...group.map(d => d.rate));
-              const anyTracked = group.some(d => d.hasPage);
-              if (peakRate < 20 && !anyTracked) {
-                for (const d of group) {
-                  const idx = stormData.indexOf(d);
-                  if (idx >= 0) {
-                    const cell = s.stormRankCells[idx];
-                    weakKeys.add(cell.stormKey ?? `rank-${cell.rank}`);
-                  }
-                }
+            for (const cell of s.stormRankCells) {
+              if (cell.rate < 20 && !cell.hasPage) {
+                weakKeys.add(cell.stormKey ?? `rank-${cell.rank}`);
               }
             }
             weakClusterKeysRef.current = weakKeys;
@@ -1057,8 +1002,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 const _curDistKm2 = Math.sqrt(Math.pow((gbLon2 - gaLon2) * 111.32 * _cosLat2, 2) + Math.pow((gbLat2 - gaLat2) * 111.32, 2));
                 if (_curDistKm2 > OUTLINE_KM * 3) continue; // too far apart to credibly predict merging
                 // Threshold = sum of actual hull extents — timer reaches 0 when green edges touch
-                const gaHullKm = Math.max(...ga2.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
-                const gbHullKm = Math.max(...gb2.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
+                const gaHullKm = Math.max(...ga2.map(d => d.extentKm));
+                const gbHullKm = Math.max(...gb2.map(d => d.extentKm));
                 const hullTouchKm = gaHullKm + gbHullKm;
                 const tMin2 = timeToThresholdMin(gaLat2, gaLon2, ga2[0].vel, gbLat2, gbLon2, gb2[0].vel, hullTouchKm);
                 const isConverging2 = tMin2 !== null && tMin2 >= 0 && tMin2 < 120;
@@ -1112,8 +1057,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
               const _cosLat = Math.cos(((gaLat + gbLat) / 2) * Math.PI / 180);
               const _curDistKm = Math.sqrt(Math.pow((gbLon - gaLon) * 111.32 * _cosLat, 2) + Math.pow((gbLat - gaLat) * 111.32, 2));
               if (_curDistKm > OUTLINE_KM * 3) continue;
-              const _gaHullKm = Math.max(...ga.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
-              const _gbHullKm = Math.max(...gb.map(d => (d.bufferExtentPx / d.radiusPx) * OUTLINE_KM));
+              const _gaHullKm = Math.max(...ga.map(d => d.extentKm));
+              const _gbHullKm = Math.max(...gb.map(d => d.extentKm));
               const tMin = timeToThresholdMin(gaLat, gaLon, ga[0].vel, gbLat, gbLon, gb[0].vel, _gaHullKm + _gbHullKm);
               const isConverging = tMin !== null && tMin >= 0 && tMin < 120;
               if (!isConverging) continue;
@@ -1144,36 +1089,20 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             }
           }
 
-          for (const group of groups.values()) {
-            const mergedPts = group.flatMap(d => d.screenPts);
-            const gcx = group.reduce((sum, d) => sum + d.cx, 0) / group.length;
-            const gcy = group.reduce((sum, d) => sum + d.cy, 0) / group.length;
-            const gRadiusPx = Math.max(...group.map(d => d.radiusPx));
-            const peakRate = Math.max(...group.map(d => d.rate));
+          // Draw each server identity separately, even when proximity predicts a merge.
+          for (const data of stormData) {
+            const mergedPts = data.screenPts;
+            const peakRate = data.rate;
             const isWeak = peakRate < 20;
-
-            // Buffer radius in pixels corresponding to BUFFER_KM on the ground
-            const bufferPx = Math.max(12, gRadiusPx * BUFFER_KM / OUTLINE_KM);
-
-            // Density core: grid cell with the highest strike count
-            const coreCellPx = Math.max(8, Math.round(bufferPx));
-            const coreGrid = new Map<string, { sx: number; sy: number; n: number }>();
-            for (const p of mergedPts) {
-              const k = `${Math.floor(p.x / coreCellPx)}:${Math.floor(p.y / coreCellPx)}`;
-              const c = coreGrid.get(k);
-              if (c) { c.sx += p.x; c.sy += p.y; c.n++; }
-              else coreGrid.set(k, { sx: p.x, sy: p.y, n: 1 });
-            }
-            let coreCX = gcx, coreCY = gcy, bestN = 0;
-            for (const c of coreGrid.values()) {
-              if (c.n > bestN) { bestN = c.n; coreCX = c.sx / c.n; coreCY = c.sy / c.n; }
-            }
+            const bufferPx = data.bufferPx;
+            const geometry = data.geometry;
+            const coreCX = geometry ? geometry.core.nx * drawScale + heatDrawOx : data.cx;
+            const coreCY = geometry ? geometry.core.ny * drawScale + heatDrawOy : data.cy;
 
             hCtx.save();
 
             if (isWeak) {
               // Red circle for weak untracked clusters
-              const weakPrimaryRank = Math.min(...group.map(d => d.rank));
               const weakRateStr = `${Math.round(peakRate)}/m`;
               hCtx.strokeStyle = '#ff2d2d';
               hCtx.shadowColor = '#ff2d2d';
@@ -1195,7 +1124,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 hCtx.fillStyle = '#ff6060';
                 hCtx.fillText(text, tx, ty);
               };
-              _drawWeakText(`#${weakPrimaryRank}`, coreCX, coreCY - 8);
+              _drawWeakText(`#${data.rank}`, coreCX, coreCY - 8);
               _drawWeakText(weakRateStr, coreCX, coreCY + 8);
             } else {
               // ── Connection lines: each strike → nearest neighbour within bufferPx ──
@@ -1241,29 +1170,21 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
                 hCtx.stroke();
               }
 
-              // ── Buffer outline via utility functions ──
-              {
-                const bg = rasteriseBuffer(mergedPts, bufferPx);
-                if (bg) {
-                  const segs = marchingSquares(bg);
-                  hCtx.strokeStyle = '#39ff14';
-                  hCtx.shadowColor = '#39ff14';
-                  hCtx.shadowBlur = 12;
-                  hCtx.lineWidth = 1.5;
-                  hCtx.globalAlpha = 0.9;
-                  hCtx.beginPath();
-                  for (const [ax, ay, bx, by] of segs) {
-                    hCtx.moveTo(ax, ay); hCtx.lineTo(bx, by);
-                  }
-                  hCtx.stroke();
+              // Project an unchanged geographic contour into the current view.
+              if (geometry) {
+                hCtx.strokeStyle = '#39ff14';
+                hCtx.shadowColor = '#39ff14';
+                hCtx.shadowBlur = 12;
+                hCtx.lineWidth = 1.5;
+                hCtx.globalAlpha = 0.9;
+                hCtx.beginPath();
+                for (const [ax, ay, bx, by] of geometry.segments) {
+                  hCtx.moveTo(ax * drawScale + heatDrawOx, ay * drawScale + heatDrawOy);
+                  hCtx.lineTo(bx * drawScale + heatDrawOx, by * drawScale + heatDrawOy);
                 }
+                hCtx.stroke();
               }
 
-              // ── Density core marker via utility function ──
-              {
-                const core = densityCore(mergedPts, bufferPx);
-                coreCX = core.x; coreCY = core.y;
-              }
               hCtx.strokeStyle = '#39ff14';
               hCtx.shadowColor = '#39ff14';
               hCtx.shadowBlur = 16;
@@ -1275,9 +1196,26 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
               hCtx.moveTo(coreCX, coreCY - cs); hCtx.lineTo(coreCX, coreCY + cs);
               hCtx.stroke();
 
+              // Multiple active patches can belong to the same tracked storm.
+              // Repeat its rank on substantial patches, leaving tiny outliers unlabelled.
+              if (geometry && stormRanksEnabledRef.current) {
+                hCtx.font = 'bold 11px monospace';
+                hCtx.textAlign = 'center';
+                hCtx.textBaseline = 'bottom';
+                hCtx.shadowBlur = 0;
+                for (const core of geometry.cores) {
+                  const x = core.nx * drawScale + heatDrawOx;
+                  const y = core.ny * drawScale + heatDrawOy - 9;
+                  hCtx.lineWidth = 4;
+                  hCtx.strokeStyle = 'rgba(0,0,0,0.9)';
+                  hCtx.strokeText(`#${data.rank}`, x, y);
+                  hCtx.fillStyle = '#80ff68';
+                  hCtx.fillText(`#${data.rank}`, x, y);
+                }
+              }
+
               // ── Merge/split status text ──
-              const _primaryD = group.reduce((a, b) => a.rank < b.rank ? a : b);
-              const _primaryIdx = stormData.indexOf(_primaryD);
+              const _primaryIdx = stormData.indexOf(data);
               const _primaryKey = _primaryIdx >= 0 ? (s.stormRankCells[_primaryIdx].stormKey ?? `rank-${s.stormRankCells[_primaryIdx].rank}`) : null;
               const _ms = _primaryKey ? currentMergeMap.get(_primaryKey) : null;
               if (_ms) {
@@ -1848,6 +1786,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     } else {
       s.reprojectRankLabels?.();
     }
+    s.drawHeatmap?.();
   }, [stormRanksEnabled]);
 
   useEffect(() => {
