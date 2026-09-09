@@ -179,6 +179,8 @@ interface TrackedStorm extends ReplayTailStorm {
   lastStrikeTime: number;
   totalStrikes: number;
   counting?: StormCountingState;
+  // One-time counting migration: children must seed from exact recent history.
+  splitNotBefore?: number;
   // Ordered list of every country code the storm has passed through
   countryCodes: string[];
   // Birth/merge relationship metadata, also read when migrating old snapshots.

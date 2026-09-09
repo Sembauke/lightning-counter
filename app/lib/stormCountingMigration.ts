@@ -7,6 +7,7 @@ export interface MigratingCountingStorm extends CountingStorm {
   lastStrikeTime?: number;
   allStrikes?: Array<[number, number, number]>;
   initialStrikesByAncestor?: Record<string, number>;
+  splitNotBefore?: number;
   lifecycle?: { transitions: StormTransition[] };
 }
 
@@ -56,6 +57,10 @@ export function restoreStormCounting(storms: MigratingCountingStorm[], now: numb
         total: storm.totalStrikes,
         ancestors: { ...(storm.initialStrikesByAncestor ?? {}) },
       };
+      // A child seeds its count from the last five minutes. Wait until that
+      // entire window has exact ownership, even if a distant split confirms
+      // faster than the ordinary hold. Persist this floor across restarts.
+      storm.splitNotBefore = now + STORM_TRANSITION_MS;
       if (storm.lifecycle) {
         storm.lifecycle.transitions = storm.lifecycle.transitions.map(transition => transition.kind === 'split'
           ? { ...transition, startedAt: now, confirmAt: now + STORM_TRANSITION_MS }

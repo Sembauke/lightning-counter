@@ -1,6 +1,6 @@
 import { MIN_STORM_RATE, type StrikePoint } from './stormClusters';
 import { buildStormFootprint, footprintContact, type StormFootprintGeometry, type StormFootprintObservation } from './stormFootprint';
-import { STORM_OBSERVATION_GAP_MS, STORM_TRANSITION_MS, type StormTransition } from './stormTransition';
+import { STORM_DISTANT_SPLIT_KM, STORM_DISTANT_SPLIT_MS, STORM_OBSERVATION_GAP_MS, STORM_TRANSITION_MS, type StormTransition } from './stormTransition';
 
 const ACTIVE_MS = 5 * 60_000;
 const FOOTPRINT_MS = 10 * 60_000;
@@ -15,6 +15,9 @@ export interface StormLifecycleState {
   outline: StormFootprintGeometry | null;
   transitions: StormTransition[];
   splitBranches?: Branch[];
+  /** Ordinary separation keeps its own hold while a distant gap comes and goes. */
+  splitTransition?: StormTransition;
+  distantSplit?: { branches: Branch[]; transition: StormTransition };
 }
 
 export interface LifecycleStorm {
@@ -27,6 +30,7 @@ export interface LifecycleStorm {
   totalStrikes: number;
   inDb: boolean;
   lastStrikeTime: number;
+  splitNotBefore?: number;
   lifecycle?: StormLifecycleState;
   replayAnchors?: Array<[number, number, number]>;
 }
@@ -75,11 +79,47 @@ function outlineLinks(outlines: Array<StormFootprintGeometry | null>): StormTran
 }
 
 function transition(kind: StormTransition['kind'], keys: string[], previous: StormTransition | undefined,
-  now: number, links: StormTransition['links']): StormTransition {
+  now: number, links: StormTransition['links'], duration = STORM_TRANSITION_MS): StormTransition {
   const id = `${kind}:${[...keys].sort().join('|')}`;
   const continuous = previous?.id === id && now >= previous.observedAt && now - previous.observedAt <= STORM_OBSERVATION_GAP_MS;
   const startedAt = continuous ? previous.startedAt : now;
-  return { id, kind, stormKeys: [...keys].sort(), startedAt, confirmAt: startedAt + STORM_TRANSITION_MS, observedAt: now, links };
+  return { id, kind, stormKeys: [...keys].sort(), startedAt, confirmAt: startedAt + duration, observedAt: now, links };
+}
+
+function describeBranches(branches: StrikePoint[][]): Branch[] {
+  return branches.map(members => ({ ...centroid(members), ids: members.map(lifecycleStrikeId) }));
+}
+
+/** Require the same partition, including when one old group touches two new groups. */
+function sameBranches(before: Branch[] | undefined, branches: StrikePoint[][]): boolean {
+  if (!before || before.length !== branches.length) return false;
+  const matched = new Set<Branch>();
+  for (const members of branches) {
+    const ids = new Set(members.map(lifecycleStrikeId));
+    const matches = before.filter(branch => branch.ids.some(id => ids.has(id)));
+    if (matches.length !== 1 || matched.has(matches[0])) return false;
+    matched.add(matches[0]);
+  }
+  return true;
+}
+
+/** Nearby branches stay together when confirming only clearly distant groups. */
+function distantGroups<T extends { outline: StormFootprintGeometry | null }>(branches: T[]): T[][] {
+  const roots = branches.map((_, i) => i);
+  const root = (i: number): number => roots[i] === i ? i : (roots[i] = root(roots[i]));
+  for (let i = 0; i < branches.length; i++) for (let j = i + 1; j < branches.length; j++) {
+    const a = branches[i].outline, b = branches[j].outline;
+    const contact = a && b ? footprintContact(a, b) : null;
+    // Missing boundary evidence cannot establish a fifty-kilometre gap.
+    if (!contact || contact.gapKm < STORM_DISTANT_SPLIT_KM) roots[root(j)] = root(i);
+  }
+  const groups = new Map<number, T[]>();
+  for (let i = 0; i < branches.length; i++) {
+    const key = root(i), group = groups.get(key) ?? [];
+    group.push(branches[i]);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
 }
 
 /** The same serialization is used on initial SSE connection and every update. */
@@ -220,38 +260,60 @@ export function reconcileStormLifecycle<T extends LifecycleStorm>(
     const branches = own.filter(p => p.active.length >= MIN_POINTS);
     if (branches.length < 2) continue;
     const before = previous.get(st);
-    const unmatched = new Set(before?.splitBranches ?? []);
-    let sameBranches = unmatched.size === branches.length;
-    for (const branch of branches) {
-      const ids = new Set(branch.members.map(lifecycleStrikeId));
-      const match = [...unmatched].find(b => b.ids.some(id => ids.has(id)));
-      if (match) unmatched.delete(match);
-      else sameBranches = false;
+    const branchMembers = branches.map(branch => branch.members);
+    const prior = sameBranches(before?.splitBranches, branchMembers)
+      ? before?.splitTransition ?? before?.transitions.find(t => t.kind === 'split') : undefined;
+    const normal = transition('split', [st.key], prior, now, outlineLinks(branches.map(p => p.outline)));
+    normal.confirmAt = Math.max(normal.confirmAt, st.splitNotBefore ?? 0);
+    st.lifecycle!.splitTransition = normal;
+    st.lifecycle!.splitBranches = describeBranches(branchMembers);
+
+    const farGroups = distantGroups(branches);
+    let distant: StormTransition | undefined;
+    if (farGroups.length > 1) {
+      const groupMembers = farGroups.map(group => unique(group.flatMap(p => p.members)));
+      const previousDistant = sameBranches(before?.distantSplit?.branches, groupMembers) ? before?.distantSplit?.transition : undefined;
+      distant = transition('split', [st.key], previousDistant, now,
+        outlineLinks(farGroups.map(group => joinedOutline(group.map(p => p.outline)))), STORM_DISTANT_SPLIT_MS);
+      distant.confirmAt = Math.max(distant.confirmAt, st.splitNotBefore ?? 0);
+      st.lifecycle!.distantSplit = { branches: describeBranches(groupMembers), transition: distant };
     }
-    const links = outlineLinks(branches.map(p => p.outline));
-    const prior = sameBranches ? before?.transitions.find(t => t.kind === 'split') : undefined;
-    const t = transition('split', [st.key], prior, now, links);
-    if (now < t.confirmAt) {
-      st.lifecycle!.transitions.push(t);
-      st.lifecycle!.splitBranches = branches.map(b => ({ ...centroid(b.members), ids: b.members.map(lifecycleStrikeId) }));
+    const fast = distant !== undefined && distant.confirmAt < normal.confirmAt;
+    const displayed = fast ? distant! : normal;
+    if (now < displayed.confirmAt) {
+      st.lifecycle!.transitions.push(displayed);
       continue;
     }
-    // Retain the established identity on the strongest branch. Seed new child
-    // context only now; historical points already counted by the parent get an
-    // explicit overlap so a later re-merge cannot count them twice.
-    branches.sort((a, b) => b.active.length - a.active.length || a.observation.lat - b.observation.lat || a.observation.lon - b.observation.lon);
-    const detached = new Set(branches.slice(1));
+
+    // A short hold separates distant groups as units. Nearby branches still
+    // need the ordinary five minutes, even if another group is far away.
+    const groups = (fast ? farGroups : branches.map(branch => [branch])).map(group => ({
+      parts: group, members: unique(group.flatMap(p => p.members)), active: unique(group.flatMap(p => p.active)),
+      support: unique(group.flatMap(p => p.support)), outline: joinedOutline(group.map(p => p.outline)),
+    }));
+    groups.sort((a, b) => b.active.length - a.active.length || a.parts[0].observation.lat - b.parts[0].observation.lat || a.parts[0].observation.lon - b.parts[0].observation.lon);
+    const detached = new Set(groups.slice(1).flatMap(group => group.parts));
     const remaining = own.filter(p => !detached.has(p));
     assignments.set(st, unique(remaining.flatMap(p => p.active)));
     const retainedSupport = unique(remaining.flatMap(p => p.support));
     st.lifecycle = { observedAt: now, members: unique(remaining.flatMap(p => p.members)), supportMembers: retainedSupport,
       outline: joinedOutline(remaining.map(p => p.outline)), transitions: [] };
-    for (const branch of branches.slice(1)) {
-      const child = create(branch.active, st);
-      child.lifecycle = { observedAt: now, members: branch.members, supportMembers: branch.support, outline: branch.outline, transitions: [] };
+
+    function preserveNearbyHold(owner: T, group: Part[]) {
+      if (!fast || group.length < 2) return;
+      const pending: StormTransition = { ...normal, id: `split:${owner.key}`, stormKeys: [owner.key], links: outlineLinks(group.map(p => p.outline)) };
+      owner.lifecycle!.splitTransition = pending;
+      owner.lifecycle!.splitBranches = describeBranches(group.map(p => p.members));
+      owner.lifecycle!.transitions.push(pending);
+    }
+    preserveNearbyHold(st, groups[0].parts);
+    for (const group of groups.slice(1)) {
+      const child = create(group.active, st);
+      child.lifecycle = { observedAt: now, members: group.members, supportMembers: group.support, outline: group.outline, transitions: [] };
+      preserveNearbyHold(child, group.parts);
       storms.push(child);
-      assignments.set(child, branch.active);
-      splits.push({ parent: st, child, overlap: branch.active.filter(p => p.time <= st.lastStrikeTime).length });
+      assignments.set(child, group.active);
+      splits.push({ parent: st, child, overlap: group.active.filter(p => p.time <= st.lastStrikeTime).length });
     }
   }
   return { assignments, splits, merges };
@@ -265,4 +327,6 @@ export function combineStormLifecycle(winner: LifecycleStorm, losers: LifecycleS
   winner.lifecycle = { observedAt: now, members, supportMembers,
     outline: outline ?? (supportMembers.length ? buildStormFootprint(supportMembers, winner) : null), transitions: [] };
   winner.lastStrikeTime = Math.max(winner.lastStrikeTime, ...losers.map(st => st.lastStrikeTime));
+  const splitNotBefore = Math.max(winner.splitNotBefore ?? 0, ...losers.map(st => st.splitNotBefore ?? 0));
+  if (splitNotBefore > 0) winner.splitNotBefore = splitNotBefore;
 }

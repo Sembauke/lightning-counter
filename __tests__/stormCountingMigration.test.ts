@@ -27,6 +27,7 @@ describe('storm counting snapshot migration', () => {
     expect(a.counting!.recent).toEqual({ [id(first)]: first[2], [id(second)]: second[2], [id(third)]: third[2] });
     expect(b.counting!.recent).toEqual({ [id(second)]: second[2], [id(third)]: third[2] });
     expect(a.counting!.legacy).toBeUndefined();
+    expect(a.splitNotBefore).toBeUndefined();
     expect(a.totalStrikes).toBe(3);
     expect(b.totalStrikes).toBe(2);
   });
@@ -65,6 +66,10 @@ describe('storm counting snapshot migration', () => {
     expect(b.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 400, ancestors: { A: 100 } } });
     expect(b.counting!.legacy!.ancestors).not.toBe(ancestors);
     expect([a.totalStrikes, b.totalStrikes]).toEqual([2, 400]);
+    // Also protects a distant split that starts after migration, when no
+    // transition existed in the restored snapshot.
+    expect(a.splitNotBefore).toBe(NOW + STORM_TRANSITION_MS);
+    expect(b.splitNotBefore).toBe(NOW + STORM_TRANSITION_MS);
   });
 
   it('does not infer completeness from keepEvery alone or from invalid sample data', () => {
@@ -102,6 +107,10 @@ describe('storm counting snapshot migration', () => {
     expect(restoreStormCounting([a], NOW + 60_000).mode).toBe('unchanged');
     expect(a.counting).toBe(counting);
     expect(a.lifecycle!.transitions[0]).toBe(transition);
+    expect(a.splitNotBefore).toBe(NOW + STORM_TRANSITION_MS);
+    const reloaded = JSON.parse(JSON.stringify(a)) as MigratingCountingStorm;
+    restoreStormCounting([reloaded], NOW + 120_000);
+    expect(reloaded.splitNotBefore).toBe(NOW + STORM_TRANSITION_MS);
   });
 
   it('preserves existing ledgers in a partial snapshot and reports opaque compatibility mode', () => {

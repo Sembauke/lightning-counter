@@ -12,4 +12,7 @@ export interface StormTransition {
 }
 
 export const STORM_TRANSITION_MS = 5 * 60_000;
+/** Widely separated outline groups need less time to confirm a split. */
+export const STORM_DISTANT_SPLIT_MS = 60_000;
+export const STORM_DISTANT_SPLIT_KM = 50;
 export const STORM_OBSERVATION_GAP_MS = 90_000;
