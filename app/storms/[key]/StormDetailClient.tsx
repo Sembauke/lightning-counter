@@ -4,8 +4,9 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
+import { useViewerTimeZone } from '../../hooks/useViewerTimeZone';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
@@ -96,13 +97,16 @@ interface LiveStats {
 }
 
 export default function StormDetailClient({
-  storm, records, nearbyRanked,
+  storm, records, nearbyRanked, initialNow,
 }: {
   storm: BiggestStorm;
   records: GlobalStormRecord[];
   nearbyRanked: RankedNeighbor[];
+  initialNow: number;
 }) {
   const ts = useTranslations('storms');
+  const locale = useLocale();
+  const timeZone = useViewerTimeZone();
   const router = useRouter();
   const countryName = useCountryName();
   const { mergeMap, now: transitionNow, connected: transitionsConnected } = useStormMerge();
@@ -120,10 +124,11 @@ export default function StormDetailClient({
   });
   // endTime is always a timestamp (last tracker flush); treat storm as live
   // if it was active within the last 10 minutes — same logic as the storms list.
-  const isLive = liveStats.endTime != null && Date.now() - liveStats.endTime < 10 * 60_000;
+  const [now, setNow] = useState(initialNow);
+  const isLive = liveStats.endTime != null && now - liveStats.endTime < 10 * 60_000;
 
   // Tick every minute so the live duration KPI re-renders without waiting for a poll
-  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { setNow(Date.now()); }, []);
   useEffect(() => {
     if (!isLive) return;
     const id = setInterval(() => setNow(Date.now()), 60_000);
@@ -373,7 +378,7 @@ export default function StormDetailClient({
         <div className="storm-kpi-grid">
           <div className="storm-kpi">
             <span className="storm-kpi-value">
-              {stormTotal.toLocaleString()}
+              {stormTotal.toLocaleString(locale)}
             </span>
             <span className="storm-kpi-label">Total strikes</span>
           </div>
@@ -412,8 +417,8 @@ export default function StormDetailClient({
           return (
             <div className="storm-section">
               <div className="storm-timeline-meta">
-                {windowStart != null && <span>{fmtClock(windowStart)}</span>}
-                {windowEnd != null && <span>{fmtClock(windowEnd)}</span>}
+                {windowStart != null && <span>{fmtClock(windowStart, false, timeZone)}</span>}
+                {windowEnd != null && <span>{fmtClock(windowEnd, false, timeZone)}</span>}
               </div>
               <TimelineChart timeline={timeline} />
             </div>
@@ -442,7 +447,7 @@ export default function StormDetailClient({
                       <CountryFlag code={rowCode} name={countryName(rowCode)} />
                       <span className="storm-leaderboard-name-text">{rowLabel}</span>
                     </span>
-                    <span className="storm-leaderboard-count">{rowTotal.toLocaleString()}</span>
+                    <span className="storm-leaderboard-count">{rowTotal.toLocaleString(locale)}</span>
                   </>
                 );
                 const setRowRef = (el: HTMLElement | null) => {

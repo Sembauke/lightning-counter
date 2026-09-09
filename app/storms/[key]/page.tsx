@@ -104,5 +104,5 @@ export default async function StormDetailPage({ params }: Props) {
   }
   const records = getStormRecords();
   const nearbyRanked = storm.stormKey ? getNearbyRankedStorms(storm.stormKey, 10) : [];
-  return <StormDetailClient key={storm.stormKey} storm={storm} records={records} nearbyRanked={nearbyRanked} />;
+  return <StormDetailClient key={storm.stormKey} storm={storm} records={records} nearbyRanked={nearbyRanked} initialNow={Date.now()} />;
 }

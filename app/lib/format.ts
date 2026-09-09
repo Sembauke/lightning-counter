@@ -15,8 +15,9 @@ export function fmtDuration(ms: number): string {
 }
 
 /** Epoch ms as the viewer's local wall-clock time */
-export function fmtClock(t: number, seconds = false): string {
+export function fmtClock(t: number, seconds = false, timeZone?: string): string {
   return new Date(t).toLocaleTimeString('en-GB', {
+    timeZone,
     hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}),
   });
 }
