@@ -19,13 +19,26 @@ function getDb(): Database.Database {
   fs.mkdirSync(DB_DIR, { recursive: true });
   _db = new Database(DB_FILE);
   _db.pragma('journal_mode = WAL');
-  _db.pragma('synchronous = NORMAL');
+  _db.pragma('synchronous = FULL'); // Accepted intake must survive a process exit before its checkpoint.
   _db.pragma('cache_size = -8000'); // 8MB page cache
   _db.exec(`
     CREATE TABLE IF NOT EXISTS counters (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS strike_intake (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      identity TEXT NOT NULL UNIQUE,
+      received_at INTEGER NOT NULL,
+      strike_time INTEGER NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      cc TEXT,
+      count_date TEXT NOT NULL,
+      live INTEGER NOT NULL,
+      archived INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_intake_archive ON strike_intake(archived, id);
     CREATE TABLE IF NOT EXISTS countries (
       code  TEXT PRIMARY KEY,
       count INTEGER NOT NULL DEFAULT 0
@@ -1452,4 +1465,85 @@ export function countSplitEvents(stormKey: string): number {
 export function pruneStormEvents(): void {
   const db = getDb();
   db.prepare('DELETE FROM storm_events WHERE ts < ?').run(Date.now() - 30 * 24 * 60 * 60 * 1000);
+}
+
+
+export interface IntakeStrike {
+  id: number;
+  identity: string;
+  receivedAt: number;
+  time: number;
+  lat: number;
+  lon: number;
+  cc: string | null;
+  countDate: string;
+  live: number;
+}
+export interface IntakeCheckpoint { through: number; time: number; stormSeq: number }
+const INTAKE_COLUMNS = 'id, identity, received_at AS receivedAt, strike_time AS time, lat, lon, cc, count_date AS countDate, live';
+export const MAX_PENDING_INTAKE = 100_000;
+
+export function loadIntakeCheckpoint(): IntakeCheckpoint | null {
+  const row = getDb().prepare("SELECT value FROM counters WHERE key = 'intake_checkpoint'").get() as { value: string } | undefined;
+  return row ? JSON.parse(row.value) as IntakeCheckpoint : null;
+}
+
+/** Commit before acknowledging/broadcasting a delivery. No volatile-only intake. */
+export function appendStrikeIntake(strikes: Array<Omit<IntakeStrike, 'id'>>): IntakeStrike[] {
+  if (!strikes.length) return [];
+  const db = getDb();
+  const seen = db.prepare('SELECT 1 FROM strike_intake WHERE identity = ?');
+  const insert = db.prepare(`INSERT INTO strike_intake
+    (identity, received_at, strike_time, lat, lon, cc, count_date, live) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  return db.transaction(() => {
+    const through = loadIntakeCheckpoint()?.through ?? 0;
+    let pending = (db.prepare('SELECT COUNT(*) AS n FROM strike_intake WHERE id > ?').get(through) as { n: number }).n;
+    const accepted: IntakeStrike[] = [];
+    for (const point of strikes) {
+      if (seen.get(point.identity)) continue;
+      // Failed checkpoints cannot grow the journal forever. Reject new intake
+      // before accepting it; the server becomes unhealthy and stops its feeds.
+      if (pending >= MAX_PENDING_INTAKE) throw new Error('Durable intake is full; checkpoint required');
+      const result = insert.run(point.identity, point.receivedAt, point.time, point.lat, point.lon, point.cc, point.countDate, point.live);
+      accepted.push({ ...point, id: Number(result.lastInsertRowid) });
+      pending++;
+    }
+    return accepted;
+  })();
+}
+
+export function loadStrikeIntake(): IntakeStrike[] {
+  return getDb().prepare(`SELECT ${INTAKE_COLUMNS} FROM strike_intake ORDER BY id`).all() as IntakeStrike[];
+}
+
+/** Archive projection and its acknowledgement share one commit, including cells. */
+export function flushIntakeArchive(through = Number.MAX_SAFE_INTEGER): void {
+  const db = getDb();
+  db.transaction(() => {
+    const rows = db.prepare(`SELECT ${INTAKE_COLUMNS} FROM strike_intake WHERE archived = 0 AND id <= ? ORDER BY id`)
+      .all(through) as IntakeStrike[];
+    const live = rows.filter(p => p.live);
+    archiveGridStrikeBatch(live);
+    // Grid-cell totals are lifetime counters. Recover them even after a long
+    // outage, then expire only their raw points under the existing retention.
+    const cutoff = Date.now() - GRID_RETENTION_MS;
+    if (live.some(p => p.time < cutoff)) db.prepare('DELETE FROM grid_strikes WHERE strike_time < ?').run(cutoff);
+    db.prepare('UPDATE strike_intake SET archived = 1 WHERE archived = 0 AND id <= ?').run(through);
+  })();
+}
+
+/** A snapshot includes every projection, event and alias, or none of them. */
+export function checkpointStrikeIntake(checkpoint: IntakeCheckpoint, persist: () => void): void {
+  const db = getDb();
+  db.transaction(() => {
+    persist();
+    flushIntakeArchive(checkpoint.through);
+    db.prepare('INSERT OR REPLACE INTO counters (key, value) VALUES (?, ?)')
+      .run('intake_checkpoint', JSON.stringify(checkpoint));
+    // Retain the observation window and at least the previous feed's 50k
+    // physical identities across restarts, capped at 200k processed entries.
+    // Never prune uncheckpointed intake (separately bounded at 100k).
+    db.prepare('DELETE FROM strike_intake WHERE id <= ? AND ((received_at < ? AND id < ?) OR id < ?)')
+      .run(checkpoint.through, checkpoint.time - 10 * 60_000, checkpoint.through - 50_000, checkpoint.through - 200_000);
+  })();
 }

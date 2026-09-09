@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
-import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, archiveGridStrikeBatch, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, getTrackedStormKeys, getStormByKey, recordStormAlias, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
+import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, getTrackedStormKeys, getStormByKey, recordStormAlias, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers, publishStormOwnership } from '../../lib/strikeStream';
 import { nearestCity, MIN_STORM_RATE, type CityTuple, type StrikePoint } from '../../lib/stormClusters';
 import { detectStormFootprints } from '../../lib/stormFootprint';
@@ -10,6 +10,7 @@ import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from 
 import { saveStormReplayOwnership, updateStormReplay } from '../../lib/db';
 import { compactStormCounting, countStormStrike, emptyStormCounting, mergeStormCounting, remapStormCountingKeys, sharedStormStrikeCount, type StormCountingState } from '../../lib/stormCounting';
 import { restoreStormCounting } from '../../lib/stormCountingMigration';
+import { appendStrikeIntake, loadStrikeIntake, loadIntakeCheckpoint, checkpointStrikeIntake, flushIntakeArchive, type IntakeStrike } from '../../lib/db';
 
 // Merge events without a known relationship retain a null contribution: old
 // sampled snapshots cannot prove their historical overlap. Modern overlap
@@ -22,6 +23,15 @@ export const runtime = 'nodejs';
 // have completed. The custom server checks this before connecting upstream.
 (globalThis as any)._ingestionReady = undefined;
 
+const intakeCheckpoint = loadIntakeCheckpoint();
+const restoredIntake = loadStrikeIntake();
+const pendingIntake = restoredIntake.filter(p => p.id > (intakeCheckpoint?.through ?? 0));
+// Recover at the recorded reception clock, before ordinary startup expiration.
+// A long outage must not erase a storm that was accepted just before the crash.
+const restorationTime = pendingIntake[0]?.receivedAt ?? Date.now();
+let intakeThrough = intakeCheckpoint?.through ?? 0;
+let accepting = true;
+
 // ── Persisted state ────────────────────────────────────────────────────
 const { total, countries } = loadCounters();
 let serverTotal = total;
@@ -33,12 +43,14 @@ const serverCountryCounts: Record<string, number> = { ...countries };
 function todayDate() { return new Date().toISOString().slice(0, 10); }
 let currentDay = todayDate();
 let todayCounts: Record<string, number> = { ...loadDailyStrikes(currentDay) };
+const dailyCounts = new Map<string, Record<string, number>>([[currentDay, todayCounts]]);
 (globalThis as any)._todayCounts = todayCounts;
 (globalThis as any)._todayDate = currentDay;
 
 // ── Strike buffers ─────────────────────────────────────────────────────
 interface RecentStrike { lat: number; lon: number; cc: string | null; time: number }
-// Survive HMR module reloads in dev — same pattern as _serverTotal/_serverCountryCounts
+// Keep the array reference stable for readers; reloads rebuild its contents
+// from durable intake and the latest tracking snapshot.
 const recentStrikes: RecentStrike[] = (globalThis as any)._recentStrikes ?? [];
 (globalThis as any)._recentStrikes = recentStrikes;
 // Cover the ten-minute physical footprint as well as five-minute rates at
@@ -46,7 +58,14 @@ const recentStrikes: RecentStrike[] = (globalThis as any)._recentStrikes ?? [];
 const MAX_HISTORY = 100_000;
 const HISTORY_LIFETIME_MS = 10 * 60 * 1000;
 
-const pendingGridStrikes: Array<{ lat: number; lon: number; time: number }> = [];
+// A module replacement reloads the durable journal instead of counting the
+// previous module's pending memory twice.
+recentStrikes.length = 0;
+for (const p of restoredIntake) {
+  if (p.id <= intakeThrough && p.live && p.time > restorationTime - HISTORY_LIFETIME_MS && p.time <= restorationTime) {
+    recentStrikes.push({ lat: p.lat, lon: p.lon, cc: p.cc, time: p.time });
+  }
+}
 
 // ── SSE client registry (shared with server.mjs via globalThis) ────────
 const enc = new TextEncoder();
@@ -71,38 +90,53 @@ function broadcastSSE(chunk: string) {
 }
 
 // ── Core strike processor — registered on globalThis for server.mjs ────
-function processStrike(lat: number, lon: number, time?: number) {
-  const today = todayDate();
-  if (today !== currentDay) {
-    saveDailyAndPeaks(currentDay, todayCounts);
-    todayCounts = {};
-    currentDay = today;
-    (globalThis as any)._todayDate = currentDay;
-    (globalThis as any)._todayCounts = todayCounts;
+function applyAcceptedStrike(point: IntakeStrike, publish: boolean) {
+  const { lat, lon, cc, time: t } = point;
+  let dayCounts = dailyCounts.get(point.countDate);
+  if (!dayCounts) {
+    dayCounts = { ...loadDailyStrikes(point.countDate) };
+    dailyCounts.set(point.countDate, dayCounts);
   }
-
-  let cc: string | null = null;
-  try { cc = getCountryCode(lat, lon); } catch { /* non-fatal */ }
-
+  currentDay = point.countDate;
+  todayCounts = dayCounts;
+  (globalThis as any)._todayDate = currentDay;
+  (globalThis as any)._todayCounts = todayCounts;
   serverTotal++;
   (globalThis as any)._serverTotal = serverTotal;
   const countCc = cc ?? 'XO';
   serverCountryCounts[countCc] = (serverCountryCounts[countCc] ?? 0) + 1;
   todayCounts[countCc] = (todayCounts[countCc] ?? 0) + 1;
-
-  // Prefer the upstream discharge time; fall back to arrival time when it is
-  // missing or in the future
-  const now = Date.now();
-  const t = typeof time === 'number' && time <= now + 60_000 ? time : now;
-  // Stale deliveries (reconnect backlogs) count toward the totals above, but
-  // restamping them into the live window would fabricate storm bursts
-  if (t > now - 10 * 60_000) {
+  intakeThrough = point.id;
+  if (point.live) {
     recentStrikes.push({ lat, lon, cc, time: t });
     if (recentStrikes.length > MAX_HISTORY) recentStrikes.shift();
-    pendingGridStrikes.push({ lat, lon, time: t });
-    broadcastSSE(`data: ${JSON.stringify({ lat, lon, cc, time: t })}\n\n`);
-    dispatchToStormSubscribers(lat, lon, t);
+    if (publish) {
+      broadcastSSE(`data: ${JSON.stringify({ lat, lon, cc, time: t })}\n\n`);
+      dispatchToStormSubscribers(lat, lon, t);
+    }
   }
+}
+
+function processStrikes(points: Array<{ lat: number; lon: number; time?: number }>) {
+  if (!accepting) throw new Error('Ingestion is stopped');
+  const now = Date.now();
+  const countDate = todayDate();
+  const deliveries: Array<Omit<IntakeStrike, 'id'>> = [];
+  for (const { lat, lon, time } of points) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
+    let cc: string | null = null;
+    try { cc = getCountryCode(lat, lon); } catch { /* non-fatal */ }
+    const t = typeof time === 'number' && Number.isFinite(time) && time <= now + 60_000 ? time : now;
+    deliveries.push({ identity: `${lat},${lon},${time ?? t}`, lat, lon, cc, time: t,
+      receivedAt: now, countDate, live: Number(t > now - HISTORY_LIFETIME_MS) });
+  }
+  // A whole upstream frame is one durable commit. No point becomes visible or
+  // contributes to counters until SQLite has accepted its immutable identity.
+  for (const point of appendStrikeIntake(deliveries)) applyAcceptedStrike(point, true);
+}
+
+function processStrike(lat: number, lon: number, time?: number) {
+  processStrikes([{ lat, lon, time }]);
 }
 
 // ── Stale-interval cleanup ─────────────────────────────────────────────
@@ -221,7 +255,7 @@ const ORIGIN_SAMPLE_MAX = 200;
 const trackedStorms: TrackedStorm[] = (() => {
   try {
     const saved = loadTrackedStorms() as TrackedStorm[];
-    const cutoff = Date.now() - STORM_DROP_MS;
+    const cutoff = restorationTime - STORM_DROP_MS;
     const loaded = saved.filter(st => Math.max(st.lastSeen, st.lastReplayTime ?? 0) > cutoff && st.key && st.cc && typeof st.lat === 'number');
     // Mark storms that are already in the DB so the map can link them immediately
     const dbKeys = getTrackedStormKeys();
@@ -259,8 +293,8 @@ const trackedStorms: TrackedStorm[] = (() => {
         } catch { /* non-fatal */ }
       }
     }
-    restoreStormCounting(loaded, Date.now());
-    compactStormCounting(loaded, Date.now());
+    restoreStormCounting(loaded, restorationTime);
+    compactStormCounting(loaded, restorationTime);
     return loaded;
   } catch { return []; }
 })();
@@ -268,7 +302,7 @@ const trackedStorms: TrackedStorm[] = (() => {
 // because the ingestion buffer has only collected a few seconds of lightning.
 // Restore recent observation ownership without ingesting/counting it again.
 {
-  const now = Date.now();
+  const now = restorationTime;
   const restored = new Map(recentStrikes.map(p => [lifecycleStrikeId(p), p]));
   for (const st of trackedStorms) {
     const points: StrikePoint[] = st.lifecycle?.members ?? st.replayAnchors?.map(([lat, lon, time]) => ({ lat, lon, time })) ?? [];
@@ -327,7 +361,7 @@ const STRIKE_SAMPLE_MAX = 4000;
 const ALL_STRIKES_MAX = 24_000;
 // Persisted on globalThis so hot-reloads in dev don't reset it and create
 // duplicate in-memory identities for the same physical storm.
-let stormSeq: number = (globalThis as any)._stormSeq ?? 0;
+let stormSeq: number = intakeCheckpoint?.stormSeq ?? (globalThis as any)._stormSeq ?? 0;
 
 function kmBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const dLat = (aLat - bLat) * 111.32;
@@ -407,15 +441,20 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   rememberReplayAnchors(st, members.map(roundPt), now);
 }
 
-(globalThis as any)._iv_dbFlush = setInterval(() => {
-  if ((globalThis as any)._processStrike !== processStrike) return;
+function flushIngestion(nowMs = Date.now(), publish = true) {
+  // SQLite can roll back writes, but the lifecycle planner also mutates memory.
+  // Restore that memory on failure so a retry cannot double events or lose a
+  // split/merge already removed from its original snapshot.
+  const savedStorms = structuredClone(trackedStorms);
+  const savedSeq = stormSeq;
+  const checkpoint = { through: intakeThrough, time: nowMs, stormSeq };
   try {
+    checkpointStrikeIntake(checkpoint, () => {
     saveCounters(serverTotal, serverCountryCounts);
-    saveDailyAndPeaks(currentDay, todayCounts);
+    for (const [date, counts] of dailyCounts) saveDailyAndPeaks(date, counts);
 
     // Compute current 5-min rates and persist any new peaks
     const WINDOW_MS = 5 * 60 * 1000;
-    const nowMs = Date.now();
     const cutoff5m = nowMs - WINDOW_MS;
     const fiveMinCounts: Record<string, number> = {};
     const byCountry: Record<string, RecentStrike[]> = {};
@@ -643,16 +682,29 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     // Persist in-flight storm state so a server restart doesn't wipe live storms
     compactStormCounting(trackedStorms, nowMs);
     saveTrackedStorms(trackedStorms);
-    publishStormOwnership(trackedStorms, nowMs);
-    // Both initial and periodic clients receive the same authoritative state.
-    broadcastSSE(`event: storms\ndata: ${JSON.stringify(stormLifecycleSummaries(trackedStorms, nowMs))}\n\n`);
-  } catch (err) { console.error('[db] flush failed:', err); }
+    // The planner may have allocated new keys inside this checkpoint.
+    checkpoint.stormSeq = stormSeq;
+    (globalThis as any)._stormSeq = stormSeq;
+    });
+  } catch (err) {
+    trackedStorms.splice(0, trackedStorms.length, ...savedStorms);
+    stormSeq = savedSeq;
+    (globalThis as any)._stormSeq = savedSeq;
+    throw err;
+  }
+  // A publication failure cannot roll memory back behind a committed snapshot.
+  publishStormOwnership(trackedStorms, nowMs);
+  for (const date of dailyCounts.keys()) if (date !== currentDay) dailyCounts.delete(date);
+  if (publish) broadcastSSE(`event: storms\ndata: ${JSON.stringify(stormLifecycleSummaries(trackedStorms, nowMs))}\n\n`);
+}
+
+(globalThis as any)._iv_dbFlush = setInterval(() => {
+  if ((globalThis as any)._processStrike !== processStrike) return;
+  try { flushIngestion(); } catch (err) { console.error('[db] flush failed:', err); }
 }, 30_000);
 
 (globalThis as any)._iv_gridBatch = setInterval(() => {
-  if (pendingGridStrikes.length === 0) return;
-  const batch = pendingGridStrikes.splice(0);
-  try { archiveGridStrikeBatch(batch); } catch (err) { console.error('[db] grid batch failed:', err); }
+  try { flushIntakeArchive(); } catch (err) { console.error('[db] grid batch failed:', err); }
 }, 5_000);
 
 (globalThis as any)._iv_hourly = setInterval(() => {
@@ -663,9 +715,36 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
   } catch (err) { console.error('[db] prune failed:', err); }
 }, 60 * 60 * 1000);
 
+// Re-run missed checkpoints at the original delivery clock. This is recovery,
+// not fresh lightning: never broadcast old intake or revive its timestamps.
+if (pendingIntake.length) {
+  let nextPass = Math.max(intakeCheckpoint?.time ?? pendingIntake[0].receivedAt, pendingIntake[0].receivedAt - 30_000) + 30_000;
+  for (const point of pendingIntake) {
+    // Long silent gaps need at most the ten-minute observation window; jumping
+    // farther still lets the next pass expire tracking/transition freshness.
+    if (point.receivedAt - nextPass > 20 * 60_000) nextPass = point.receivedAt;
+    while (nextPass < point.receivedAt) { flushIngestion(nextPass, false); nextPass += 30_000; }
+    applyAcceptedStrike(point, false);
+  }
+  const latestTime = pendingIntake.reduce((latest, p) => Math.max(latest, p.receivedAt, p.live ? p.time : 0), 0);
+  const recoveryEnd = Math.min(Date.now(), latestTime + 30_000);
+  while (nextPass < recoveryEnd) { flushIngestion(nextPass, false); nextPass += 30_000; }
+  flushIngestion(recoveryEnd, false);
+  const cutoff = Date.now() - HISTORY_LIFETIME_MS;
+  const visible = recentStrikes.filter(p => p.time > cutoff);
+  recentStrikes.splice(0, recentStrikes.length, ...visible);
+}
+
 // Publish the processor only after restoring tracking state and installing all
 // persistence jobs. Startup calls HEAD explicitly; it never needs an SSE client.
 (globalThis as any)._processStrike = processStrike;
+(globalThis as any)._processStrikes = processStrikes;
+(globalThis as any)._flushIngestion = () => flushIngestion();
+(globalThis as any)._stopIngestion = () => {
+  accepting = false;
+  for (const key of ['_iv_histPrune', '_iv_dbFlush', '_iv_gridBatch', '_iv_hourly']) clearInterval((globalThis as any)[key]);
+  flushIngestion();
+};
 const queued: Array<{ lat: number; lon: number; time?: number }> = (globalThis as any)._strikeQueue ?? [];
 (globalThis as any)._strikeQueue = [];
 for (const { lat, lon, time } of queued) processStrike(lat, lon, time);
@@ -673,7 +752,7 @@ for (const { lat, lon, time } of queued) processStrike(lat, lon, time);
 const ingestionTimers = ['_iv_histPrune', '_iv_dbFlush', '_iv_gridBatch', '_iv_hourly']
   .map(key => ({ key, timer: (globalThis as any)[key] }));
 (globalThis as any)._ingestionReady = () =>
-  (globalThis as any)._processStrike === processStrike
+  accepting && (globalThis as any)._processStrike === processStrike
   && ingestionTimers.every(({ key, timer }) => timer && !timer._destroyed && (globalThis as any)[key] === timer);
 
 /** Finite startup handshake: initialize ingestion without subscribing a viewer. */

@@ -25,6 +25,7 @@ class MockSocket {
   readyState = 1;
   handlers = new Map<string, Handler[]>();
   send = vi.fn();
+  terminate = vi.fn(() => { this.readyState = 3; this.emit('close', 1006); });
   constructor(readonly url: string, readonly options: { rejectUnauthorized?: boolean } = {}) { upstreams.push(this); }
   on(event: string, handler: Handler) {
     this.handlers.set(event, [...this.handlers.get(event) ?? [], handler]);
@@ -76,6 +77,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (globals._ingestionSignalHandler) {
+    process.off('SIGTERM', globals._ingestionSignalHandler);
+    process.off('SIGINT', globals._ingestionSignalHandler);
+    delete globals._ingestionSignalHandler;
+  }
+  delete globals._stopIngestion;
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -236,4 +243,33 @@ it('keeps readiness independent of homepage warming and reports missing ingestio
   expect(attempts).toHaveLength(1);
   expect(upstreams).toHaveLength(2);
   expect(frameworkHandler).not.toHaveBeenCalled();
+});
+
+
+it('closes feeds and pending reconnects before flushing once on shutdown', async () => {
+  await startListening();
+  installProcessor();
+  attempts[0].resolve(new Response(null, { status: 200 }));
+  await vi.advanceTimersByTimeAsync(0);
+  for (const socket of upstreams) socket.emit('open');
+  upstreams[0].readyState = 3;
+  upstreams[0].emit('close', 1006); // A reconnect is waiting when shutdown arrives.
+  const stop = vi.fn(() => {
+    expect(upstreams.every(socket => socket.readyState === 3)).toBe(true);
+    expect(upstreams[1].terminate).toHaveBeenCalledOnce();
+    for (const key of timerKeys) clearInterval(globals[key]);
+  });
+  globals._stopIngestion = stop;
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  expect(process.listeners('SIGTERM')).toContain(globals._ingestionSignalHandler);
+  expect(process.listeners('SIGINT')).toContain(globals._ingestionSignalHandler);
+  globals._ingestionSignalHandler();
+  globals._ingestionSignalHandler();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(stop).toHaveBeenCalledOnce();
+  expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+  await expectHealth(503, 'starting');
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(upstreams).toHaveLength(2);
+  expect(exit).toHaveBeenCalledOnce();
 });

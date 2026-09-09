@@ -17,6 +17,10 @@ globalThis._seenStrikeIds = new Set();
 globalThis._seenStrikeQueue = [];
 
 const SEEN_IDS_MAX = 50_000;
+let stopping = false;
+const upstreamSockets = new Set();
+const reconnectTimers = new Set();
+const upstreamHeartbeats = new Set();
 
 // lightningmaps' own `id` is NOT a stable stroke identity: the upstream feed
 // resends every stroke under a fresh sequential id (confirmed by probing
@@ -77,15 +81,18 @@ const LM_WS = [
 function connectLMWS(url) {
   const name = url.replace('wss://', '');
   const connect = () => {
+    if (stopping) return;
     const ws = new WebSocket(url, {
       headers: { Origin: 'https://www.lightningmaps.org' },
       handshakeTimeout: 15_000,
       rejectUnauthorized: true,
     });
 
+    upstreamSockets.add(ws);
     let heartbeat = null;
 
     ws.on('open', () => {
+      if (stopping) { ws.terminate(); return; }
       markConnected(name);
       const sendUpdate = (reason) => {
         if (ws.readyState !== 1) return;
@@ -99,31 +106,38 @@ function connectLMWS(url) {
       };
       sendUpdate({});
       heartbeat = setInterval(() => sendUpdate('w'), 45_000);
+      upstreamHeartbeats.add(heartbeat);
     });
 
     ws.on('message', (raw) => {
+      if (stopping) return;
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
       try {
-        const msg = JSON.parse(raw.toString());
         if (typeof msg.k === 'number') {
           ws.send(`{"k": ${(msg.k * 3604) % 7081 * Date.now() / 100} }`);
         } else if (Array.isArray(msg.strokes)) {
-          for (const s of msg.strokes) {
-            if (typeof s.lat === 'number' && typeof s.lon === 'number') {
-              // s.time is the actual discharge time — arrival time would collapse
-              // reconnect backlogs into artificial bursts
-              if (!isWsDuplicate(s.lat, s.lon, s.time)) onStrike(s.lat, s.lon, s.time);
-            }
-          }
+          const points = msg.strokes.filter(s => typeof s.lat === 'number' && typeof s.lon === 'number'
+            && !isWsDuplicate(s.lat, s.lon, s.time));
+          if (typeof globalThis._processStrikes === 'function') globalThis._processStrikes(points);
+          else for (const s of points) onStrike(s.lat, s.lon, s.time);
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error('[ingestion] intake failed; stopping before accepting further data:', err);
+        void shutdown(1);
+      }
     });
 
     ws.on('error', (err) => console.error(`[${name}] error:`, err.message));
     ws.on('close', (code, reason) => {
-      if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+      if (heartbeat) { clearInterval(heartbeat); upstreamHeartbeats.delete(heartbeat); heartbeat = null; }
+      upstreamSockets.delete(ws);
       console.log(`[${name}] closed: ${code} ${reason?.toString()}`);
       markDisconnected(name);
-      setTimeout(connect, 5_000);
+      if (!stopping) {
+        const retry = setTimeout(() => { reconnectTimers.delete(retry); connect(); }, 5_000);
+        reconnectTimers.add(retry);
+      }
     });
   };
   connect();
@@ -139,7 +153,7 @@ let ingestionStarted = false;
 // Load the Node route explicitly, without opening a long-lived SSE stream or
 // adding a viewer. Failed attempts stay unready and retry with feeds stopped.
 async function startIngestion() {
-  while (!ingestionStarted) {
+  while (!ingestionStarted && !stopping) {
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 30_000);
     try {
@@ -149,6 +163,7 @@ async function startIngestion() {
       if (!response.ok || !globalThis._ingestionReady?.()) {
         throw new Error(`processor not ready (HTTP ${response.status})`);
       }
+      if (stopping) return;
       LM_WS.forEach(connectLMWS);
       ingestionStarted = true;
       console.log('[ingestion] ready; upstream feeds started');
@@ -158,14 +173,14 @@ async function startIngestion() {
     } finally {
       clearTimeout(timeout);
     }
-    if (!ingestionStarted) await new Promise(resolve => setTimeout(resolve, 5_000));
+    if (!ingestionStarted && !stopping) await new Promise(resolve => setTimeout(resolve, 5_000));
   }
 }
 
 const server = createServer(async (req, res) => {
   const parsedUrl = parse(req.url, true);
   if (parsedUrl.pathname === '/healthz') {
-    const ready = ingestionStarted && globalThis._ingestionReady?.() === true;
+    const ready = !stopping && ingestionStarted && globalThis._ingestionReady?.() === true;
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ status: ready ? 'ready' : 'starting' }));
     return;
@@ -190,10 +205,44 @@ wss.on('connection', (ws) => {
   ws.on('error', () => { globalThis._wsClients.delete(ws); broadcast(); });
 });
 
-setInterval(() => {
+const broadcastTimer = setInterval(() => {
   if (globalThis._wsClients.size === 0) return;
   broadcast();
 }, 1000);
+
+// Close admission first, then commit all accepted intake before terminating.
+// If persistence fails, the journal remains for crash recovery on the next boot.
+async function shutdown(exitCode = 0) {
+  if (stopping) return;
+  stopping = true;
+  const forceExit = setTimeout(() => process.exit(exitCode || 1), 10_000);
+  forceExit.unref();
+  for (const timer of reconnectTimers) clearTimeout(timer);
+  for (const timer of upstreamHeartbeats) clearInterval(timer);
+  clearInterval(broadcastTimer);
+  for (const socket of upstreamSockets) socket.terminate();
+  try { globalThis._stopIngestion?.(); }
+  catch (err) { exitCode = 1; console.error('[ingestion] shutdown checkpoint failed; durable intake will recover:', err); }
+  for (const controller of globalThis._sseControllers) { try { controller.close(); } catch {} }
+  for (const socket of globalThis._wsClients) socket.terminate();
+  wss.close?.();
+  try {
+    await Promise.all([
+      new Promise(resolve => server.close ? server.close(resolve) : resolve()),
+      app.close?.(),
+    ]);
+  } catch (err) { exitCode = 1; console.error('[ingestion] shutdown failed:', err); }
+  clearTimeout(forceExit);
+  process.exit(exitCode);
+}
+// Named registration also makes repeated module loads in tests safe.
+if (globalThis._ingestionSignalHandler) {
+  process.off('SIGTERM', globalThis._ingestionSignalHandler);
+  process.off('SIGINT', globalThis._ingestionSignalHandler);
+}
+globalThis._ingestionSignalHandler = () => { void shutdown(); };
+process.on('SIGTERM', globalThis._ingestionSignalHandler);
+process.on('SIGINT', globalThis._ingestionSignalHandler);
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`> Listening on http://0.0.0.0:${port}; initializing ingestion`);

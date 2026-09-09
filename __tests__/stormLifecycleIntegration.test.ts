@@ -90,6 +90,9 @@ it('the actual tracking route confirms split/merge once, preserves counts/replay
   countryLookup.mockReturnValueOnce(null);
   const lookupsBeforeReload = countryLookup.mock.calls.length;
   db.saveTrackedStorms(storms);
+  // These two fixtures represent older snapshots from before intake metadata
+  // existed. Modern journal entries already preserve their original country.
+  for (const p of [oceanPoint, legacyPoint]) sql.prepare('DELETE FROM strike_intake WHERE lat = ? AND lon = ? AND strike_time = ?').run(p.lat, p.lon, p.time);
   globals._recentStrikes = [];
   vi.resetModules();
   route = await import('../app/api/strikes/route');
