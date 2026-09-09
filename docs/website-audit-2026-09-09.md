@@ -1,18 +1,8 @@
 **Website audit — 9 September 2026**
 
-Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining findings affect storm totals, replay ownership, recording after startup, and map history. Findings retain their original numbers as verified fixes are removed.
+Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining findings affect replay ownership, recording after startup, and map history. Findings retain their original numbers as verified fixes are removed.
 
 The review combined Chrome desktop/mobile navigation, ordinary production API requests, source inspection, and disposable SQLite reproductions. Production was not restarted or load-tested. The live bundle contains the recent shared transition display code, although bundle markers alone do not establish an exact deployed commit. Local findings below identify their reproduction boundaries explicitly.
-
-2. **High priority: valid late-arriving strikes are omitted from official storm totals.**
-
-   `accumulateStrikes` skips every strike whose timestamp is at or before the last counted timestamp. A newly delivered strike can have an older timestamp without being a duplicate.
-
-   Reproduction through the actual route: first ingest 150 strikes, complete a tracking pass, then ingest 100 distinct strikes with slightly earlier discharge timestamps. The global counter, raw archive, and current storm ownership all contained **250 strikes**, while the official storm total and saved replay remained at **150**. The current rate included the missing strikes, making rate and lifetime count inconsistent.
-
-   Reading the finished replay two hours later recovered its 250 points in this fixture, but the official total remained 150. Such replay recovery depends on surviving raw data, suitable saved anchors, and a later read; it does not repair storm counts.
-
-   Source: [accumulateStrikes](../app/api/strikes/route.ts), lines 377–395. Repair direction: identify already-counted strikes by identity within a bounded lateness window, with durable restart state, instead of treating timestamp order as uniqueness. Test late, equal-time, duplicate, and reconnect deliveries.
 
 3. **High priority: opening a finished replay can permanently add another storm's strikes.**
 
@@ -56,7 +46,7 @@ The review combined Chrome desktop/mobile navigation, ordinary production API re
 
 **Validation and scope**
 
-The original audit suite passed: **267 tests in 26 files**. After the first verified fix, **283 tests in 29 files** and TypeScript with `--noEmit --incremental false` pass. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
+The original audit suite passed: **267 tests in 26 files**. The current suite passes **307 tests in 33 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
 
 Desktop Chrome at 1500 px and mobile Chrome emulation at 390 px covered the homepage, archive, daily totals, country pages, storm list, active and finished storm details, replay controls, records, navigation, and saved preferences. The tested mobile pages had no horizontal overflow. Daily Totals remained selected after reload, its counts updated, and the Dutch locale persisted. Playback advanced and controls responded in the sampled finished storm. Hydration errors on storm detail pages are documented separately in the browser evidence; the pages recovered and remained usable.
 
@@ -64,4 +54,4 @@ The review did not observe an entire five-minute split/merge cycle on production
 
 Original reproduction scripts, compact result JSON, and screenshots are under `/tmp/lightning-website-audit-2026-09-09/` on this machine. Those scripts target the audited commit and may intentionally fail after the relevant defect is fixed.
 
-Suggested implementation order for remaining work: correct delayed-strike accounting; make finished-replay recovery respect ownership; make startup and persistence independent of visitors; then repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.
+Suggested implementation order for remaining work: make finished-replay recovery respect ownership; make startup and persistence independent of visitors; then repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.

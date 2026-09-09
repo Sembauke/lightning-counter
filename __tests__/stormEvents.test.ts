@@ -6,6 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { detectStorms, type StrikePoint } from '../app/lib/stormClusters';
+import { countStormStrike, emptyStormCounting } from '../app/lib/stormCounting';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -685,47 +686,32 @@ describe('StormEvent structure', () => {
   });
 });
 
-// ── accumulateStrikes — no thinning ─────────────────────────────────────
-// Mirrors the (now-unconditional) append loop in route.ts's accumulateStrikes:
-// every strike is kept, with no cap that halves/decimates allStrikes once it
-// grows large. Guards against that cap being silently reintroduced.
+// ── Official counts are independent of replay sampling and delivery order ──
 
-function accumulateStrikes(
-  storm: Pick<MinTrackedStorm, 'allStrikes' | 'totalStrikes' | 'lastSeen'> & { lastStrikeTime: number },
-  members: Array<{ lat: number; lon: number; time: number }>,
-): void {
-  let newest = storm.lastStrikeTime;
-  for (const m of members) {
-    if (m.time < storm.lastStrikeTime) continue;
-    storm.totalStrikes++;
-    storm.allStrikes.push([m.lat, m.lon, m.time]);
-    if (m.time > newest) newest = m.time;
-  }
-  storm.lastStrikeTime = newest;
-}
-
-describe('accumulateStrikes — no thinning', () => {
-  it('keeps every strike across many passes, well past the old 24k cap', () => {
-    const storm = { allStrikes: [] as [number, number, number][], totalStrikes: 0, lastSeen: 0, lastStrikeTime: -1 };
+describe('official strike accumulation', () => {
+  it('counts every strike across many passes, beyond the 24k replay sample cap', () => {
+    const storm = { key: 'bulk', totalStrikes: 0, counting: emptyStormCounting() };
+    const now = Date.UTC(2026, 8, 9, 18);
     const passes = 50;
-    const perPass = 1000; // 50,000 strikes total — over 2x the old ALL_STRIKES_MAX
-    let time = 0;
+    const perPass = 1000;
+    let time = now - 60_000;
     for (let pass = 0; pass < passes; pass++) {
       const members = Array.from({ length: perPass }, () => ({ lat: 52, lon: 5, time: time++ }));
-      accumulateStrikes(storm, members);
+      for (const point of members) countStormStrike(storm, point, now);
     }
     expect(storm.totalStrikes).toBe(passes * perPass);
-    expect(storm.allStrikes.length).toBe(passes * perPass);
   });
 
-  it('skips strikes older than the last-seen time from a previous overlapping pass', () => {
-    const storm = { allStrikes: [] as [number, number, number][], totalStrikes: 0, lastSeen: 0, lastStrikeTime: -1 };
-    accumulateStrikes(storm, [{ lat: 1, lon: 1, time: 10 }, { lat: 1, lon: 1, time: 20 }]);
-    // Overlapping pass: time 15 is older than lastStrikeTime (20) and is skipped,
-    // only time 25 is net-new
-    accumulateStrikes(storm, [{ lat: 1, lon: 1, time: 15 }, { lat: 1, lon: 1, time: 25 }]);
-    expect(storm.totalStrikes).toBe(3);
-    expect(storm.allStrikes.length).toBe(3);
+  it('counts an unseen older strike while ignoring an identical repeated strike', () => {
+    const storm = { key: 'delayed', totalStrikes: 0, counting: emptyStormCounting() };
+    const now = Date.UTC(2026, 8, 9, 18);
+    const point = (offset: number) => ({ lat: 1, lon: 1, time: now - 1000 + offset });
+    expect(countStormStrike(storm, point(10), now)).toBe(true);
+    expect(countStormStrike(storm, point(20), now)).toBe(true);
+    expect(countStormStrike(storm, point(15), now)).toBe(true);
+    expect(countStormStrike(storm, point(20), now)).toBe(false);
+    expect(countStormStrike(storm, point(25), now)).toBe(true);
+    expect(storm.totalStrikes).toBe(4);
   });
 });
 

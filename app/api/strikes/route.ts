@@ -8,7 +8,7 @@ import { detectStormFootprints } from '../../lib/stormFootprint';
 import { combineStormLifecycle, lifecycleStrikeId, reconcileStormLifecycle, stormLifecycleSummaries, type StormLifecycleState } from '../../lib/stormLifecycle';
 import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from '../../lib/stormReplayTail';
 import { updateStormReplay } from '../../lib/db';
-import { compactStormCounting, emptyStormCounting, mergeStormCounting, remapStormCountingKeys, rememberCountedStrike, sharedStormStrikeCount, type StormCountingState } from '../../lib/stormCounting';
+import { compactStormCounting, countStormStrike, emptyStormCounting, mergeStormCounting, remapStormCountingKeys, sharedStormStrikeCount, type StormCountingState } from '../../lib/stormCounting';
 import { restoreStormCounting } from '../../lib/stormCountingMigration';
 
 // Merge events without a known relationship retain a null contribution: old
@@ -167,8 +167,8 @@ interface TrackedStorm extends ReplayTailStorm {
   lastSeen: number;
   currentRate: number;
   inDb: boolean;
-  // Full-life strike accumulation for the replay: passes overlap, so only
-  // strikes newer than lastStrikeTime get appended
+  // Full-life replay sample. Official counting uses persisted strike identities
+  // so overlapping passes and delayed deliveries cannot count a point twice.
   allStrikes: StormStrike[];
   // A small, fixed-size, never-thinned sample of this storm's true earliest
   // strikes (its own — adopted from an ancestor's if that ancestor's origin
@@ -375,26 +375,27 @@ function withOriginSample(origin: StormStrike[], recent: StormStrike[]): StormSt
 }
 
 /** Append a pass's new strikes to the storm's full-life accumulation */
-function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>): void {
-  let newest = st.lastStrikeTime;
+function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: number; time: number }>, now: number): void {
+  let newest = Number.isFinite(st.lastStrikeTime) ? st.lastStrikeTime : 0;
   let newestMember: { lat: number; lon: number; time: number } | null = null;
   // A re-strengthening cell can qualify points already saved in its quiet
   // replay tail. Count them once officially, but keep one replay copy.
   const saved = new Set(st.allStrikes.map(s => `${s[0]},${s[1]},${s[2]}`));
+  const origins = new Map(st.originSample.map(p => [`${p[0]},${p[1]},${p[2]}`, p]));
   for (const m of members) {
-    if (m.time <= st.lastStrikeTime) continue;
-    st.totalStrikes++;
-    rememberCountedStrike(st, m);
+    if (!countStormStrike(st, m, now)) continue;
     const p = roundPt(m);
     const id = `${p[0]},${p[1]},${p[2]}`;
     if (st.appendSeq++ % st.keepEvery === 0 && !saved.has(id)) {
       st.allStrikes.push(p);
       saved.add(id);
     }
-    if (st.originSample.length < ORIGIN_SAMPLE_MAX) st.originSample.push(roundPt(m));
+    origins.set(id, p);
     if (m.time > newest) { newest = m.time; newestMember = m; }
   }
   st.lastStrikeTime = newest;
+  // Late delivery may reveal an earlier start even after the reservoir filled.
+  st.originSample = [...origins.values()].sort((a, b) => a[2] - b[2]).slice(0, ORIGIN_SAMPLE_MAX);
   if (st.allStrikes.length > ALL_STRIKES_MAX) {
     st.keepEvery *= 2;
     st.allStrikes = st.allStrikes.filter((_, i) => i % 2 === 0);
@@ -409,7 +410,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
     const p = roundPt(newestMember);
     if (!st.allStrikes.some(s => s[0] === p[0] && s[1] === p[1] && s[2] === p[2])) st.allStrikes.push(p);
   }
-  rememberReplayAnchors(st, members.map(roundPt), Date.now());
+  rememberReplayAnchors(st, members.map(roundPt), now);
 }
 
 (globalThis as any)._iv_dbFlush = setInterval(() => {
@@ -492,8 +493,7 @@ function accumulateStrikes(st: TrackedStorm, members: Array<{ lat: number; lon: 
       st.lastSeen = nowMs;
       st.currentRate = members.length / 5;
       if (members.length > st.peakCount) { st.peakCount = members.length; st.peakRate = st.currentRate; }
-      // One call per owner is essential: split branches share one time watermark.
-      accumulateStrikes(st, members);
+      accumulateStrikes(st, members, nowMs);
       matched.add(st);
       for (const p of members) reserved.add(p);
     }

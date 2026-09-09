@@ -12,7 +12,12 @@ export interface StormCountingState {
   /** Disjoint, older sets of shared strikes: cohort identity -> cardinality. */
   cohorts: Record<string, number>;
   /** Pre-upgrade totals whose sampled history cannot prove exact ownership. */
-  legacy?: { total: number; ancestors: Record<string, number> };
+  legacy?: {
+    total: number;
+    ancestors: Record<string, number>;
+    /** Unknown baseline strikes at/before this time cannot safely be recounted. */
+    through?: number;
+  };
 }
 
 export interface CountingStorm {
@@ -28,6 +33,22 @@ export function emptyStormCounting(): StormCountingState {
 export function rememberCountedStrike(storm: CountingStorm, point: StrikePoint): void {
   const state = storm.counting ??= emptyStormCounting();
   state.recent[lifecycleStrikeId(point)] = point.time;
+}
+
+/** Count an eligible official strike once, independently of delivery order. */
+export function countStormStrike(storm: CountingStorm, point: StrikePoint, now: number): boolean {
+  // Exact IDs expire after ten minutes. Do not reinterpret compacted or retired
+  // history as new strikes; the tracker supplies only five-minute active members.
+  if (![point.lat, point.lon, point.time].every(Number.isFinite)
+      || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180
+      || point.time <= now - COUNTED_STRIKE_WINDOW_MS || point.time > now) return false;
+  const state = storm.counting ??= emptyStormCounting();
+  const id = lifecycleStrikeId(point);
+  if (has(state.recent, id)) return false;
+  if (point.time <= (state.legacy?.through ?? -Infinity)) return false;
+  state.recent[id] = point.time;
+  storm.totalStrikes++;
+  return true;
 }
 
 function exactOverlap(a: StormCountingState, b: StormCountingState): number {
@@ -76,7 +97,9 @@ export function mergeStormCounting(big: CountingStorm, small: CountingStorm): nu
     }
     delete ancestors[big.key];
     delete ancestors[small.key];
-    left.legacy = { total: a.total + b.total - legacyOverlap(big, small), ancestors };
+    const through = Math.max(left.legacy?.through ?? -Infinity, right.legacy?.through ?? -Infinity);
+    left.legacy = { total: a.total + b.total - legacyOverlap(big, small), ancestors,
+      ...(Number.isFinite(through) ? { through } : {}) };
   }
 
   Object.assign(left.recent, right.recent);

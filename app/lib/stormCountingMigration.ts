@@ -8,7 +8,33 @@ export interface MigratingCountingStorm extends CountingStorm {
   allStrikes?: Array<[number, number, number]>;
   initialStrikesByAncestor?: Record<string, number>;
   splitNotBefore?: number;
-  lifecycle?: { transitions: StormTransition[] };
+  lifecycle?: {
+    transitions: StormTransition[];
+    splitTransition?: StormTransition;
+    distantSplit?: { transition: StormTransition };
+  };
+}
+
+/** Unknown legacy contributions cannot be identified from a sampled replay. */
+function legacyThrough(storm: MigratingCountingStorm, now: number): number {
+  const watermark = Number.isFinite(storm.lastStrikeTime) ? Math.min(storm.lastStrikeTime!, now) : now;
+  // The original migration guaranteed that its opaque history was older than
+  // this floor minus one seed window. Merges preserve the latest such floor.
+  return Number.isFinite(storm.splitNotBefore)
+    ? Math.min(watermark, storm.splitNotBefore! - STORM_TRANSITION_MS)
+    : watermark;
+}
+
+function protectSplitSeeds(storm: MigratingCountingStorm, through: number): void {
+  const floor = Math.max(storm.splitNotBefore ?? 0, through + STORM_TRANSITION_MS);
+  storm.splitNotBefore = floor;
+  const clamp = (transition: StormTransition): StormTransition => transition.kind === 'split' && transition.confirmAt < floor
+    ? { ...transition, confirmAt: floor } : transition;
+  if (storm.lifecycle) {
+    storm.lifecycle.transitions = storm.lifecycle.transitions.map(clamp);
+    if (storm.lifecycle.splitTransition) storm.lifecycle.splitTransition = clamp(storm.lifecycle.splitTransition);
+    if (storm.lifecycle.distantSplit) storm.lifecycle.distantSplit.transition = clamp(storm.lifecycle.distantSplit.transition);
+  }
 }
 
 /**
@@ -32,13 +58,23 @@ function completeOfficialSample(storm: MigratingCountingStorm): Record<string, n
 /**
  * Migrate a saved tracking snapshot as one group. Mixed exact/opaque historical
  * accounting cannot safely compare scalar ancestry against exact new counts.
- * Existing versioned states are never reset or reinterpreted here.
+ * Existing versioned counters and ownership are preserved. Older opaque
+ * ledgers receive a one-time boundary for safe late-arrival counting.
  *
  * Call the shared-history compactor immediately afterward: exact migration
  * temporarily exposes full saved samples so old intersections become weighted
  * cohorts, rather than retaining lifetime point IDs.
  */
 export function restoreStormCounting(storms: MigratingCountingStorm[], now: number) {
+  for (const storm of storms) {
+    const baseline = storm.counting?.legacy;
+    if (!baseline) continue;
+    // The first counting-ledger release did not persist a lateness boundary.
+    // Upgrade that baseline once; advancing it on every restart would discard
+    // newly arriving strikes whose ownership can already be proved exactly.
+    if (!Number.isFinite(baseline.through)) baseline.through = legacyThrough(storm, now);
+    protectSplitSeeds(storm, baseline.through!);
+  }
   const legacy = storms.filter(storm => !storm.counting);
   if (!legacy.length) return { mode: 'unchanged' as const, migrated: 0, mixed: false };
 
@@ -56,6 +92,7 @@ export function restoreStormCounting(storms: MigratingCountingStorm[], now: numb
       counting.legacy = {
         total: storm.totalStrikes,
         ancestors: { ...(storm.initialStrikesByAncestor ?? {}) },
+        through: Number.isFinite(storm.lastStrikeTime) ? Math.min(storm.lastStrikeTime!, now) : now,
       };
       // A child seeds its count from the last five minutes. Wait until that
       // entire window has exact ownership, even if a distant split confirms
@@ -66,6 +103,7 @@ export function restoreStormCounting(storms: MigratingCountingStorm[], now: numb
           ? { ...transition, startedAt: now, confirmAt: now + STORM_TRANSITION_MS }
           : transition);
       }
+      protectSplitSeeds(storm, counting.legacy.through!);
     }
     storm.counting = counting;
   }

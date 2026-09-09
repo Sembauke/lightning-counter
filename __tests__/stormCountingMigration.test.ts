@@ -62,8 +62,8 @@ describe('storm counting snapshot migration', () => {
     const ancestors = { A: 100 };
     const b = storm('B', [third], { keepEvery: 2, totalStrikes: 400, initialStrikesByAncestor: ancestors });
     expect(restoreStormCounting([a, b], NOW)).toEqual({ mode: 'legacy', migrated: 2, mixed: false });
-    expect(a.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 2, ancestors: {} } });
-    expect(b.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 400, ancestors: { A: 100 } } });
+    expect(a.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 2, ancestors: {}, through: NOW - 30_000 } });
+    expect(b.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 400, ancestors: { A: 100 }, through: NOW - 30_000 } });
     expect(b.counting!.legacy!.ancestors).not.toBe(ancestors);
     expect([a.totalStrikes, b.totalStrikes]).toEqual([2, 400]);
     // Also protects a distant split that starts after migration, when no
@@ -123,7 +123,90 @@ describe('storm counting snapshot migration', () => {
     expect(restoreStormCounting([versioned, unversioned], NOW)).toEqual({ mode: 'legacy', migrated: 1, mixed: true });
     expect(versioned.counting).toBe(counting);
     expect(versioned.lifecycle!.transitions[0]).toBe(transition);
-    expect(unversioned.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 2, ancestors: { A: 1 } } });
+    expect(unversioned.counting).toEqual({ recent: {}, cohorts: {}, legacy: { total: 2, ancestors: { A: 1 }, through: NOW - 30_000 } });
+  });
+
+  it('sets a bounded unknown-history cutoff on newly opaque snapshots without inferring IDs from replay', () => {
+    const quiet: [number, number, number] = [45, 7.3, NOW - 10_000];
+    const a = storm('A', [first, second, quiet], { totalStrikes: 1000 });
+    restoreStormCounting([a], NOW);
+    expect(a.counting!.legacy!.through).toBe(NOW - 30_000);
+    expect(a.counting!.recent).toEqual({});
+    expect(a.counting!.recent[id(quiet)]).toBeUndefined();
+    const restored = JSON.parse(JSON.stringify(a)) as MigratingCountingStorm;
+    restored.lastStrikeTime = NOW + 90_000;
+    restoreStormCounting([restored], NOW + 120_000);
+    expect(restored.counting!.legacy!.through).toBe(NOW - 30_000);
+    expect(restored.splitNotBefore).toBe(NOW + STORM_TRANSITION_MS);
+  });
+
+  it('upgrades a versioned opaque ledger using its original migration floor instead of its newer watermark', () => {
+    const originalMigration = NOW - 600_000;
+    const counting = emptyStormCounting();
+    counting.legacy = { total: 1000, ancestors: { earlier: 25 } };
+    counting.recent[id(first)] = first[2];
+    const pending = hold('split');
+    const a = storm('A', [first], { totalStrikes: 1001, counting,
+      splitNotBefore: originalMigration + STORM_TRANSITION_MS, lifecycle: { transitions: [pending] } });
+    expect(restoreStormCounting([a], NOW)).toEqual({ mode: 'unchanged', migrated: 0, mixed: false });
+    expect(a.counting).toBe(counting);
+    expect(a.counting!.legacy).toEqual({ total: 1000, ancestors: { earlier: 25 }, through: originalMigration });
+    expect(a.counting!.recent).toEqual({ [id(first)]: first[2] });
+    expect(a.lifecycle!.transitions[0]).toBe(pending);
+    expect(a.splitNotBefore).toBe(originalMigration + STORM_TRANSITION_MS);
+    a.lastStrikeTime = NOW + 60_000;
+    restoreStormCounting([a], NOW + 90_000);
+    expect(a.counting!.legacy!.through).toBe(originalMigration);
+  });
+
+  it('protects pending split seed windows when an older ledger lacks a migration floor', () => {
+    const counting = emptyStormCounting();
+    counting.legacy = { total: 1000, ancestors: {} };
+    const pending = hold('split');
+    const merge = hold('merge');
+    const a = storm('A', [first], { totalStrikes: 1000, counting,
+      lifecycle: { transitions: [pending, merge], splitTransition: pending,
+        distantSplit: { transition: pending } } });
+    restoreStormCounting([a], NOW);
+    const floor = NOW - 30_000 + STORM_TRANSITION_MS;
+    expect(a.counting!.legacy!.through).toBe(NOW - 30_000);
+    expect(a.splitNotBefore).toBe(floor);
+    expect(a.lifecycle!.transitions[0]).toEqual({ ...pending, confirmAt: floor });
+    expect(a.lifecycle!.transitions[1]).toBe(merge);
+    expect(a.lifecycle!.splitTransition).toEqual({ ...pending, confirmAt: floor });
+    expect(a.lifecycle!.distantSplit!.transition).toEqual({ ...pending, confirmAt: floor });
+    const restored = JSON.parse(JSON.stringify(a)) as MigratingCountingStorm;
+    restored.lastStrikeTime = NOW + 90_000;
+    restoreStormCounting([restored], NOW + 120_000);
+    expect(restored.counting!.legacy!.through).toBe(NOW - 30_000);
+    expect(restored.splitNotBefore).toBe(floor);
+    expect(restored.lifecycle!.transitions[0].confirmAt).toBe(floor);
+  });
+
+  it('uses a finite present-time cutoff when an opaque snapshot has no usable watermark', () => {
+    for (const lastStrikeTime of [undefined, NaN, NOW + 120_000]) {
+      const counting = emptyStormCounting();
+      counting.legacy = { total: 1000, ancestors: {} };
+      const a = storm('A', [first], { totalStrikes: 1000, counting, lastStrikeTime });
+      restoreStormCounting([a], NOW);
+      expect(a.counting!.legacy!.through).toBe(NOW);
+      expect(a.splitNotBefore).toBe(NOW + STORM_TRANSITION_MS);
+    }
+  });
+
+  it('leaves exact versioned ledgers and their pending split state unchanged', () => {
+    const counting = emptyStormCounting();
+    counting.recent[id(first)] = first[2];
+    const pending = hold('split');
+    const a = storm('A', [first], { counting,
+      lifecycle: { transitions: [pending], splitTransition: pending, distantSplit: { transition: pending } } });
+    expect(restoreStormCounting([a], NOW).mode).toBe('unchanged');
+    expect(a.counting).toBe(counting);
+    expect(a.counting!.legacy).toBeUndefined();
+    expect(a.splitNotBefore).toBeUndefined();
+    expect(a.lifecycle!.transitions[0]).toBe(pending);
+    expect(a.lifecycle!.splitTransition).toBe(pending);
+    expect(a.lifecycle!.distantSplit!.transition).toBe(pending);
   });
 
   it('does nothing for an empty snapshot', () => {
