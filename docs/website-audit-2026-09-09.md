@@ -1,20 +1,10 @@
 **Website audit — 9 September 2026**
 
-Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. The remaining numbered finding affects map history. Findings retain their original numbers as verified fixes are removed.
+Originally reviewed commit `f846084120850bfc816016d21dfd0c991a727a9f` and the live website. Verified fixes have been removed; the remaining findings are listed below.
 
 The review combined Chrome desktop/mobile navigation, ordinary production API requests, source inspection, and disposable SQLite reproductions. Production was not restarted or load-tested. The live bundle contains the recent shared transition display code, although bundle markers alone do not establish an exact deployed commit. Local findings below identify their reproduction boundaries explicitly.
 
-5. **Medium priority, confirmed on production: zooming out silently removes older map history.**
-
-   The map requests 30 minutes of strikes, but the viewport query returns only the newest 20,000 matches. The response has no pagination or indication that it is incomplete. The client replaces its historical buffer with that response.
-
-   Two ordinary requests to the live [viewport API](https://lightning-stats.com/api/grid/viewport), with the same time cutoff, demonstrated the difference: the world view returned exactly **20,000 points**; the Europe view returned 16,139, including **288 older points missing from the world response**. Both responses were HTTP 200 and dynamically served. This is an API data omission, independent of outline drawing.
-
-   A bounded local reproduction stored 30,000 strikes across 29 minutes. Requesting the 30-minute viewport returned only 20,000 covering about 19.33 minutes: **10,000 strikes and almost ten minutes of history were silently omitted**. Initial stream history cannot restore all of that older data.
-
-   Source: [viewport query](../app/lib/db.ts), lines 1463–1475; [API response](../app/api/grid/viewport/route.ts); [client buffer replacement](../app/components/LightningMap.tsx), lines 284–302. Repair direction: bounded pagination or geographic subdivision with a stable time cutoff and explicit completeness information. Raising the limit alone moves the failure threshold. Guard against obsolete viewport responses overwriting newer ones.
-
-**Additional findings and risks**
+**Remaining findings and risks**
 
 - **Country detail totals freeze after loading — production confirmed.** On [Italy's archive page](https://lightning-stats.com/stats/IT), Today stayed at 139,345 for 61 seconds while the API increased from 139,354 to 139,477. The country page fetches its data only once. Add refresh behavior comparable to the main archive. Source: [CountryClient](../app/stats/[code]/CountryClient.tsx), lines 38–50.
 - **Storm detail pages fail initial hydration in other timezones — production confirmed.** The same finished storm loaded without errors in a UTC browser, but produced React hydration errors in Europe/Amsterdam: server-rendered 07:42–08:41 became 09:42–10:41 in the browser. React rebuilt the root on the client; the page and replay remained usable afterward. Format the initial render consistently, then apply the viewer's timezone after mounting. Sources: [fmtClock](../app/lib/format.ts), lines 18–21; [storm timeline labels](../app/storms/[key]/StormDetailClient.tsx), lines 415–416.
@@ -26,7 +16,7 @@ The review combined Chrome desktop/mobile navigation, ordinary production API re
 
 **Validation and scope**
 
-The original audit suite passed: **267 tests in 26 files**. The current suite passes **321 tests in 37 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
+The original audit suite passed: **267 tests in 26 files**. The current suite passes **348 tests in 40 files**, and TypeScript passes with `--noEmit --incremental false`. The temporary audit fixtures record the original defective behavior; current regression coverage lives in `__tests__`.
 
 Desktop Chrome at 1500 px and mobile Chrome emulation at 390 px covered the homepage, archive, daily totals, country pages, storm list, active and finished storm details, replay controls, records, navigation, and saved preferences. The tested mobile pages had no horizontal overflow. Daily Totals remained selected after reload, its counts updated, and the Dutch locale persisted. Playback advanced and controls responded in the sampled finished storm. Hydration errors on storm detail pages are documented separately in the browser evidence; the pages recovered and remained usable.
 
@@ -34,4 +24,4 @@ The review did not observe an entire five-minute split/merge cycle on production
 
 Original reproduction scripts, compact result JSON, and screenshots are under `/tmp/lightning-website-audit-2026-09-09/` on this machine. Those scripts target the audited commit and may intentionally fail after the relevant defect is fixed.
 
-Suggested implementation order for remaining work: repair viewport completeness and stale page totals. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.
+Suggested next work: repair stale page totals and storm-detail hydration. Address the framework upgrade alongside those changes with appropriate compatibility checks. Existing user changes in `app/globals.css` and `tsconfig.tsbuildinfo` were left untouched.

@@ -94,6 +94,11 @@
     "stormsFound": "{count, plural, one {# Gewitter} other {# Gewitter}}"
   },
   "map": {
+    "historyWindow": "Letzte 60 Min.",
+    "historyLoading": "60 Minuten Verlauf werden geladen…",
+    "historyIncomplete": "Verlauf unvollständig",
+    "historyRetry": "Erneut versuchen",
+    "heatmapWindow": "Heatmap · letzte 60 Min.",
     "strikesToday": "{count, plural, one {# Blitz heute} other {# Blitze heute}}"
   }
 }

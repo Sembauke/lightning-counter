@@ -94,6 +94,11 @@
     "stormsFound": "{count, plural, one {# bui} other {# buien}}"
   },
   "map": {
+    "historyWindow": "Laatste 60 min",
+    "historyLoading": "Geschiedenis van 60 minuten laden…",
+    "historyIncomplete": "Geschiedenis onvolledig",
+    "historyRetry": "Opnieuw proberen",
+    "heatmapWindow": "Heatmap · laatste 60 min",
     "strikesToday": "{count, plural, one {# inslag vandaag} other {# inslagen vandaag}}"
   }
 }

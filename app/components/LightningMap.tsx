@@ -23,6 +23,9 @@ import { drawStormTransitionIndicator } from '../lib/stormTransitionMap';
 import { STORM_OBSERVATION_GAP_MS, type StormTransition } from '../lib/stormTransition';
 import type { StormFootprintGeometry } from '../lib/stormFootprint';
 import { placeStormLabel, type LabelBox } from '../lib/stormLabelLayout';
+import { MAP_HISTORY_WINDOW_MS } from '../lib/mapHistory';
+import { ViewportHistoryLoader } from '../lib/viewportHistory';
+import { LiveMapHistory } from '../lib/liveMapHistory';
 
 interface FlashRing {
   nx: number;
@@ -133,8 +136,8 @@ function getHeatColor(count: number, maxCount: number): string {
 }
 
 
-// Everything — dot view, heatmap, viewport backfill — shows the last 30 minutes
-const WINDOW_MS = 30 * 60 * 1000;
+// Dots, heatmap, selection and archive loading share the same one-hour window.
+const WINDOW_MS = MAP_HISTORY_WINDOW_MS;
 
 function formatDateTime(ts: number): string {
   const d = new Date(ts);
@@ -205,10 +208,10 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   const seenAlertIdsRef = useRef<Set<string>>(new Set());
   const [alertToasts, setAlertToasts] = useState<Array<{ id: string; event: string; area: string; lat: number; lon: number; key: number }>>([]);
 
-  // Live strikes from SSE, pruned to the 30-min window
-  const heatmapBufferRef = useRef<HeatPoint[]>([]);
-  // DB backfill for the current viewport — covers strikes the capped SSE history missed
-  const dbBufferRef = useRef<HeatPoint[]>([]);
+  const strikeHistoryRef = useRef(new LiveMapHistory<HeatPoint>());
+  const viewportLoaderRef = useRef(new ViewportHistoryLoader());
+  const viewportMovingRef = useRef(false);
+  const [viewportHistoryStatus, setViewportHistoryStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const viewportFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchViewportRef = useRef<(() => void) | null>(null);
   const lastDragEndRef = useRef(0);
@@ -291,20 +294,23 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     const maxLat = Math.min(90,   b.getNorth() + latPad);
     const minLon = Math.max(-180, b.getWest()  - lonPad);
     const maxLon = Math.min(180,  b.getEast()  + lonPad);
-    const since = Date.now() - WINDOW_MS;
-    const q = `minLat=${minLat}&maxLat=${maxLat}&minLon=${minLon}&maxLon=${maxLon}&since=${since}`;
-    fetch(`/api/grid/viewport?${q}`)
-      .then(r => r.json())
-      .then(data => {
-        dbBufferRef.current = (data.strikes as Array<{ lat: number; lon: number; strike_time: number }>)
-          .map(s => ({ lat: s.lat, lon: s.lon, time: s.strike_time, nx: mercNX(s.lon), ny: mercNY(s.lat) }));
+    const until = Date.now();
+    setViewportHistoryStatus('loading');
+    void viewportLoaderRef.current.load({ minLat, maxLat, minLon, maxLon, since: until - WINDOW_MS, until }, {
+      onComplete: points => {
+        strikeHistoryRef.current.replaceArchive(points.map(p => ({
+          lat: p.lat, lon: p.lon, time: p.strike_time, nx: mercNX(p.lon), ny: mercNY(p.lat),
+        })));
+        setViewportHistoryStatus('ready');
         stateRef.current.drawHeatmap?.();
-      })
-      .catch(() => {});
+      },
+      onError: () => setViewportHistoryStatus('error'),
+    });
   };
   fetchViewportRef.current = fetchViewport;
 
   const scheduleFetchViewport = () => {
+    viewportLoaderRef.current.cancel();
     if (viewportFetchTimerRef.current) clearTimeout(viewportFetchTimerRef.current);
     viewportFetchTimerRef.current = setTimeout(() => fetchViewportRef.current?.(), 400);
   };
@@ -334,9 +340,10 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     const container = containerRef.current;
     if (!container) return;
     const s = stateRef.current;
+    let disposed = false;
 
     import('leaflet').then(({ default: L }) => {
-      if (s.map || !container) return;
+      if (disposed || s.map || !container) return;
 
       const savedView = (() => {
         try { const v = localStorage.getItem('mapView'); return v ? JSON.parse(v) : null; } catch { return null; }
@@ -352,7 +359,16 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       });
       map.zoomControl.setPosition('bottomright');
 
+      // Invalidate immediately on movement, including the debounce interval
+      // before the next request starts. Late responses cannot restore an old view.
+      map.on('movestart zoomstart', () => {
+        viewportMovingRef.current = true;
+        viewportLoaderRef.current.cancel();
+        if (viewportFetchTimerRef.current) clearTimeout(viewportFetchTimerRef.current);
+        setViewportHistoryStatus('loading');
+      });
       map.on('moveend zoomend', () => {
+        viewportMovingRef.current = false;
         const c = map.getCenter();
         const z = map.getZoom();
         localStorage.setItem('mapView', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: z }));
@@ -647,8 +663,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
 
         hCtx.save();
         hCtx.scale(dpr, dpr);
+        const historyPoints = strikeHistoryRef.current.values();
 
-        // Dot view — always on when heatmap is inactive. Shows the last 30 minutes.
+        // Dot view — always on when heatmap is inactive. Shows the last hour.
         if (!heatmapEnabledRef.current) {
           const dotCutoff = Date.now() - WINDOW_MS;
           const dotR = Math.max(2, 3 / dpr);
@@ -677,8 +694,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
             const bi = Math.min(N_BUCKETS - 1, Math.floor(t * N_BUCKETS));
             buckets[bi].push(x, y);
           };
-          for (let i = dbBufferRef.current.length - 1; i >= 0; i--) binDot(dbBufferRef.current[i]);
-          for (const pt of heatmapBufferRef.current) binDot(pt);
+          for (const pt of historyPoints) binDot(pt);
 
           // Draw oldest buckets first so newer (brighter) paint on top
           for (let b = 0; b < N_BUCKETS; b++) {
@@ -713,7 +729,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         const rowMax = Math.ceil( Math.max(swP.y, neP.y) / displayPx) + 1;
 
         // Bin only visible strikes — skip anything outside the current viewport
-        // Bin visible strikes from live buffer + historical DB buffer
+        // Live and archived copies have already been deduplicated.
         const grid = new Map<number, number>();
         let maxCount = 0;
         const binScale = 256 * Math.pow(2, binZoom); // world pixels at binZoom, from precomputed mercator
@@ -727,8 +743,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           grid.set(key, n);
           if (n > maxCount) maxCount = n;
         };
-        for (const pt of heatmapBufferRef.current) binPoint(pt);
-        for (const pt of dbBufferRef.current) binPoint(pt);
+        for (const pt of historyPoints) binPoint(pt);
 
         hCtx.save();
         hCtx.globalAlpha = gridOpacityRef.current;
@@ -859,7 +874,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           const needsFallback = s.stormRankCells.some(cell => !cell.outline);
           if (needsFallback) {
             const cutoff = Date.now() - 10 * 60_000;
-            for (const point of [...heatmapBufferRef.current, ...dbBufferRef.current]) {
+            for (const point of historyPoints) {
               if (point.time < cutoff) continue;
               recent.set(replayStrikeKey([point.lat, point.lon, point.time]), point);
             }
@@ -1079,6 +1094,10 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     });
 
     return () => {
+      disposed = true;
+      viewportMovingRef.current = false;
+      viewportLoaderRef.current.cancel();
+      if (viewportFetchTimerRef.current) clearTimeout(viewportFetchTimerRef.current);
       const s = stateRef.current;
       if (s.heatmapTimer) clearInterval(s.heatmapTimer);
       if (s.rafId !== null) cancelAnimationFrame(s.rafId);
@@ -1089,6 +1108,23 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       setMapReady(false);
     };
   }, []);
+
+  // Refresh even in a stationary view to recover delayed archive batches and
+  // reconnect gaps. The live stream continues while the complete page set loads.
+  useEffect(() => {
+    if (!mapReady) return;
+    const refresh = () => {
+      if (!document.hidden && !viewportMovingRef.current && !viewportLoaderRef.current.loading) scheduleFetchViewport();
+    };
+    const timer = setInterval(refresh, 60_000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('online', refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('online', refresh);
+    };
+  }, [mapReady]);
 
   // Country tooltip: stays visible while the mouse moves, updating as the
   // cursor crosses borders. Position follows every move via direct DOM writes;
@@ -1231,7 +1267,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       };
 
       const cutoff = Date.now() - WINDOW_MS;
-      const inMemory = heatmapBufferRef.current.filter(pt =>
+      const inMemory = strikeHistoryRef.current.values().filter(pt =>
         pt.time >= cutoff &&
         pt.lat >= bounds.minLat && pt.lat <= bounds.maxLat &&
         pt.lon >= bounds.minLon && pt.lon <= bounds.maxLon
@@ -1304,7 +1340,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       };
 
       const cutoff = Date.now() - WINDOW_MS;
-      const inMemory = heatmapBufferRef.current.filter(pt =>
+      const inMemory = strikeHistoryRef.current.values().filter(pt =>
         pt.time >= cutoff &&
         pt.lat >= bounds.minLat && pt.lat <= bounds.maxLat &&
         pt.lon >= bounds.minLon && pt.lon <= bounds.maxLon
@@ -1343,7 +1379,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     if (s.ready && s.drawHeatmap) s.drawHeatmap();
   }, [selectedCell]);
 
-  // Redraw when the view mode changes — both modes share the same 30-min window
+  // Redraw when the view mode changes — both modes share the same one-hour window.
   useEffect(() => {
     const s = stateRef.current;
     if (!s.ready) return;
@@ -1531,7 +1567,6 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     if (!s.ready || strikes.length === 0) return;
 
     let scheduledTicks = 0;
-    const newPoints: HeatPoint[] = []; // collected newest-first, appended oldest-first below
     for (const strike of strikes) {
       if (s.processed.has(strike.id)) break;
       s.processed.add(strike.id);
@@ -1539,7 +1574,8 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       const nx = mercNX(strike.lon);
       const ny = mercNY(strike.lat);
 
-      newPoints.push({ lat: strike.lat, lon: strike.lon, time: strike.time, nx, ny });
+      const added = strikeHistoryRef.current.addLive({ lat: strike.lat, lon: strike.lon, time: strike.time, nx, ny });
+      if (!added) continue;
 
       if (!strike.id.startsWith('hist-') && !document.hidden) {
         const zoom = s.map.getZoom();
@@ -1573,9 +1609,6 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       }
     }
 
-    // Keep the heatmap buffer ascending by time — the 72h prune scans from the front
-    for (let i = newPoints.length - 1; i >= 0; i--) heatmapBufferRef.current.push(newPoints[i]);
-
     // `processed` iterates in insertion order — drop oldest ids once well past the
     // 40k strikes the list can hold (useBlitzortung MAX_STRIKES), so the
     // break-at-first-seen loop stays valid
@@ -1584,19 +1617,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       while (s.processed.size > 40_000) s.processed.delete(it.next().value as string);
     }
 
-    // Prune heatmap buffer: keep the 30-min window, cap at 50k entries
-    const buf = heatmapBufferRef.current;
-    const pruneCutoff = Date.now() - WINDOW_MS;
-    let start = 0;
-    while (start < buf.length && buf[start].time < pruneCutoff) start++;
-    if (start > 0) heatmapBufferRef.current = buf.slice(start);
-    if (heatmapBufferRef.current.length > 50_000) {
-      heatmapBufferRef.current = heatmapBufferRef.current.slice(-50_000);
-    }
-
     // Redraw heatmap to show newly arrived strikes
     s.drawHeatmap?.();
-  }, [strikes]);
+  }, [strikes, mapReady]);
 
   // Rank labels — use server-pushed storm data directly (positions + lifetime
   // totals + page links). No client-side matching needed; eliminates all flicker.
@@ -1714,6 +1737,18 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       {zoom !== null && (
         <div className="zoom-debug">z{zoom}</div>
       )}
+      <div role="status" aria-live="polite" style={{
+        position: 'absolute', left: 12, top: 48, zIndex: 800, maxWidth: 'calc(100% - 24px)',
+        display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 10px',
+        padding: '5px 8px', borderRadius: 5, background: 'rgba(10,10,15,0.9)',
+        color: 'rgba(255,220,0,0.85)', fontSize: '0.7rem',
+      }}>
+        <span>{tm(viewportHistoryStatus === 'loading' ? 'historyLoading' : viewportHistoryStatus === 'error' ? 'historyIncomplete' : 'historyWindow')}</span>{' '}
+        {viewportHistoryStatus === 'error' && <button type="button" onClick={() => fetchViewportRef.current?.()} style={{
+          padding: '3px 8px', minHeight: 26, color: 'inherit', font: 'inherit', cursor: 'pointer',
+          border: '1px solid rgba(255,220,0,0.45)', borderRadius: 4, background: 'none',
+        }}>{tm('historyRetry')}</button>}
+      </div>
       {heatmapEnabled && selectedCell && (
         <div className="cell-drawer open">
           <div className="cell-drawer-header">
@@ -1770,7 +1805,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       )}
       {heatmapEnabled && (
         <div className="heatmap-filter">
-          <span className="heatmap-filter-label">Heatmap · last 30 min</span>
+          <span className="heatmap-filter-label">{tm('heatmapWindow')}</span>
           <div className="heatmap-filter-buttons">
             <button
               className={`hm-filter-btn${binLocked ? ' active' : ''}`}

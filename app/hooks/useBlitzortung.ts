@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { StormFootprintGeometry } from '../lib/stormFootprint';
 import type { StormTransition } from '../lib/stormTransition';
+import { MAP_HISTORY_WINDOW_MS } from '../lib/mapHistory';
 
 export interface Strike {
   id: string;
@@ -27,9 +28,10 @@ export interface TrackedStormSummary {
 
 export type CountryCounts = Record<string, number>;
 
-// Must hold at least the storm widget's full 5-min window at peak rates (~100/s)
+// Bounded delivery list for React/widgets. The map independently retains the
+// full hour and loads complete archive snapshots for missed/reconnected data.
 const MAX_STRIKES = 40000;
-const STRIKE_LIFETIME_MS = 30 * 60 * 1000;
+const STRIKE_LIFETIME_MS = MAP_HISTORY_WINDOW_MS;
 // Strikes can arrive at 30–100/sec globally — batching keeps React renders at ~1/sec
 const FLUSH_INTERVAL_MS = 800;
 

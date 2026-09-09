@@ -94,6 +94,11 @@
     "stormsFound": "{count, plural, one {# storm} other {# storms}}"
   },
   "map": {
+    "historyWindow": "Last 60 min",
+    "historyLoading": "Loading 60-minute history…",
+    "historyIncomplete": "History incomplete",
+    "historyRetry": "Retry",
+    "heatmapWindow": "Heatmap · last 60 min",
     "strikesToday": "{count, plural, one {# strike today} other {# strikes today}}"
   }
 }

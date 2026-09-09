@@ -94,6 +94,11 @@
     "stormsFound": "{count, plural, one {# tormenta} other {# tormentas}}"
   },
   "map": {
+    "historyWindow": "Últimos 60 min",
+    "historyLoading": "Cargando los últimos 60 minutos…",
+    "historyIncomplete": "Historial incompleto",
+    "historyRetry": "Reintentar",
+    "heatmapWindow": "Mapa de calor · últimos 60 min",
     "strikesToday": "{count, plural, one {# rayo hoy} other {# rayos hoy}}"
   }
 }

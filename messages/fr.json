@@ -94,6 +94,11 @@
     "stormsFound": "{count, plural, one {# orage} other {# orages}}"
   },
   "map": {
+    "historyWindow": "Dernières 60 min",
+    "historyLoading": "Chargement des 60 dernières minutes…",
+    "historyIncomplete": "Historique incomplet",
+    "historyRetry": "Réessayer",
+    "heatmapWindow": "Carte de chaleur · dernières 60 min",
     "strikesToday": "{count, plural, one {# éclair aujourd'hui} other {# éclairs aujourd'hui}}"
   }
 }
