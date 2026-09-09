@@ -4,46 +4,135 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build and verify ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            node-arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            node-arch: arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Lowercase image name
-        run: echo "IMAGE_NAME=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      # Each runner builds its own CPU architecture, without QEMU. Publish only
+      # an immutable digest here; latest moves after both smoke checks pass.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      - name: Verify native Node and SQLite
+        timeout-minutes: 2
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          EXPECTED_ARCH: ${{ matrix.node-arch }}
+        run: |
+          docker run --rm --network none --entrypoint node \
+            -e EXPECTED_ARCH "$REGISTRY/$IMAGE_NAME@$IMAGE_DIGEST" -e '
+              const assert = require("node:assert/strict");
+              assert.equal(process.arch, process.env.EXPECTED_ARCH);
+              const Database = require("better-sqlite3");
+              const db = new Database(":memory:");
+              assert.equal(db.prepare("SELECT 1 AS value").get().value, 1);
+              db.close();
+              console.log(JSON.stringify({node: process.version, arch: process.arch, sqlite: "ok"}));
+            '
+
+      - name: Export verified digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$IMAGE_DIGEST" > "$RUNNER_TEMP/digests/$IMAGE_ARCH"
+
+      - name: Upload verified digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish verified multi-platform image
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - name: Lowercase image name
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Download verified digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: image-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and publish manifest
+        shell: bash
+        run: |
+          image="$REGISTRY/$IMAGE_NAME"
+          sources=()
+          for arch in amd64 arm64; do
+            digest="$(cat "$RUNNER_TEMP/digests/$arch")"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid digest for $arch" >&2
+              exit 1
+            fi
+            sources+=("$image@$digest")
+          done
+          docker buildx imagetools create --tag "$image:latest" "${sources[@]}"
+          docker buildx imagetools inspect "$image:latest"

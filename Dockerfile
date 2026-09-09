@@ -7,7 +7,7 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm ci --foreground-scripts
 
 FROM base AS builder
 WORKDIR /app
@@ -20,7 +20,7 @@ FROM node:24-alpine AS production-deps
 RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --foreground-scripts
 
 FROM node:24-alpine AS runner
 WORKDIR /app
