@@ -6,33 +6,42 @@
     "dev": "node server.mjs",
     "build": "next build",
     "start": "NODE_ENV=production node server.mjs",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@next/third-parties": "^16.3.0",
+    "@next/third-parties": "16.3.4",
     "@types/leaflet": "^1.9.21",
     "@types/ws": "^8.18.1",
     "better-sqlite3": "^12.11.1",
     "country-reverse-geocoding": "^0.2.2",
     "leaflet": "^1.9.4",
     "mqtt": "^5.15.1",
-    "next": "14.2.5",
+    "next": "16.3.4",
     "next-intl": "^4.13.0",
-    "react": "18.3.1",
+    "react": "19.2.8",
     "react-countup": "^6.5.3",
-    "react-dom": "18.3.1",
+    "react-dom": "19.2.8",
     "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "20.14.0",
-    "@types/react": "18.3.3",
-    "@types/react-dom": "18.3.0",
-    "eslint": "8.57.0",
-    "eslint-config-next": "14.2.5",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
     "typescript": "5.5.4",
     "vitest": "^4.1.9"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "allowScripts": {
+    "@parcel/watcher@2.6.0": true,
+    "@swc/core@1.16.2": true,
+    "better-sqlite3@12.11.1": true,
+    "unrs-resolver@1.12.2": true
   }
 }

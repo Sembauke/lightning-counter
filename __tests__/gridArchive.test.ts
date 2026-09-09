@@ -111,14 +111,14 @@ describe('isolated, bounded public grid archive', () => {
       for (let i = 0; i < 51; i++) insert.run('100,200', NOW - 1000, 45, 7);
       insert.run('100,200', NOW - GRID_ARCHIVE_WINDOW_MS - 1, 45, 7);
     })();
-    const firstResponse = await cell.GET(new Request(url({}, '100%2C200')), { params: { cellId: '100,200' } });
+    const firstResponse = await cell.GET(new Request(url({}, '100%2C200')), { params: Promise.resolve({ cellId: '100,200' }) });
     const first = await firstResponse.json();
     expect(first.total).toBe(51);
     expect(first.cell.total_strikes).toBe(5000);
     expect(first.pages).toBe(3);
-    const secondResponse = await cell.GET(new Request(url({ cursor: first.nextCursor }, '100%2C200')), { params: { cellId: '100,200' } });
+    const secondResponse = await cell.GET(new Request(url({ cursor: first.nextCursor }, '100%2C200')), { params: Promise.resolve({ cellId: '100,200' }) });
     const second = await secondResponse.json();
-    const thirdResponse = await cell.GET(new Request(url({ cursor: second.nextCursor }, '100%2C200')), { params: { cellId: '100,200' } });
+    const thirdResponse = await cell.GET(new Request(url({ cursor: second.nextCursor }, '100%2C200')), { params: Promise.resolve({ cellId: '100,200' }) });
     const third = await thirdResponse.json();
     expect(third.strikes).toHaveLength(1);
     expect(third.nextCursor).toBeNull();
@@ -144,18 +144,18 @@ describe('isolated, bounded public grid archive', () => {
     }
     expect((await area.GET(new Request(`${url()}&minLat=0`))).status).toBe(400);
     expect((await viewport.GET(new Request(url({ ...bounds, limit: 1_000_000 }, 'viewport')))).status).toBe(400);
-    expect((await cell.GET(new Request(url({}, 'invalid')), { params: { cellId: 'Infinity,1' } })).status).toBe(400);
+    expect((await cell.GET(new Request(url({}, 'invalid')), { params: Promise.resolve({ cellId: 'Infinity,1' }) })).status).toBe(400);
     const first = await page();
     const [payload, signature] = first.nextCursor!.split('.');
     const edited = JSON.parse(Buffer.from(payload, 'base64url').toString());
     edited.total = 10_000_000;
     const tampered = `${Buffer.from(JSON.stringify(edited)).toString('base64url')}.${signature}`;
     expect((await area.GET(new Request(url({ cursor: tampered })))).status).toBe(400);
-    expect((await cell.GET(new Request(url({ cursor: first.nextCursor! })), { params: { cellId: '100,200' } })).status).toBe(400);
+    expect((await cell.GET(new Request(url({ cursor: first.nextCursor! })), { params: Promise.resolve({ cellId: '100,200' }) })).status).toBe(400);
   });
 
   it('bounds simultaneous reads and returns retryable overload responses without false completion', async () => {
-    const responses = await Promise.all(Array.from({ length: 20 }, () => cell.GET(new Request(url({}, '0,0')), { params: { cellId: '0,0' } })));
+    const responses = await Promise.all(Array.from({ length: 20 }, () => cell.GET(new Request(url({}, '0,0')), { params: Promise.resolve({ cellId: '0,0' }) })));
     expect(responses.filter(response => response.status === 200)).toHaveLength(16);
     expect(responses.filter(response => response.status === 503)).toHaveLength(4);
     for (const response of responses.filter(response => response.status === 503)) {

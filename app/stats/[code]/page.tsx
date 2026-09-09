@@ -22,8 +22,8 @@ function hasData(code: string): boolean {
   }
 }
 
-export function generateMetadata({ params }: { params: { code: string } }): Metadata {
-  const code = params.code.toLowerCase();
+export async function generateMetadata({ params }: { params: Promise<{ code: string }> }): Promise<Metadata> {
+  const code = (await params).code.toLowerCase();
   const name = /^[a-z]{2}$/.test(code) && hasData(code) ? countryName(code) : null;
   if (!name || name.toUpperCase() === code.toUpperCase()) {
     return { title: 'Country Statistics', robots: { index: false } };

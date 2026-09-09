@@ -59,7 +59,7 @@ function peak(count: number, date: string, code = 'IT') {
   sql.prepare('INSERT OR REPLACE INTO country_peaks (code, count, date) VALUES (?, ?, ?)').run(code, count, date);
 }
 async function get(summary = true, code = 'IT') {
-  const response = await route.GET(new Request(`http://localhost/api/country/${code}${summary ? '?summary=1' : ''}`), { params: { code } });
+  const response = await route.GET(new Request(`http://localhost/api/country/${code}${summary ? '?summary=1' : ''}`), { params: Promise.resolve({ code }) });
   expect(response.status).toBe(200);
   expect(response.headers.get('Cache-Control')).toBe('no-store');
   return response.json();

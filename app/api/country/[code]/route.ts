@@ -3,8 +3,8 @@ import { getCountryHistory, getCountryPeak, getBiggestStorm, getStormReplayByKey
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export async function GET(req: Request, { params }: { params: { code: string } }) {
-  const code = params.code.toUpperCase();
+export async function GET(req: Request, { params }: { params: Promise<{ code: string }> }) {
+  const code = (await params).code.toUpperCase();
   const now = Date.now();
   const today = new Date(now).toISOString().slice(0, 10);
   const yesterday = new Date(now - 24 * 60 * 60_000).toISOString().slice(0, 10);
