@@ -253,17 +253,7 @@ export default function StormDetailClient({
   // Keep stormTotalRef in sync so the poll always sends the current live total
   stormTotalRef.current = stormTotal;
 
-  // Calculate standings from live strikes without waiting for the next DB poll.
-  // StormLeaderboard paces the row movement separately; counts remain immediate.
-  // Neighbors keep their last-polled totals.
-  const localRanked = useMemo(() => {
-    if (!storm.stormKey) return displayNearbyRanked;
-    const withLiveTotal = displayNearbyRanked.map(n =>
-      n.stormKey === storm.stormKey ? { ...n, totalCount: stormTotal } : n);
-    withLiveTotal.sort((a, b) => b.totalCount - a.totalCount);
-    const baseRank = displayNearbyRanked[0]?.rank ?? 1;
-    return withLiveTotal.map((n, i) => ({ ...n, rank: baseRank + i }));
-  }, [displayNearbyRanked, stormTotal, storm.stormKey]);
+
   const name = stormLabel(ts, liveStats.city, liveStats.originCity, storm.code, storm.lat, storm.lon);
 
   const duration = liveStats.startTime != null && liveStats.endTime != null
@@ -373,11 +363,12 @@ export default function StormDetailClient({
         })()}
 
         {/* ── Rank leaderboard — closest storms above/below globally ── */}
-        {localRanked.length > 1 && (
+        {displayNearbyRanked.length > 1 && (
           <div className="storm-section">
             <div className="storm-section-title">All-time leaderboard ranking</div>
             <StormLeaderboard
-              rows={localRanked}
+              rows={displayNearbyRanked}
+              totalCount={stormTotal}
               stormKey={storm.stormKey}
               locale={locale}
               flashKeys={leaderboardFlashKeys}

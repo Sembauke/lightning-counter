@@ -3,6 +3,49 @@
   overflow-anchor: none;
 }
 
+.viewport {
+  height: min(70vh, 42rem);
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #65591f #0a0a0f;
+  border: 1px solid #1e1e1e;
+  border-radius: 10px;
+}
+
+.viewport .board {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+}
+
+.viewport .moreAbove {
+  /* Keep room for incoming rows if a burst outruns even the prefetched buffer. */
+  padding-top: min(35vh, 21rem);
+}
+
+.controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  min-height: 2rem;
+  margin-bottom: 0.5rem;
+  color: #ad9844;
+  font-size: 0.75rem;
+}
+
+.controls button {
+  background: transparent;
+  border: 1px solid #71611e;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  color: #ffe566;
+  font: inherit;
+  cursor: pointer;
+}
+
 .row {
   position: relative;
   flex-shrink: 0;

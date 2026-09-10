@@ -32,7 +32,7 @@ export class LeaderboardMotion {
     this.animations = [];
   }
 
-  update(container: HTMLElement, previous: LeaderboardSnapshot, reducedMotion: boolean): void {
+  update(container: HTMLElement, previous: LeaderboardSnapshot, reducedMotion: boolean, animateHeight = true): void {
     // The snapshot includes any unfinished animation. Only now is it safe to
     // cancel it and measure the new, untransformed layout.
     this.cancel();
@@ -57,7 +57,7 @@ export class LeaderboardMotion {
         ], options));
       }
     }
-    if (Math.abs(previous.height - bounds.height) > 0.5) {
+    if (animateHeight && Math.abs(previous.height - bounds.height) > 0.5) {
       this.animations.push(container.animate([
         { height: `${previous.height}px` },
         { height: `${bounds.height}px` },

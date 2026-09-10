@@ -824,7 +824,7 @@ export function getNearbyRankedStorms(stormKey: string, radius = 10): RankedNeig
     WITH ranked AS (
       SELECT storm_key AS stormKey, code, lat, lon, city, origin_city AS originCity, date,
              COALESCE(total_count, count) AS totalCount,
-             ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC) AS rank
+             ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC, storm_key ASC) AS rank
       FROM storms
     ),
     me AS (SELECT rank FROM ranked WHERE stormKey = ?)
@@ -832,6 +832,54 @@ export function getNearbyRankedStorms(stormKey: string, radius = 10): RankedNeig
     WHERE ranked.rank BETWEEN me.rank - ? AND me.rank + ?
     ORDER BY ranked.rank ASC
   `).all(stormKey, radius, radius) as RankedNeighbor[];
+}
+
+export interface StormLeaderboardPage {
+  stormKey: string;
+  currentRank: number;
+  rows: RankedNeighbor[];
+  hasMoreAbove: boolean;
+  anchor?: RankedNeighbor;
+}
+
+/**
+ * Read ten more competitors above a known storm, using its identity as the
+ * cursor so live rank changes cannot shift a numeric page boundary. Without a
+ * cursor, return the current storm's initial ten-above/ten-below neighborhood.
+ */
+export function getStormLeaderboardPage(stormKey: string, beforeKey?: string): StormLeaderboardPage | null {
+  const db = getDb();
+  return db.transaction(() => {
+    const key = resolveStormKey(stormKey);
+    const anchorKey = beforeKey === undefined ? key : resolveStormKey(beforeKey);
+    const result = db.prepare(`
+      WITH ranked AS (
+        SELECT storm_key AS stormKey, code, lat, lon, city, origin_city AS originCity, date,
+               COALESCE(total_count, count) AS totalCount,
+               ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC, storm_key ASC) AS rank
+        FROM storms
+      ),
+      me AS (SELECT rank FROM ranked WHERE stormKey = ?),
+      anchor AS (SELECT rank FROM ranked WHERE stormKey = ?)
+      SELECT ranked.*, me.rank AS currentRank FROM ranked, me, anchor
+      WHERE ranked.rank BETWEEN anchor.rank - 10 AND anchor.rank + ?
+      ORDER BY ranked.rank ASC
+    `).all(key, anchorKey, beforeKey === undefined ? 10 : 0) as Array<RankedNeighbor & { currentRank: number }>;
+    // Including the anchor distinguishes the top of the list from a deleted
+    // cursor. Both keys and every rank are read in this same SQLite snapshot.
+    if (result.length === 0) return null;
+    const currentRank = result[0].currentRank;
+    const rows = result.map(({ stormKey, rank, code, lat, lon, city, originCity, date, totalCount }) => ({
+      stormKey, rank, code, lat, lon, city, originCity, date, totalCount,
+    }));
+    // A known row's ordinal can change when higher storms merge or disappear.
+    // Refresh the cursor too, including when there are no rows left above it.
+    const anchor = beforeKey === undefined ? undefined : rows.pop();
+    return {
+      stormKey: key, currentRank, rows, hasMoreAbove: rows.length > 0 && rows[0].rank > 1,
+      ...(anchor ? { anchor } : {}),
+    };
+  })();
 }
 
 export function deleteStorm(stormKey: string): void {
