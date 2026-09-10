@@ -9,6 +9,8 @@ export interface CountryDetail extends CountrySummary {
   biggestStorm: {
     count: number; rate: number; lat: number; lon: number;
     city: string | null; date: string;
+    cityRegion?: string | null;
+    originRegion?: string | null;
     originCity: string | null; startTime: number | null; endTime: number | null;
     traveledKm: number | null; totalCount: number | null;
     strikes: StormStrike[] | null;

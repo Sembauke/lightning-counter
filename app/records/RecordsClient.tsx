@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtDuration, fmt } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
+import StormLocationName from '../components/StormLocationName';
 import type { StormLogRow } from '../lib/db';
 
 interface Props {
@@ -26,7 +27,6 @@ function tier(rank: number): string {
 export default function RecordsClient({ dailyBest, top100 }: Props) {
   const router = useRouter();
   const t = useTranslations('records');
-  const ts = useTranslations('storms');
   const countryName = useCountryName();
   const [view, setView] = useState<TableView>('day');
 
@@ -45,16 +45,6 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
     [baseRows, view]
   );
 
-  function stormName(s: StormLogRow): string {
-    const isXO = s.code === 'XO';
-    const effCity = s.city ?? (isXO ? 'Open Ocean' : null);
-    const effOrigin = s.originCity ?? (isXO ? 'Open Ocean' : null);
-    return effOrigin && effCity && effOrigin !== effCity
-      ? ts('stormFromTo', { from: effOrigin, to: effCity })
-      : effCity
-        ? ts('stormNear', { city: effCity })
-        : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`;
-  }
 
   return (
     <div className="archive-page">
@@ -78,7 +68,6 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
           <div className="archive-empty">{t('noData')}</div>
         ) : rankedRows.map(({ s, rank }) => {
           const t2 = rank ? tier(rank) : '';
-          const name = stormName(s);
           const count = s.totalCount ?? s.count;
           const hasDuration = s.startTime != null && s.endTime != null;
 
@@ -103,7 +92,7 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
               {rank && <span className="hof-rank">#{rank}</span>}
 
               <div className="hof-main">
-                <span className="hof-name">{name}</span>
+                <span className="hof-name"><StormLocationName storm={s} /></span>
                 <span className="hof-sub">
                   <span className="hof-flags">{flags}</span>
                   <span className="hof-sub-stats">

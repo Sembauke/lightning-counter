@@ -63,6 +63,18 @@ function keys(first: number, last: number) {
 }
 
 describe('lazy storm leaderboard pages', () => {
+  it('keeps city and origin regions in initial, paged, and refreshed anchor rows', async () => {
+    seed();
+    sql.prepare(`UPDATE storms SET code = 'NL', city = 'Amsterdam', lat = 52.374, lon = 4.89,
+      origin_city = 'Antwerp', origin_lat = 51.22, origin_lon = 4.4, country_path = '["BE","NL"]'
+      WHERE storm_key = ?`).run(key(10));
+    const expected = { city: 'Amsterdam', cityRegion: 'North Holland', originCity: 'Antwerp', originRegion: 'Flanders' };
+    expect(db.getNearbyRankedStorms(key(10)).find(row => row.stormKey === key(10))).toMatchObject(expected);
+    expect((await page()).rows.every(row => 'cityRegion' in row)).toBe(true);
+    expect((await page(key(25), key(15))).rows.find(row => row.stormKey === key(10))).toMatchObject(expected);
+    expect((await page(key(25), key(10))).anchor).toMatchObject(expected);
+  });
+
   it('loads the initial neighborhood and ten upcoming rows at a time through the top of the leaderboard', async () => {
     seed();
     const initial = await page();

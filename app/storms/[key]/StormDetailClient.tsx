@@ -3,11 +3,12 @@
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocale, useTranslations } from 'next-intl';
+import { useLocale } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { useViewerTimeZone } from '../../hooks/useViewerTimeZone';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
+import StormLocationName from '../../components/StormLocationName';
 import StormLeaderboard from '../../components/StormLeaderboard';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
@@ -16,20 +17,6 @@ import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../../
 import { buildStormTimeline, type StormMinuteBucket } from '../../lib/stormTimeline';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
-
-function stormLabel(
-  ts: (key: string, values?: Record<string, string>) => string,
-  city: string | null, originCity: string | null, code: string, lat: number, lon: number,
-): string {
-  const isOcean = code === 'XO';
-  const effCity = city ?? (isOcean ? 'Open Ocean' : null);
-  const effOrigin = originCity ?? (isOcean ? 'Open Ocean' : null);
-  return effOrigin && effCity && effOrigin !== effCity
-    ? ts('stormFromTo', { from: effOrigin, to: effCity })
-    : effCity
-      ? ts('stormNear', { city: effCity })
-      : `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
-}
 
 function TimelineChart({ timeline }: { timeline: StormMinuteBucket[] }) {
   const maxCount = Math.max(...timeline.map(t => t.count), 1);
@@ -74,6 +61,8 @@ interface PollResponse {
   traveledKm: number | null;
   city: string | null;
   originCity: string | null;
+  cityRegion?: string | null;
+  originRegion?: string | null;
   nearbyRanked: RankedNeighbor[];
 }
 
@@ -86,6 +75,8 @@ interface LiveStats {
   traveledKm: number | null;
   city: string | null;
   originCity: string | null;
+  cityRegion?: string | null;
+  originRegion?: string | null;
 }
 
 export default function StormDetailClient({
@@ -96,7 +87,6 @@ export default function StormDetailClient({
   nearbyRanked: RankedNeighbor[];
   initialNow: number;
 }) {
-  const ts = useTranslations('storms');
   const locale = useLocale();
   const timeZone = useViewerTimeZone();
   const router = useRouter();
@@ -113,6 +103,8 @@ export default function StormDetailClient({
     traveledKm: storm.traveledKm,
     city: storm.city,
     originCity: storm.originCity,
+    cityRegion: storm.cityRegion,
+    originRegion: storm.originRegion,
   });
   // endTime is always a timestamp (last tracker flush); treat storm as live
   // if it was active within the last 10 minutes — same logic as the storms list.
@@ -216,6 +208,8 @@ export default function StormDetailClient({
           traveledKm: data.traveledKm,
           city: data.city,
           originCity: data.originCity,
+          cityRegion: data.cityRegion,
+          originRegion: data.originRegion,
         });
         if (data.nearbyRanked) {
           setDisplayNearbyRanked(prev => {
@@ -254,7 +248,7 @@ export default function StormDetailClient({
   stormTotalRef.current = stormTotal;
 
 
-  const name = stormLabel(ts, liveStats.city, liveStats.originCity, storm.code, storm.lat, storm.lon);
+  const liveLocation = { ...storm, ...liveStats };
 
   const duration = liveStats.startTime != null && liveStats.endTime != null
     ? liveStats.endTime - liveStats.startTime : null;
@@ -294,7 +288,7 @@ export default function StormDetailClient({
                 </>
               )}
           </span>
-          <h1 className="storm-detail-name">{name}</h1>
+          <h1 className="storm-detail-name"><StormLocationName storm={liveLocation} /></h1>
           <div className="storm-record-badges">
             {heldRecords.map(r => (
               <span key={r.category} className={`storm-record-badge storm-record-badge--${r.category}`}>
@@ -373,8 +367,7 @@ export default function StormDetailClient({
               locale={locale}
               flashKeys={leaderboardFlashKeys}
               countryName={countryName}
-              label={row => row.stormKey === storm.stormKey ? name
-                : stormLabel(ts, row.city, row.originCity, row.code, row.lat, row.lon)}
+              label={row => <StormLocationName storm={row.stormKey === storm.stormKey ? liveLocation : row} />}
             />
           </div>
         )}

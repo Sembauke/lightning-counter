@@ -20,7 +20,7 @@ export interface StormCell {
   members: StrikePoint[];
 }
 
-export type CityTuple = [name: string, lat: number, lon: number];
+export type CityTuple = [name: string, lat: number, lon: number, region?: string];
 
 // ~0.25° ≈ 25 km cells; adjacent active cells merge into one storm
 const CELL_DEG = 0.25;
@@ -231,7 +231,7 @@ export function nearestCity(
   cities: CityTuple[],
   lat: number,
   lon: number,
-): { name: string; km: number; dir: Compass } | null {
+): { name: string; region: string | null; km: number; dir: Compass } | null {
   let best: CityTuple | null = null;
   let bestD = Infinity;
   const cosLat = Math.cos(lat * Math.PI / 180);
@@ -244,6 +244,7 @@ export function nearestCity(
   if (!best) return null;
   return {
     name: best[0],
+    region: best[3] || null,
     km: Math.round(Math.sqrt(bestD) * 111.32),
     dir: compassDir(best[1], best[2], lat, lon),
   };

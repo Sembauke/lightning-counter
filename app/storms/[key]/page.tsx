@@ -5,6 +5,8 @@ import path from 'path';
 import { getStormReplayByKey, getStormRecords, getNearbyRankedStorms } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
+import { cityWithRegion, formatStormName } from '../../lib/stormLocation';
+import type { CityTuple } from '../../lib/stormClusters';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -26,8 +28,9 @@ function nearbyCities(lat: number, lon: number, codes: string[], radiusKm = 150,
     if (cc === 'XO') continue;
     try {
       const file = path.join(process.cwd(), 'public', 'cities', `${cc}.json`);
-      const cities = JSON.parse(fs.readFileSync(file, 'utf8')) as [string, number, number][];
-      for (const [name, cLat, cLon] of cities) {
+      const cities = JSON.parse(fs.readFileSync(file, 'utf8')) as CityTuple[];
+      for (const [city, cLat, cLon, region] of cities) {
+        const name = cityWithRegion(city, region);
         if (seen.has(name)) continue;
         const dLat = cLat - lat;
         const dLon = (cLon - lon) * cosLat;
@@ -46,9 +49,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!storm) return { title: 'Storm not found' };
 
   const total = storm.totalCount ?? storm.count;
-  const city = storm.city ?? `${storm.lat.toFixed(1)}°N ${storm.lon.toFixed(1)}°E`;
-  const origin = storm.originCity;
-  const journey = origin && origin !== storm.city ? `${origin} to ${city}` : `near ${city}`;
+  const city = storm.city ? cityWithRegion(storm.city, storm.cityRegion) : `${storm.lat.toFixed(1)}°N ${storm.lon.toFixed(1)}°E`;
+  const origin = storm.originCity ? cityWithRegion(storm.originCity, storm.originRegion) : null;
+  const journey = formatStormName(storm, (key, values) => key === 'stormFromTo'
+    ? `${values.from} to ${values.to}` : `near ${values.city}`, true);
 
   let durationStr = '';
   if (storm.startTime && storm.endTime) {

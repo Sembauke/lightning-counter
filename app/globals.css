@@ -994,6 +994,36 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Keep city/province labels complete where space permits. Measure the full
+   label before adding the extra detail on mobile. */
+.storm-location {
+  display: block;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.storm-location-compact { display: none; }
+.storm-location-probe {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .storm-location[data-compact="true"] .storm-location-detailed { display: none; }
+  .storm-location[data-compact="true"] .storm-location-compact { display: inline; }
+  .hof-name .storm-location {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
 .hof-row--gold .hof-name { color: #fff; font-weight: 700; font-size: 0.95rem; }
 
 .hof-sub {
@@ -1349,10 +1379,16 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
   min-width: 0;
 }
 .storm-leaderboard-name-text {
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+/* Preserve the equal-height rows used by the live leaderboard's scroll motion. */
+.storm-leaderboard-name-text .storm-location {
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .storm-leaderboard-row--current .storm-leaderboard-name { color: #fff; font-weight: 700; }
 

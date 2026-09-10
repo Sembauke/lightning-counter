@@ -23,6 +23,8 @@ export async function GET(
     traveledKm: storm.traveledKm,
     city: storm.city,
     originCity: storm.originCity,
+    cityRegion: storm.cityRegion,
+    originRegion: storm.originRegion,
     nearbyRanked,
   });
 }

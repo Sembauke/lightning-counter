@@ -185,7 +185,7 @@ export default function StormLeaderboard({
   locale: string;
   flashKeys: Set<string>;
   countryName: (code: string) => string;
-  label: (row: RankedNeighbor) => string;
+  label: (row: RankedNeighbor) => React.ReactNode;
 }) {
   const protectedKeys = useRef(new Set<string>());
   const [following, setFollowing] = useState(true);

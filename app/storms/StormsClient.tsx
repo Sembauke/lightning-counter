@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmtRate, fmtClock, fmtDuration, fmt } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
+import StormLocationName from '../components/StormLocationName';
 import type { StormLogRow, StormStrike } from '../lib/db';
 import { useStormMerge } from '../context/StormMergeContext';
 import { transitionLabel } from '../lib/stormTransitionDisplay';
@@ -180,15 +181,6 @@ export default function StormsClient() {
               const isLive = date === todayUTC() && s.endTime != null && Date.now() - s.endTime < 10 * 60 * 1000;
               const count = s.totalCount ?? s.count;
 
-              const isXO = s.code === 'XO';
-              const effCity = s.city ?? (isXO ? 'Open Ocean' : null);
-              const effOrigin = s.originCity ?? (isXO ? 'Open Ocean' : null);
-              const name = effOrigin && effCity && effOrigin !== effCity
-                ? ts('stormFromTo', { from: effOrigin, to: effCity })
-                : effCity
-                  ? ts('stormNear', { city: effCity })
-                  : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`;
-
               const flags = s.countryPath && s.countryPath.length > 1
                 ? s.countryPath.map((cc, i) => (
                     <span key={cc} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}>
@@ -222,7 +214,7 @@ export default function StormsClient() {
                 <>
                   <div className="hof-main">
                     <div className="hof-name-line">
-                      <span className="hof-name">{name}</span>
+                      <span className="hof-name"><StormLocationName storm={s} /></span>
                       <span className="sl-badges">
                         {isLive && <span className="storm-live-tag">LIVE</span>}
                         {isLive && mergeTag}
