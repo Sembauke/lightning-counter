@@ -183,8 +183,36 @@ it.each(['development', 'production'])('routes framework upgrades separately fro
   expect(viewerServer.handleUpgrade).toHaveBeenCalledExactlyOnceWith(viewerRequest, transport, head, expect.any(Function));
   expect(frameworkUpgradeHandler).toHaveBeenCalledTimes(2);
   expect(globals._wsClients.has(viewerSocket)).toBe(true);
-  expect(JSON.parse(viewerSocket.send.mock.calls.at(-1)![0])).toEqual({ total: 0, viewers: 1 });
+  expect(viewerSocket.send).not.toHaveBeenCalled();
   expect(transport.destroy).not.toHaveBeenCalled();
+
+  // Do not publish the temporary zero before persisted totals are restored.
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(viewerSocket.send).not.toHaveBeenCalled();
+  installProcessor();
+  globals._serverTotal = 1200;
+  attempts[0].resolve(new Response(null, { status: 200 }));
+  await vi.advanceTimersByTimeAsync(999);
+  expect(viewerSocket.send).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(viewerSocket.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ total: 1200 }));
+
+  // Joining and leaving only affect that connection, never other clients' samples.
+  for (const event of ['close', 'error']) {
+    const secondSocket = Object.assign(new EventEmitter(), { readyState: 1, send: vi.fn() });
+    viewerServer.emit('connection', secondSocket);
+    expect(globals._wsClients.has(secondSocket)).toBe(true);
+    expect(secondSocket.send).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ total: 1200 }));
+    expect(viewerSocket.send).toHaveBeenCalledOnce();
+    secondSocket.emit(event);
+    expect(globals._wsClients.has(secondSocket)).toBe(false);
+    expect(viewerSocket.send).toHaveBeenCalledOnce();
+  }
+
+  globals._serverTotal += 1;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(viewerSocket.send).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(viewerSocket.send.mock.calls.at(-1)![0])).toEqual({ total: 1201 });
 });
 
 it('boots ingestion before connecting either feed and processes lightning with no visitors', async () => {

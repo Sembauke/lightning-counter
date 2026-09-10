@@ -150,43 +150,23 @@ html, body {
   position: relative;
   cursor: default;
 }
-.navbar-count-main[data-rate]::after {
-  content: attr(data-rate) ' per second';
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  background: rgba(6,6,14,0.95);
-  border: 1px solid rgba(255,220,0,0.25);
-  border-radius: 6px;
-  padding: 0.3rem 0.65rem;
-  font-size: 0.72rem;
-  font-family: 'Courier New', Courier, monospace;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-  color: #ffe040;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s;
-  z-index: 3000;
-}
-.navbar-count-main[data-rate]:hover::after { opacity: 1; }
-
-.navbar-count-viewers {
+.navbar-count-rate {
   display: flex;
   align-items: center;
 }
 
-/* Separator dot between discharge count and viewer count on desktop */
-.navbar-count .navbar-count-viewers::before {
+/* Separator dot between the total and strike rate on desktop */
+.navbar-count .navbar-count-rate::before {
   content: '·';
   color: rgba(255,220,0,0.25);
   margin: 0 0.4rem;
 }
 
-.navbar-viewers {
+.navbar-rate {
   font-size: 0.78rem;
   font-weight: 600;
-  color: rgba(255,220,0,0.45);
+  color: rgba(255,220,0,0.65);
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -263,7 +243,7 @@ html, body {
     gap: 0.4rem;
   }
 
-  .navbar-stats-bar .navbar-count-viewers::before {
+  .navbar-stats-bar .navbar-count-rate::before {
     display: none;
   }
 
@@ -276,7 +256,7 @@ html, body {
     letter-spacing: 0.06em;
   }
 
-  .navbar-stats-bar .navbar-viewers {
+  .navbar-stats-bar .navbar-rate {
     font-size: 0.72rem;
   }
 

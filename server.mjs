@@ -188,7 +188,7 @@ const server = createServer(async (req, res) => {
   await handle(req, res, parsedUrl);
 });
 
-// Own only the viewer socket. Next installs its own upgrade listener for HMR;
+// Own only the counter socket. Next installs its own upgrade listener for HMR;
 // an attached ws server would reject that connection before Next can accept it.
 const wss = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
@@ -196,8 +196,13 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
 });
 
+// Wait for the persisted total to be restored so startup cannot look like a
+// burst of new strikes to clients calculating their per-second rate.
+const counterReady = () => ingestionStarted && globalThis._ingestionReady?.() === true;
+
 const broadcast = () => {
-  const msg = JSON.stringify({ total: globalThis._serverTotal, viewers: globalThis._wsClients.size });
+  if (!counterReady()) return;
+  const msg = JSON.stringify({ total: globalThis._serverTotal });
   for (const ws of globalThis._wsClients) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   }
@@ -205,10 +210,9 @@ const broadcast = () => {
 
 wss.on('connection', (ws) => {
   globalThis._wsClients.add(ws);
-  ws.send(JSON.stringify({ total: globalThis._serverTotal, viewers: globalThis._wsClients.size }));
-  broadcast();
-  ws.on('close', () => { globalThis._wsClients.delete(ws); broadcast(); });
-  ws.on('error', () => { globalThis._wsClients.delete(ws); broadcast(); });
+  if (counterReady()) ws.send(JSON.stringify({ total: globalThis._serverTotal }));
+  ws.on('close', () => { globalThis._wsClients.delete(ws); });
+  ws.on('error', () => { globalThis._wsClients.delete(ws); });
 });
 
 const broadcastTimer = setInterval(() => {

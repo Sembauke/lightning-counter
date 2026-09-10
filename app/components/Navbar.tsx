@@ -22,7 +22,6 @@ const LOCALE_FLAGS: Record<Locale, string> = { en: 'gb', nl: 'nl', de: 'de', fr:
 function useNavCount() {
   const [display, setDisplay] = useState(0);
   const [connected, setConnected] = useState(false);
-  const [viewers, setViewers] = useState(0);
   const [strikeRate, setStrikeRate] = useState(0);
   const targetRef = useRef(0);
   const seededRef = useRef(false);
@@ -40,14 +39,16 @@ function useNavCount() {
       ws.onmessage = (e) => {
         try {
           const d = JSON.parse(e.data);
-          if (typeof d.total === 'number' && !isNaN(d.total)) {
+          if (typeof d.total === 'number' && Number.isFinite(d.total) && d.total >= 0) {
+            const totalReset = d.total < targetRef.current;
             targetRef.current = d.total;
-            if (!seededRef.current) {
+            if (!seededRef.current || totalReset) {
               seededRef.current = true;
               setDisplay(d.total);
             }
+            if (totalReset) rateBufRef.current = [];
             // Rolling 30-second rate window
-            const now = Date.now();
+            const now = performance.now();
             const buf = rateBufRef.current;
             buf.push({ total: d.total, ts: now });
             // Drop samples older than 30 s
@@ -55,13 +56,17 @@ function useNavCount() {
             while (buf.length > 1 && buf[0].ts < cutoff) buf.shift();
             if (buf.length >= 2) {
               const spanSec = (buf[buf.length - 1].ts - buf[0].ts) / 1000;
-              if (spanSec > 0) setStrikeRate((buf[buf.length - 1].total - buf[0].total) / spanSec);
-            }
+              setStrikeRate(spanSec > 0 ? (d.total - buf[0].total) / spanSec : 0);
+            } else setStrikeRate(0);
           }
-          if (typeof d.viewers === 'number') setViewers(d.viewers);
         } catch { /* ignore */ }
       };
-      ws.onopen = () => { setConnected(true); delay = 1000; };
+      ws.onopen = () => {
+        rateBufRef.current = [];
+        setStrikeRate(0);
+        setConnected(true);
+        delay = 1000;
+      };
       ws.onclose = () => {
         setConnected(false);
         if (!destroyed) {
@@ -101,23 +106,23 @@ function useNavCount() {
     return () => clearInterval(id);
   }, []);
 
-  return { display, connected, viewers, strikeRate };
+  return { display, connected, strikeRate };
 }
 
-function StrikeCount({ display, viewers, strikeRate, t }: { display: number; connected: boolean; viewers: number; strikeRate: number; t: ReturnType<typeof useTranslations> }) {
+function StrikeCount({ display, connected, strikeRate, locale, t }: { display: number; connected: boolean; strikeRate: number; locale: Locale; t: ReturnType<typeof useTranslations> }) {
   return (
     <>
-      <span className="navbar-count-main" data-rate={strikeRate > 0 ? `${strikeRate.toFixed(1)}/s` : undefined}>
+      <span className="navbar-count-main">
         <span className="navbar-count-num">
           {display.toLocaleString()}
         </span>
         <span className="navbar-count-label">{t('strikes')}</span>
       </span>
-      {viewers > 0 && (
-        <span className="navbar-count-viewers">
-          <span className="navbar-viewers">{viewers} {t('watching')}</span>
+      <span className="navbar-count-rate" title={t('strikeRateWindow')}>
+        <span className="navbar-rate">
+          {connected ? strikeRate.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—'} {t('strikesPerSecond')}
         </span>
-      )}
+      </span>
     </>
   );
 }
@@ -148,7 +153,7 @@ export default function Navbar() {
   }, []);
   const settings = usePopover();
   const tools = usePopover();
-  const { display, connected, viewers, strikeRate } = useNavCount();
+  const { display, connected, strikeRate } = useNavCount();
   const { sound, toggle: toggleSound } = useSound();
   const { enabled: heatmapEnabled, toggle: toggleHeatmap } = useHeatmap();
   const { enabled: tooltipEnabled, toggle: toggleTooltip } = useCountryTooltip();
@@ -285,7 +290,7 @@ export default function Navbar() {
         <div className="navbar-sep" aria-hidden="true" />
 
         <div className="navbar-count">
-          <StrikeCount display={display} connected={connected} viewers={viewers} strikeRate={strikeRate} t={t} />
+          <StrikeCount display={display} connected={connected} strikeRate={strikeRate} locale={locale} t={t} />
         </div>
 
         <button
@@ -314,7 +319,7 @@ export default function Navbar() {
       </div>
 
       <div className="navbar-stats-bar">
-        <StrikeCount display={display} connected={connected} viewers={viewers} strikeRate={strikeRate} t={t} />
+        <StrikeCount display={display} connected={connected} strikeRate={strikeRate} locale={locale} t={t} />
       </div>
 
       {stormOpen && path === '/' && <StormActivity />}
