@@ -1,0 +1,15 @@
+.board {
+  /* Reordering rows must not become browser scroll anchors. */
+  overflow-anchor: none;
+}
+
+.row {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.row.current {
+  /* Keep the highlighted storm readable as it passes other rows. */
+  z-index: 1;
+  background: #201e17;
+}

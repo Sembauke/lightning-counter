@@ -1,14 +1,14 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { useViewerTimeZone } from '../../hooks/useViewerTimeZone';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
 import CountryFlag from '../../components/CountryFlag';
+import StormLeaderboard from '../../components/StormLeaderboard';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
 import { useStormMerge } from '../../context/StormMergeContext';
 import { transitionLabel } from '../../lib/stormTransitionDisplay';
@@ -16,14 +16,6 @@ import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../../
 import { buildStormTimeline, type StormMinuteBucket } from '../../lib/stormTimeline';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
-
-function rankBadgeClass(rank: number): string {
-  if (rank === 1) return ' storm-leaderboard-row--gold';
-  if (rank === 2) return ' storm-leaderboard-row--silver';
-  if (rank === 3) return ' storm-leaderboard-row--bronze';
-  if (rank <= 10) return ' storm-leaderboard-row--top10';
-  return '';
-}
 
 function stormLabel(
   ts: (key: string, values?: Record<string, string>) => string,
@@ -162,15 +154,6 @@ export default function StormDetailClient({
 
   const [displayNearbyRanked, setDisplayNearbyRanked] = useState(nearbyRanked);
   const [leaderboardFlashKeys, setLeaderboardFlashKeys] = useState<Set<string>>(new Set());
-  // Rank numbers actually shown — held back until a reorder's slide animation
-  // finishes, so the number changes after the row visually arrives, not before
-  const [displayedRanks, setDisplayedRanks] = useState<Map<string, number>>(
-    () => new Map(nearbyRanked.map(n => [n.stormKey, n.rank])),
-  );
-
-  // Refs for the leaderboard's FLIP reorder animation (set up below, once stormTotal exists)
-  const leaderboardRowRefs = useRef(new Map<string, HTMLElement>());
-  const leaderboardRowTops = useRef(new Map<string, number>());
   // So the poll can read the current live total without a stale closure
   const stormTotalRef = useRef(0);
 
@@ -270,9 +253,9 @@ export default function StormDetailClient({
   // Keep stormTotalRef in sync so the poll always sends the current live total
   stormTotalRef.current = stormTotal;
 
-  // Reorder the leaderboard locally using the live stormTotal so this storm's position
-  // updates instantly on every strike, instead of waiting up to a poll cycle for the
-  // DB's tracker-flushed total_count to catch up. Neighbors keep their last-polled totals.
+  // Calculate standings from live strikes without waiting for the next DB poll.
+  // StormLeaderboard paces the row movement separately; counts remain immediate.
+  // Neighbors keep their last-polled totals.
   const localRanked = useMemo(() => {
     if (!storm.stormKey) return displayNearbyRanked;
     const withLiveTotal = displayNearbyRanked.map(n =>
@@ -281,42 +264,6 @@ export default function StormDetailClient({
     const baseRank = displayNearbyRanked[0]?.rank ?? 1;
     return withLiveTotal.map((n, i) => ({ ...n, rank: baseRank + i }));
   }, [displayNearbyRanked, stormTotal, storm.stormKey]);
-  const leaderboardOrderKey = localRanked.map(n => n.stormKey).join('|');
-
-  // FLIP-animate leaderboard rows sliding to their new position when the rank
-  // order changes, instead of silently popping into place. The displayed rank
-  // NUMBER is held back until the slide finishes (see setDisplayedRanks below)
-  // so a row's label changes after it visually arrives, not before.
-  useLayoutEffect(() => {
-    const prevTops = leaderboardRowTops.current;
-    const nextTops = new Map<string, number>();
-    leaderboardRowRefs.current.forEach((el, key) => nextTops.set(key, el.getBoundingClientRect().top));
-    let anyMoved = false;
-    leaderboardRowRefs.current.forEach((el, key) => {
-      const prevTop = prevTops.get(key);
-      const nextTop = nextTops.get(key);
-      if (prevTop == null || nextTop == null || prevTop === nextTop) return;
-      anyMoved = true;
-      const delta = prevTop - nextTop;
-      el.style.transition = 'none';
-      el.style.transform = `translateY(${delta}px)`;
-      requestAnimationFrame(() => {
-        el.style.transition = 'transform 0.4s ease';
-        el.style.transform = '';
-      });
-    });
-    leaderboardRowTops.current = nextTops;
-
-    const newRanks = new Map(localRanked.map(n => [n.stormKey, n.rank]));
-    if (!anyMoved) {
-      // first mount, or numbers changed with no visible position shift — show right away
-      setDisplayedRanks(newRanks);
-      return;
-    }
-    const t = setTimeout(() => setDisplayedRanks(newRanks), 420);
-    return () => clearTimeout(t);
-  }, [leaderboardOrderKey]);
-
   const name = stormLabel(ts, liveStats.city, liveStats.originCity, storm.code, storm.lat, storm.lon);
 
   const duration = liveStats.startTime != null && liveStats.endTime != null
@@ -429,40 +376,15 @@ export default function StormDetailClient({
         {localRanked.length > 1 && (
           <div className="storm-section">
             <div className="storm-section-title">All-time leaderboard ranking</div>
-            <div className="storm-leaderboard">
-              {localRanked.map(n => {
-                const isCurrent = !!storm.stormKey && n.stormKey === storm.stormKey;
-                // The rank NUMBER shown lags behind n.rank until the slide animation
-                // finishes (see the FLIP effect above) — total/position update live,
-                // the label catches up once the row has visually arrived.
-                const rowRank = displayedRanks.get(n.stormKey) ?? n.rank;
-                const rowTotal = n.totalCount;
-                const rowCode = isCurrent ? storm.code : n.code;
-                const rowLabel = isCurrent ? name : stormLabel(ts, n.city, n.originCity, n.code, n.lat, n.lon);
-                const rowClass = `storm-leaderboard-row${isCurrent ? ' storm-leaderboard-row--current' : rankBadgeClass(rowRank)}${leaderboardFlashKeys.has(n.stormKey) ? ' flash' : ''}`;
-                const row = (
-                  <>
-                    <span className="storm-leaderboard-rank">#{rowRank}</span>
-                    <span className="storm-leaderboard-name">
-                      <CountryFlag code={rowCode} name={countryName(rowCode)} />
-                      <span className="storm-leaderboard-name-text">{rowLabel}</span>
-                    </span>
-                    <span className="storm-leaderboard-count">{rowTotal.toLocaleString(locale)}</span>
-                  </>
-                );
-                const setRowRef = (el: HTMLElement | null) => {
-                  if (el) leaderboardRowRefs.current.set(n.stormKey, el);
-                  else leaderboardRowRefs.current.delete(n.stormKey);
-                };
-                return isCurrent ? (
-                  <div key={n.stormKey} ref={setRowRef} className={rowClass}>{row}</div>
-                ) : (
-                  <Link key={n.stormKey} ref={setRowRef} href={`/storms/${encodeURIComponent(n.stormKey)}`} className={rowClass}>
-                    {row}
-                  </Link>
-                );
-              })}
-            </div>
+            <StormLeaderboard
+              rows={localRanked}
+              stormKey={storm.stormKey}
+              locale={locale}
+              flashKeys={leaderboardFlashKeys}
+              countryName={countryName}
+              label={row => row.stormKey === storm.stormKey ? name
+                : stormLabel(ts, row.city, row.originCity, row.code, row.lat, row.lon)}
+            />
           </div>
         )}
 
