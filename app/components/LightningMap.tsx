@@ -344,6 +344,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     if (!container) return;
     const s = stateRef.current;
     let disposed = false;
+    let disposeTransitionCanvas: (() => void) | undefined;
 
     import('leaflet').then(({ default: L }) => {
       if (disposed || s.map || !container) return;
@@ -594,8 +595,15 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       s.heatCanvas = heatCanvas;
       s.heatCtx = heatCanvas.getContext('2d')!;
 
-      // Baseline screen transform of the last full heat-canvas draw. While the
-      // map pans/zooms we translate+scale the canvas via CSS instead of redrawing;
+      // Keep transition labels above strike dots/rings (450), below warnings (490).
+      const transitionCanvas = document.createElement('canvas');
+      transitionCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:480;transform-origin:0 0;';
+      container.appendChild(transitionCanvas);
+      const transitionCtx = transitionCanvas.getContext('2d')!;
+      const geographicCanvases = [heatCanvas, transitionCanvas];
+
+      // Baseline screen transform of the last full geographic-overlay draw. While the
+      // map pans/zooms we translate+scale both canvases via CSS instead of redrawing;
       // the real redraw happens on moveend.
       let heatDrawScale = 0;
       let heatDrawOx = 0;
@@ -604,12 +612,14 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       const setHeatTransform = (S1: number, o1x: number, o1y: number, animate: boolean) => {
         if (!heatDrawScale) return;
         const k = S1 / heatDrawScale;
-        heatCanvas.style.transition = animate ? 'transform 0.25s cubic-bezier(0,0,0.25,1)' : 'none';
-        heatCanvas.style.transform =
-          `translate(${o1x - k * heatDrawOx}px, ${o1y - k * heatDrawOy}px) scale(${k})`;
+        for (const canvas of geographicCanvases) {
+          canvas.style.transition = animate ? 'transform 0.25s cubic-bezier(0,0,0.25,1)' : 'none';
+          canvas.style.transform =
+            `translate(${o1x - k * heatDrawOx}px, ${o1y - k * heatDrawOy}px) scale(${k})`;
+        }
       };
 
-      // Keep the heat canvas glued to the map while dragging (translate) and
+      // Keep both geographic overlays glued to the map while dragging (translate) and
       // during animated zooms (scale, matching Leaflet's pane transition)
       map.on('move', () => {
         const S1 = 256 * Math.pow(2, map.getZoom());
@@ -637,10 +647,18 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         const h = container.offsetHeight * dpr;
         overlay.width = w;   overlay.height = h;
         heatCanvas.width = w; heatCanvas.height = h;
+        transitionCanvas.width = w; transitionCanvas.height = h;
       };
       sizeCanvases();
-      const ro = new ResizeObserver(sizeCanvases);
+      const ro = new ResizeObserver(() => {
+        sizeCanvases();
+        s.drawHeatmap?.();
+      });
       ro.observe(container);
+      disposeTransitionCanvas = () => {
+        ro.disconnect();
+        transitionCanvas.remove();
+      };
 
       // ── Heatmap draw function ──
       // Five stepped zoom groups, each with a fixed display cell size and a fixed
@@ -655,8 +673,10 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
 
         // Fresh draw in current view coordinates — drop any interim pan/zoom
         // CSS transform and record the new baseline for setHeatTransform
-        heatCanvas.style.transition = 'none';
-        heatCanvas.style.transform = '';
+        for (const canvas of geographicCanvases) {
+          canvas.style.transition = 'none';
+          canvas.style.transform = '';
+        }
         const drawScale = 256 * Math.pow(2, s.map.getZoom());
         const drawOrg = s.map.latLngToContainerPoint([0, 0]);
         heatDrawScale = drawScale;
@@ -664,6 +684,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
         heatDrawOy = drawOrg.y - drawScale * 0.5;
 
         hCtx.clearRect(0, 0, hCnv.width, hCnv.height);
+        transitionCtx.clearRect(0, 0, transitionCanvas.width, transitionCanvas.height);
 
         hCtx.save();
         hCtx.scale(dpr, dpr);
@@ -963,16 +984,19 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           }
 
           // Draw a transition once, even when both merging identities publish it.
+          transitionCtx.save();
+          transitionCtx.scale(dpr, dpr);
           for (const transition of transitions.values()) {
             const outlines = stormData
               .filter(data => transition.stormKeys.includes(data.key) && data.geometry)
               .map(data => data.geometry!);
             const now = Date.now();
             const currentEvidence = transitionConnectedRef.current && now - transition.observedAt <= STORM_OBSERVATION_GAP_MS;
-            drawStormTransitionIndicator(hCtx, transition, outlines,
+            drawStormTransitionIndicator(transitionCtx, transition, outlines,
               { scale: drawScale, ox: heatDrawOx, oy: heatDrawOy },
               transitionLabel(transition, now, transitionConnectedRef.current), currentEvidence ? now : Math.min(now, transition.observedAt));
           }
+          transitionCtx.restore();
         }
 
         hCtx.restore();
@@ -1099,6 +1123,7 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
 
     return () => {
       disposed = true;
+      disposeTransitionCanvas?.();
       viewportMovingRef.current = false;
       viewportLoaderRef.current.cancel();
       archivePagerRef.current.cancel();
