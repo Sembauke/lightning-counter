@@ -538,8 +538,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
           const countStr = cell.totalStrikes >= 1000 ? `${(cell.totalStrikes / 1000).toFixed(1)}k` : String(cell.totalStrikes);
           const trackTag = cell.hasPage ? `<span class="storm-track-tag">tracking</span>` : '';
-          const transition = cell.transitions === undefined
-            ? mergeMapRef.current.get(_cellKeyS) : cell.transitions[0];
+          const transition = stormOutlineEnabledRef.current
+            ? (cell.transitions === undefined ? mergeMapRef.current.get(_cellKeyS) : cell.transitions[0])
+            : undefined;
           const statusTag = transition
             ? `<span class="storm-${transition.kind}-tag storm-transition-countdown" style="color:${transition.kind === 'split' ? '#5bdcff' : '#ffb13b'}">${transitionLabel(transition, Date.now(), transitionConnectedRef.current)}</span>` : '';
           const inner = `<span class="storm-rank-num">⚡ #${cell.rank}</span>`
@@ -1541,7 +1542,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   }, [stormRanksEnabled]);
 
   useEffect(() => {
-    stateRef.current.drawHeatmap?.();
+    const s = stateRef.current;
+    s.reprojectRankLabels?.();
+    s.drawHeatmap?.();
   }, [stormOutlineEnabled]);
 
   // Identity and connection changes may change the badge layout.
@@ -1556,14 +1559,14 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   // the countdown. Only a new server snapshot can introduce child badges.
   useEffect(() => {
     const s = stateRef.current;
-    if (!s.ready) return;
+    if (!s.ready || !stormOutlineEnabledRef.current) return;
     s.stormRankLabels?.querySelectorAll<HTMLElement>('.storm-transition-countdown').forEach(label => {
       const key = label.parentElement?.dataset.stormKey;
       const cell = s.stormRankCells.find(cell => (cell.stormKey ?? `rank-${cell.rank}`) === key);
       const transition = cell?.transitions === undefined ? mergeMapRef.current.get(key ?? '') : cell.transitions[0];
       if (transition) label.textContent = transitionLabel(transition, transitionNow, transitionConnectedRef.current);
     });
-    if (stormOutlineEnabledRef.current) s.drawHeatmap?.();
+    s.drawHeatmap?.();
   }, [transitionNow]);
 
   useEffect(() => {
