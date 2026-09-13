@@ -126,7 +126,6 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_gs_cell_time ON grid_strikes(cell_id, strike_time DESC);
     CREATE INDEX IF NOT EXISTS idx_gs_latlon ON grid_strikes(lat, lon);
     CREATE INDEX IF NOT EXISTS idx_gs_time ON grid_strikes(strike_time);
-    DELETE FROM grid_strikes WHERE strike_time < unixepoch('now', '-3 days') * 1000;
     CREATE TABLE IF NOT EXISTS storm_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       storm_key TEXT NOT NULL,
@@ -151,7 +150,10 @@ function getDb(): Database.Database {
     ) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS idx_storm_replay_points_time ON storm_replay_points(strike_time);
   `);
-  _db.prepare('DELETE FROM storm_replay_points WHERE strike_time < ?').run(Date.now() - GRID_RETENTION_MS);
+  // Use the application clock for both startup and periodic retention.
+  const retentionCutoff = Date.now() - GRID_RETENTION_MS;
+  _db.prepare('DELETE FROM grid_strikes WHERE strike_time < ?').run(retentionCutoff);
+  _db.prepare('DELETE FROM storm_replay_points WHERE strike_time < ?').run(retentionCutoff);
   // Migrations for databases created before the replay / storm-tracking features
   const migrations = [
     'ALTER TABLE storms ADD COLUMN country_path TEXT',
