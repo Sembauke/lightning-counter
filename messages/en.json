@@ -90,6 +90,11 @@
   "stormMetrics": {
     "liveRate": "Live rate",
     "liveRateDescription": "Strikes in the last 60 seconds",
+    "peakRate": "Peak rate",
+    "duration": "Duration",
+    "distance": "Distance",
+    "date": "Date",
+    "time": "Local time",
     "perMinute": "/min"
   },
   "stormLog": {

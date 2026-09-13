@@ -90,6 +90,11 @@
   "stormMetrics": {
     "liveRate": "Aktuelle Rate",
     "liveRateDescription": "Blitze in den letzten 60 Sekunden",
+    "peakRate": "Spitzenrate",
+    "duration": "Dauer",
+    "distance": "Entfernung",
+    "date": "Datum",
+    "time": "Ortszeit",
     "perMinute": "/min"
   },
   "stormLog": {

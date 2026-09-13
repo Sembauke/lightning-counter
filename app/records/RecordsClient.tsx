@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
-import { fmtRate, fmtDuration, fmt } from '../lib/format';
+import { fmt } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
+import StormMetrics from '../components/StormMetrics';
 import type { StormLogRow } from '../lib/db';
 
 interface Props {
@@ -24,8 +25,8 @@ function tier(rank: number): string {
 }
 
 export default function RecordsClient({ dailyBest, top100 }: Props) {
-  const router = useRouter();
   const t = useTranslations('records');
+  const stats = useTranslations('stats');
   const ts = useTranslations('storms');
   const countryName = useCountryName();
   const [view, setView] = useState<TableView>('day');
@@ -57,10 +58,11 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
   }
 
   return (
-    <div className="archive-page">
+    <div className="archive-page records-page">
       <div className="archive-toolbar">
         <select
           className="storm-table-select"
+          aria-label={t('title')}
           value={view}
           onChange={e => {
             const v = e.target.value as TableView;
@@ -80,7 +82,6 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
           const t2 = rank ? tier(rank) : '';
           const name = stormName(s);
           const count = s.totalCount ?? s.count;
-          const hasDuration = s.startTime != null && s.endTime != null;
 
           const flags = s.countryPath && s.countryPath.length > 1
             ? s.countryPath.map((cc, j) => (
@@ -92,36 +93,31 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
             : <CountryFlag code={s.code} name={countryName(s.code)} />;
 
           return (
-            <div
+            <Link
               key={s.stormKey}
               className={`hof-row${t2 ? ` hof-row--${t2}` : ''}`}
-              onClick={() => router.push(`/storms/${encodeURIComponent(s.stormKey)}`)}
-              role="link"
-              tabIndex={0}
-              onKeyDown={e => e.key === 'Enter' && router.push(`/storms/${encodeURIComponent(s.stormKey)}`)}
+              href={`/storms/${encodeURIComponent(s.stormKey)}`}
+              prefetch={false}
             >
               {rank && <span className="hof-rank">#{rank}</span>}
 
               <div className="hof-main">
                 <span className="hof-name">{name}</span>
-                <span className="hof-sub">
-                  <span className="hof-flags">{flags}</span>
-                  <span className="hof-sub-stats">
-                    <span>{fmtRate(s.rate)}/m</span>
-                    {hasDuration && <span>{fmtDuration(s.endTime! - s.startTime!)}</span>}
-                    {s.traveledKm != null && s.traveledKm >= 5 && (
-                      <span>{Math.round(s.traveledKm)}km</span>
-                    )}
-                    <span className="hof-sub-date">{s.date}</span>
-                  </span>
+                <span className="hof-flags">
+                  {flags}
+                  {(!s.countryPath || s.countryPath.length <= 1) && (
+                    <span className="hof-country-name">{countryName(s.code)}</span>
+                  )}
                 </span>
               </div>
 
+              <StormMetrics storm={s} showDate />
+
               <div className="hof-count-wrap">
                 <span className="hof-count">{fmt(count)}</span>
-                <span className="hof-count-label">strikes</span>
+                <span className="hof-count-label">{stats('strikes')}</span>
               </div>
-            </div>
+            </Link>
           );
         })}
       </div>

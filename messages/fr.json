@@ -90,6 +90,11 @@
   "stormMetrics": {
     "liveRate": "Fréquence actuelle",
     "liveRateDescription": "Éclairs au cours des 60 dernières secondes",
+    "peakRate": "Fréquence maximale",
+    "duration": "Durée",
+    "distance": "Distance",
+    "date": "Date",
+    "time": "Heure locale",
     "perMinute": "/min"
   },
   "stormLog": {

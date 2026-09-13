@@ -5,8 +5,9 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
-import { fmtRate, fmtClock, fmtDuration, fmt } from '../lib/format';
+import { fmt } from '../lib/format';
 import CountryFlag from '../components/CountryFlag';
+import StormMetrics from '../components/StormMetrics';
 import type { StormLogRow, StormStrike } from '../lib/db';
 import { useStormMerge } from '../context/StormMergeContext';
 import { transitionLabel } from '../lib/stormTransitionDisplay';
@@ -230,19 +231,8 @@ export default function StormsClient() {
                     </div>
                     <div className="hof-sub">
                       <span className="hof-flags">{flags}</span>
-                      <span className="hof-sub-stats">
-                        <span>{fmtRate(s.rate)}/m</span>
-                        {s.startTime != null && s.endTime != null && (
-                          <>
-                            <span>{fmtDuration(s.endTime - s.startTime)}</span>
-                            <span className="hof-sub-date">{fmtClock(s.startTime)} – {fmtClock(s.endTime)}</span>
-                          </>
-                        )}
-                        {s.traveledKm != null && s.traveledKm >= 5 && (
-                          <span>{Math.round(s.traveledKm)}km</span>
-                        )}
-                      </span>
                     </div>
+                    <StormMetrics storm={s} />
                   </div>
                   <div className="hof-count-wrap">
                     {s.rank != null && (

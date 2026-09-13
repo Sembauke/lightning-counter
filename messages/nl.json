@@ -90,6 +90,11 @@
   "stormMetrics": {
     "liveRate": "Actuele frequentie",
     "liveRateDescription": "Bliksemontladingen in de afgelopen 60 seconden",
+    "peakRate": "Piekfrequentie",
+    "duration": "Duur",
+    "distance": "Afstand",
+    "date": "Datum",
+    "time": "Lokale tijd",
     "perMinute": "/min"
   },
   "stormLog": {
