@@ -11,7 +11,7 @@ const trackedKey = 'US:tail-integration';
 const replayTables = ['storms', 'country_biggest_storms', 'storm_records'];
 const globals = globalThis as typeof globalThis & Record<string, any>;
 const globalKeys = [
-  '_recentStrikes', '_processStrike', '_routeIntervals', '_iv_histPrune', '_iv_dbFlush',
+  '_recentStrikes', '_processStrike', '_processStrikes', '_routeIntervals', '_iv_histPrune', '_iv_dbFlush',
   '_iv_gridBatch', '_iv_hourly', '_serverTotal', '_serverCountryCounts', '_todayCounts',
   '_todayDate', '_sseControllers', '_sseBcastGen', '_strikeQueue', '_stormSeq', '_stormStrikeSubscribers',
 ];
@@ -105,7 +105,8 @@ function feed(point: StormStrike) {
 // lightning rather than the ingestion-backlog burst rejected by the tracker.
 function feedQualifiedWindow(from: number): StormStrike[] {
   const points: StormStrike[] = Array.from({ length: 101 }, (_, i) => [43.01, -94, from + i * 190]);
-  for (const point of points) feed(point);
+  // Submit one feed frame instead of forcing a durable commit for every point.
+  globals._processStrikes(points.map(([lat, lon, time]) => ({ lat, lon, time })));
   return points;
 }
 
@@ -141,12 +142,14 @@ describe('storm replay tails through the real ingestion tracker and SQLite', () 
     await startTracker();
     const before = metrics();
     const fading: StormStrike[] = [];
+    // Maintenance callbacks are synchronous. Advance every scheduled callback
+    // without adding a real event-loop wait for each tick across 90 fake minutes.
     for (let pass = 1; pass <= 15; pass++) {
-      await vi.advanceTimersByTimeAsync(5 * minute - 1);
+      vi.advanceTimersByTime(5 * minute - 1);
       const point: StormStrike = [43.01, -94, Date.now()];
       fading.push(point);
       feed(point);
-      await vi.advanceTimersByTimeAsync(1);
+      vi.advanceTimersByTime(1);
     }
     expect(tracked()).toMatchObject({ lastSeen: storm.endTime, lastReplayTime: fading.at(-1)![2] });
     expectReplayEverywhere(fading);
@@ -158,17 +161,17 @@ describe('storm replay tails through the real ingestion tracker and SQLite', () 
     globals._recentStrikes = [];
     dbModule = await import('../app/lib/db');
     await startTracker();
-    await vi.advanceTimersByTimeAsync(4 * minute - 1);
+    vi.advanceTimersByTime(4 * minute - 1);
     const afterRestart: StormStrike = [43.02, -94, Date.now()];
     feed(afterRestart);
-    await vi.advanceTimersByTimeAsync(1);
+    vi.advanceTimersByTime(1);
     expectReplayEverywhere([...fading, afterRestart]);
     expect(metrics()).toEqual(before);
 
-    await vi.advanceTimersByTimeAsync(11 * minute);
+    vi.advanceTimersByTime(11 * minute);
     const unrelated: StormStrike = [43.02, -94, Date.now()];
     feed(unrelated);
-    await vi.advanceTimersByTimeAsync(30_000);
+    vi.advanceTimersByTime(30_000);
     expect(dbModule.getStormByKey(trackedKey)!.strikes).not.toContainEqual(unrelated);
     expect(tracked().lastReplayTime).toBe(afterRestart[2]);
     expect(metrics()).toEqual(before);
@@ -176,7 +179,7 @@ describe('storm replay tails through the real ingestion tracker and SQLite', () 
     // Keeping the old identity in memory for its replay must not let a later
     // dense storm inherit its official lifetime and accumulated count.
     feedQualifiedWindow(Date.now() - 20_000);
-    await vi.advanceTimersByTimeAsync(30_000);
+    vi.advanceTimersByTime(30_000);
     const identities = dbModule.loadTrackedStorms() as Array<Record<string, any>>;
     expect(identities).toHaveLength(2);
     expect(identities.find(st => st.key !== trackedKey)!.totalStrikes).toBe(102);

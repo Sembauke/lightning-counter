@@ -48,12 +48,15 @@ afterAll(() => {
   sql?.close();
   if (oldDbPath === undefined) delete process.env.DB_PATH;
   else process.env.DB_PATH = oldDbPath;
-  for (const key of ['_recentStrikes', '_strikeQueue', '_sseControllers', '_processStrike', '_stormStrikeOwnership']) delete globals[key];
+  for (const key of ['_recentStrikes', '_strikeQueue', '_sseControllers', '_processStrike', '_processStrikes', '_stormStrikeOwnership']) delete globals[key];
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 function feed(lon: number, count = 90) {
-  for (let i = 0; i < count; i++) globals._processStrike(45 + i % 3 * .0001, lon, Date.now() - 25_000 + i * 100);
+  // Match a real feed frame instead of making a durable commit per strike.
+  globals._processStrikes(Array.from({ length: count }, (_, i) => ({
+    lat: 45 + i % 3 * .0001, lon, time: Date.now() - 25_000 + i * 100,
+  })));
 }
 async function tick() {
   feed(7); feed(7.6); feed(10.5);

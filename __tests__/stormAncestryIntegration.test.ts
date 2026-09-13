@@ -38,7 +38,10 @@ function events(kind: string) {
   return sql.prepare('SELECT storm_key, related_key FROM storm_events WHERE event_type = ? ORDER BY id').all(kind) as Array<{ storm_key: string; related_key: string }>;
 }
 function feed(lon: number, count: number) {
-  for (let i = 0; i < count; i++) globals._processStrike(45 + i % 3 * .001, lon, Date.now() - 25_000 + i * 60);
+  // Match a real feed frame instead of making a durable commit per strike.
+  globals._processStrikes(Array.from({ length: count }, (_, i) => ({
+    lat: 45 + i % 3 * .001, lon, time: Date.now() - 25_000 + i * 60,
+  })));
 }
 async function tick(joined = false, reuniteParent = false) {
   feed(7, 60);
@@ -110,7 +113,7 @@ afterAll(() => {
   sql?.close();
   if (oldDbPath === undefined) delete process.env.DB_PATH;
   else process.env.DB_PATH = oldDbPath;
-  for (const key of ['_recentStrikes', '_strikeQueue', '_sseControllers', '_processStrike', '_stormStrikeOwnership']) delete globals[key];
+  for (const key of ['_recentStrikes', '_strikeQueue', '_sseControllers', '_processStrike', '_processStrikes', '_stormStrikeOwnership']) delete globals[key];
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
