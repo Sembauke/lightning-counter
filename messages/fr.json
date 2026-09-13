@@ -87,6 +87,11 @@
     "dailyBest": "Meilleur orage par jour",
     "most": "Plus d'éclairs"
   },
+  "stormMetrics": {
+    "liveRate": "Fréquence actuelle",
+    "liveRateDescription": "Éclairs au cours des 60 dernières secondes",
+    "perMinute": "/min"
+  },
   "stormLog": {
     "title": "Journal des orages",
     "noStorms": "Aucun orage suivi ce jour-là.",

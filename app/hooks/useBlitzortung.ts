@@ -19,7 +19,7 @@ export interface TrackedStormSummary {
   lon: number;
   totalStrikes: number;
   cc: string;
-  rate: number;
+  rate: number; // Five-minute detection average; visible rates use the shared storm-rates stream.
   rank: number;
   hasPage: boolean;
   outline?: StormFootprintGeometry;

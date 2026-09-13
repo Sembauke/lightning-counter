@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import 'leaflet/dist/leaflet.css';
 import type { Strike, TrackedStormSummary } from '../hooks/useBlitzortung';
 import { TILE_SAT, TILE_LABELS_URL, TILE_DIM_FILTER } from '../lib/tiles';
@@ -18,6 +18,7 @@ import { useCountryName } from '../hooks/useCountryName';
 import { buildGeographicOutline } from '../lib/stormOutline';
 import { assignOutlinePoints } from '../lib/stormOutlineMembership';
 import { replayStrikeKey } from '../lib/stormReplayState';
+import { getStormLiveRate } from '../lib/stormLiveRate';
 import { transitionLabel } from '../lib/stormTransitionDisplay';
 import { drawStormTransitionIndicator } from '../lib/stormTransitionMap';
 import { STORM_OBSERVATION_GAP_MS, type StormTransition } from '../lib/stormTransition';
@@ -182,6 +183,7 @@ function convexHull(pts: Array<{ x: number; y: number }>): Array<{ x: number; y:
 }
 
 export default function LightningMap({ strikes, sound, historyLoaded, trackedStorms }: { strikes: Strike[]; sound: boolean; historyLoaded: boolean; trackedStorms: TrackedStormSummary[] }) {
+  const locale = useLocale();
   const containerRef = useRef<HTMLDivElement>(null);
   const soundRef = useRef(sound);
   soundRef.current = sound;
@@ -200,7 +202,11 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
   const { enabled: stormOutlineEnabled } = useStormOutline();
   const stormOutlineEnabledRef = useRef(stormOutlineEnabled);
   stormOutlineEnabledRef.current = stormOutlineEnabled;
-  const { mergeMap, now: transitionNow, connected: transitionConnected } = useStormMerge();
+  const { mergeMap, now: transitionNow, connected: transitionConnected, liveRateSnapshot } = useStormMerge();
+  const liveRateStateRef = useRef({ snapshot: liveRateSnapshot, now: transitionNow, locale });
+  useEffect(() => {
+    liveRateStateRef.current = { snapshot: liveRateSnapshot, now: transitionNow, locale };
+  }, [liveRateSnapshot, transitionNow, locale]);
   const mergeMapRef = useRef(mergeMap);
   mergeMapRef.current = mergeMap;
   const transitionConnectedRef = useRef(transitionConnected);
@@ -535,7 +541,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
           if (weakClusterKeysRef.current.has(_cellKeyS)) continue;
           const pt = s.map.latLngToContainerPoint([cell.lat, cell.lon]);
           if (pt.x < -80 || pt.y < -80 || pt.x > viewport.width + 80 || pt.y > viewport.height + 80) continue;
-          const rateStr = cell.rate >= 1000 ? `${(cell.rate / 1000).toFixed(1)}k/m` : `${Math.round(cell.rate)}/m`;
+          const liveRateState = liveRateStateRef.current;
+          const liveRate = getStormLiveRate(liveRateState.snapshot, cell.stormKey ?? '', liveRateState.now);
+          const rateStr = `${liveRate == null ? '—' : liveRate.toLocaleString(liveRateState.locale)}/min`;
           const countStr = cell.totalStrikes >= 1000 ? `${(cell.totalStrikes / 1000).toFixed(1)}k` : String(cell.totalStrikes);
           const trackTag = cell.hasPage ? `<span class="storm-track-tag">tracking</span>` : '';
           const transition = cell.transitions === undefined
@@ -1552,6 +1560,17 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
     if (stormOutlineEnabledRef.current) s.drawHeatmap?.();
   }, [mergeMap, transitionConnected]);
 
+  // Rate snapshots only change badge text. Keep outlines and focused links intact.
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s.ready) return;
+    s.stormRankLabels?.querySelectorAll<HTMLElement>('.storm-rank-rate').forEach(label => {
+      const key = label.parentElement?.dataset.stormKey;
+      const liveRate = getStormLiveRate(liveRateSnapshot, key ?? '', transitionNow);
+      label.textContent = `${liveRate == null ? '—' : liveRate.toLocaleString(locale)}/min`;
+    });
+  }, [liveRateSnapshot, transitionNow, locale]);
+
   // Update text in place on each second so keyboard focus and clicks survive
   // the countdown. Only a new server snapshot can introduce child badges.
   useEffect(() => {
@@ -1563,7 +1582,9 @@ export default function LightningMap({ strikes, sound, historyLoaded, trackedSto
       const transition = cell?.transitions === undefined ? mergeMapRef.current.get(key ?? '') : cell.transitions[0];
       if (transition) label.textContent = transitionLabel(transition, transitionNow, transitionConnectedRef.current);
     });
-    if (stormOutlineEnabledRef.current) s.drawHeatmap?.();
+    const hasTransitions = mergeMapRef.current.size > 0
+      || s.stormRankCells.some(cell => (cell.transitions?.length ?? 0) > 0);
+    if (stormOutlineEnabledRef.current && hasTransitions) s.drawHeatmap?.();
   }, [transitionNow]);
 
   useEffect(() => {

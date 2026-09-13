@@ -14,6 +14,7 @@ import { useStormMerge } from '../../context/StormMergeContext';
 import { transitionLabel } from '../../lib/stormTransitionDisplay';
 import { latestReplayTime, replayStrikeKey, shouldPollStormReplay } from '../../lib/stormReplayState';
 import { buildStormTimeline, type StormMinuteBucket } from '../../lib/stormTimeline';
+import { getStormLiveRate, recentStormStrikes, type StormLiveRateSnapshot } from '../../lib/stormLiveRate';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
 
@@ -89,19 +90,21 @@ interface LiveStats {
 }
 
 export default function StormDetailClient({
-  storm, records, nearbyRanked, initialNow,
+  storm, records, nearbyRanked, initialNow, initialLiveStrikes,
 }: {
   storm: BiggestStorm;
   records: GlobalStormRecord[];
   nearbyRanked: RankedNeighbor[];
   initialNow: number;
+  initialLiveStrikes: StormStrike[] | null;
 }) {
   const ts = useTranslations('storms');
+  const tm = useTranslations('stormMetrics');
   const locale = useLocale();
   const timeZone = useViewerTimeZone();
   const router = useRouter();
   const countryName = useCountryName();
-  const { mergeMap, now: transitionNow, connected: transitionsConnected } = useStormMerge();
+  const { mergeMap, now: transitionNow, connected: transitionsConnected, liveRateSnapshot } = useStormMerge();
   const mergeStatus = storm.stormKey ? mergeMap.get(storm.stormKey) : undefined;
 
   const [liveStats, setLiveStats] = useState<LiveStats>({
@@ -119,7 +122,7 @@ export default function StormDetailClient({
   const [now, setNow] = useState(initialNow);
   const isLive = liveStats.endTime != null && now - liveStats.endTime < 10 * 60_000;
 
-  // Tick every minute so the live duration KPI re-renders without waiting for a poll
+  // Keep the storm duration current between metadata polls.
   useEffect(() => { setNow(Date.now()); }, []);
   useEffect(() => {
     if (!isLive) return;
@@ -127,15 +130,24 @@ export default function StormDetailClient({
     return () => clearInterval(id);
   }, [isLive]);
 
+  const initialRateSnapshot = useMemo<StormLiveRateSnapshot | null>(() => {
+    if (!storm.stormKey || initialLiveStrikes == null) return null;
+    return { at: initialNow, rates: { [storm.stormKey]: recentStormStrikes(initialLiveStrikes, initialNow).length } };
+  }, [storm.stormKey, initialLiveStrikes, initialNow]);
+  // Map labels and this KPI use the same server snapshot and shared clock.
+  const liveRate = storm.stormKey
+    ? getStormLiveRate(liveRateSnapshot ?? initialRateSnapshot, storm.stormKey, Math.max(transitionNow, initialNow))
+    : null;
+
   const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
   // Counts SSE strikes since last DB flush so the counter ticks in real-time
   const [appendedSinceFlush, setAppendedSinceFlush] = useState(0);
-  const latestTsRef = useRef((() => {
-    let max = 0;
-    if (storm.strikes) for (const s of storm.strikes) if (s[2] > max) max = s[2];
-    return max;
-  })());
-  const seenReplayStrikesRef = useRef(new Set((storm.strikes ?? []).map(replayStrikeKey)));
+  const initialReplay = useMemo(() => ({
+    latest: latestReplayTime(storm.strikes ?? []),
+    seen: new Set((storm.strikes ?? []).map(replayStrikeKey)),
+  }), [storm.strikes]);
+  const latestTsRef = useRef(initialReplay.latest);
+  const seenReplayStrikesRef = useRef(initialReplay.seen);
   const shouldPoll = shouldPollStormReplay(liveStats.endTime, latestTsRef.current);
 
   const appendUnseenStrikes = (batch: StormStrike[]) => {
@@ -203,6 +215,8 @@ export default function StormDetailClient({
           router.replace(`/storms/${encodeURIComponent(data.stormKey)}`);
           return;
         }
+        const receivedAt = Date.now();
+        setNow(receivedAt);
         // Preserve SSE strikes not yet flushed to DB
         const dbTotal = data.totalCount ?? data.count;
         const stillLive = data.endTime != null && Date.now() - data.endTime < 10 * 60_000;
@@ -238,7 +252,9 @@ export default function StormDetailClient({
         }
         // Backfill any strikes between SSR and EventSource connect
         appendUnseenStrikes(data.strikes);
-      } catch { /* network blip — skip */ } finally { polling = false; }
+      } catch { /* network blip — skip */ } finally {
+        polling = false;
+      }
     };
 
     const id = setInterval(poll, POLL_INTERVAL_MS);
@@ -319,6 +335,14 @@ export default function StormDetailClient({
             </span>
             <span className="storm-kpi-label">Total strikes</span>
           </div>
+          {isLive && (
+            <div className="storm-kpi" title={tm('liveRateDescription')}>
+              <span className="storm-kpi-value">
+                {liveRate == null ? '—' : liveRate.toLocaleString(locale)}<span className="storm-kpi-unit">{tm('perMinute')}</span>
+              </span>
+              <span className="storm-kpi-label">{tm('liveRate')}</span>
+            </div>
+          )}
           <div className="storm-kpi">
             <span className="storm-kpi-value">
               {fmtRate(liveStats.rate)}<span className="storm-kpi-unit">/min</span>

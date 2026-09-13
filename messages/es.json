@@ -87,6 +87,11 @@
     "dailyBest": "Mejor tormenta por día",
     "most": "Más rayos"
   },
+  "stormMetrics": {
+    "liveRate": "Frecuencia actual",
+    "liveRateDescription": "Rayos en los últimos 60 segundos",
+    "perMinute": "/min"
+  },
   "stormLog": {
     "title": "Registro de tormentas",
     "noStorms": "No se registraron tormentas este día.",

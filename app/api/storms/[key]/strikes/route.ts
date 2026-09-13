@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStormReplayByKey, getNearbyRankedStorms } from '../../../../lib/db';
+import { getStormLiveStrikes } from '../../../../lib/strikeStream';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,7 @@ export async function GET(
   return NextResponse.json({
     stormKey: storm.stormKey,
     strikes: storm.strikes ?? [],
+    liveStrikes: getStormLiveStrikes(storm.stormKey ?? decodeURIComponent(key)),
     endTime: storm.endTime,
     totalCount: storm.totalCount,
     count: storm.count,

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, getTrackedStormKeys, getStormByKey, recordStormAlias, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
-import { dispatchStrike as dispatchToStormSubscribers, publishStormOwnership } from '../../lib/strikeStream';
+import { dispatchStrike as dispatchToStormSubscribers, publishStormOwnership, getStormLiveRates } from '../../lib/strikeStream';
 import { nearestCity, MIN_STORM_RATE, type CityTuple, type StrikePoint } from '../../lib/stormClusters';
 import { detectStormFootprints } from '../../lib/stormFootprint';
 import { combineStormLifecycle, lifecycleStrikeId, reconcileStormLifecycle, stormLifecycleSummaries, type StormLifecycleState } from '../../lib/stormLifecycle';
@@ -31,6 +31,7 @@ const pendingIntake = restoredIntake.filter(p => p.id > (intakeCheckpoint?.throu
 const restorationTime = pendingIntake[0]?.receivedAt ?? Date.now();
 let intakeThrough = intakeCheckpoint?.through ?? 0;
 let accepting = true;
+let cachedLiveRateEvent: { second: number; data: string } | null = null;
 
 // ── Persisted state ────────────────────────────────────────────────────
 const { total, countries } = loadCounters();
@@ -710,6 +711,7 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
   }
   // A publication failure cannot roll memory back behind a committed snapshot.
   publishStormOwnership(trackedStorms, nowMs);
+  cachedLiveRateEvent = null;
   for (const date of dailyCounts.keys()) if (date !== currentDay) dailyCounts.delete(date);
   if (publish) broadcastSSE(`event: storms\ndata: ${JSON.stringify(stormLifecycleSummaries(trackedStorms, nowMs))}\n\n`);
 }
@@ -780,6 +782,17 @@ export function HEAD() {
 }
 
 // ── SSE endpoint ───────────────────────────────────────────────────────
+// All viewers within a clock second share one calculation and payload. The
+// one-second event also keeps the stream alive when there are no new strikes.
+function liveRateEvent(now = Date.now()): string {
+  const second = Math.floor(now / 1000);
+  if (cachedLiveRateEvent?.second !== second) {
+    const snapshot = getStormLiveRates(trackedStorms.map(storm => storm.key), now);
+    cachedLiveRateEvent = { second, data: `event: storm-rates\ndata: ${JSON.stringify(snapshot)}\n\n` };
+  }
+  return cachedLiveRateEvent.data;
+}
+
 export async function GET() {
   const activeSources: Set<string> = (globalThis as any)._activeSources ?? new Set();
   let ctrl: ReadableStreamDefaultController<Uint8Array>;
@@ -790,9 +803,15 @@ export async function GET() {
       ctrl = c;
       sseControllers.add(ctrl);
       heartbeat = setInterval(() => {
-        try { ctrl.enqueue(enc.encode(': heartbeat\n\n')); }
+        if ((globalThis as any)._sseBcastGen !== myGeneration) {
+          clearInterval(heartbeat);
+          sseControllers.delete(ctrl);
+          try { ctrl.close(); } catch { /* already disconnected */ }
+          return;
+        }
+        try { ctrl.enqueue(enc.encode(liveRateEvent())); }
         catch { clearInterval(heartbeat); sseControllers.delete(ctrl); }
-      }, 25_000);
+      }, 1000);
 
       ctrl.enqueue(enc.encode(
         `event: init\ndata: ${JSON.stringify({ total: serverTotal, countries: serverCountryCounts })}\n\n`
@@ -816,6 +835,7 @@ export async function GET() {
       const connectNow = Date.now();
       const connectStorms = stormLifecycleSummaries(trackedStorms, connectNow);
       ctrl.enqueue(enc.encode(`event: storms\ndata: ${JSON.stringify(connectStorms)}\n\n`));
+      ctrl.enqueue(enc.encode(liveRateEvent(connectNow)));
       if (activeSources.size > 0) {
         ctrl.enqueue(enc.encode('event: status\ndata: live\n\n'));
       }

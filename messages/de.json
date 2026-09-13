@@ -87,6 +87,11 @@
     "dailyBest": "Bester Sturm pro Tag",
     "most": "Meiste Blitze"
   },
+  "stormMetrics": {
+    "liveRate": "Aktuelle Rate",
+    "liveRateDescription": "Blitze in den letzten 60 Sekunden",
+    "perMinute": "/min"
+  },
   "stormLog": {
     "title": "Gewitterprotokoll",
     "noStorms": "An diesem Tag wurden keine Gewitter verfolgt.",

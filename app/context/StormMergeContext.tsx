@@ -3,24 +3,30 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { StormTransition } from '../lib/stormTransition';
 import { collectStormTransitions, STORM_TRANSITION_STALE_MS } from '../lib/stormTransitionDisplay';
+import type { StormLiveRateSnapshot } from '../lib/stormLiveRate';
 
 type StormMergeContextValue = {
   mergeMap: Map<string, StormTransition>;
   now: number;
   connected: boolean;
+  liveRateSnapshot: StormLiveRateSnapshot | null;
 };
 
 const StormMergeContext = createContext<StormMergeContextValue>({
   mergeMap: new Map(),
   now: 0,
   connected: false,
+  liveRateSnapshot: null,
 });
 
 export function StormMergeProvider({ children }: { children: ReactNode }) {
   const [mergeMap, setMergeMap] = useState<Map<string, StormTransition>>(new Map());
-  const [now, setNow] = useState(() => Date.now());
+  // Start with the same clock during SSR and hydration; stream events/ticks
+  // establish the browser clock after mount.
+  const [now, setNow] = useState(0);
   const [sourceLive, setSourceLive] = useState(false);
   const [lastSnapshotAt, setLastSnapshotAt] = useState(0);
+  const [liveRateSnapshot, setLiveRateSnapshot] = useState<StormLiveRateSnapshot | null>(null);
 
   // This global provider also runs on direct storm list/detail navigation.
   // Only a server snapshot can cancel or confirm transitions. A disconnected
@@ -37,6 +43,16 @@ export function StormMergeProvider({ children }: { children: ReactNode }) {
         setNow(receivedAt);
       } catch { /* Preserve the last valid snapshot until the server replaces it. */ }
     });
+    source.addEventListener('storm-rates', (event: MessageEvent) => {
+      try {
+        const snapshot = JSON.parse(event.data) as StormLiveRateSnapshot;
+        if (!snapshot || !Number.isFinite(snapshot.at) || !snapshot.rates
+          || typeof snapshot.rates !== 'object' || Array.isArray(snapshot.rates)
+          || Object.values(snapshot.rates).some(rate => rate !== null && (!Number.isInteger(rate) || rate < 0))) return;
+        setLiveRateSnapshot(previous => previous && previous.at > snapshot.at ? previous : snapshot);
+        setNow(Date.now());
+      } catch { /* Keep the last valid rates; the shared clock will expire stale data. */ }
+    });
     source.addEventListener('status', (event: MessageEvent) => {
       setSourceLive(event.data === 'live');
       setNow(Date.now());
@@ -45,16 +61,16 @@ export function StormMergeProvider({ children }: { children: ReactNode }) {
     return () => source.close();
   }, []);
 
-  const hasPending = mergeMap.size > 0;
+  // Run before the first rate event too, so an SSR fallback cannot remain live
+  // indefinitely if the stream never connects.
   useEffect(() => {
-    if (!hasPending) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [hasPending]);
+  }, []);
 
   const connected = sourceLive && now - lastSnapshotAt <= STORM_TRANSITION_STALE_MS;
   return (
-    <StormMergeContext.Provider value={{ mergeMap, now, connected }}>
+    <StormMergeContext.Provider value={{ mergeMap, now, connected, liveRateSnapshot }}>
       {children}
     </StormMergeContext.Provider>
   );

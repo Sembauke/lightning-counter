@@ -87,6 +87,11 @@
     "dailyBest": "Beste bui per dag",
     "most": "Meeste bliksems"
   },
+  "stormMetrics": {
+    "liveRate": "Actuele frequentie",
+    "liveRateDescription": "Bliksemontladingen in de afgelopen 60 seconden",
+    "perMinute": "/min"
+  },
   "stormLog": {
     "title": "Onweerslogboek",
     "noStorms": "Geen onweersbuien gevolgd op deze dag.",

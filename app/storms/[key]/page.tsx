@@ -5,6 +5,7 @@ import path from 'path';
 import { getStormReplayByKey, getStormRecords, getNearbyRankedStorms } from '../../lib/db';
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
+import { getStormLiveStrikes } from '../../lib/strikeStream';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -104,5 +105,7 @@ export default async function StormDetailPage({ params }: Props) {
   }
   const records = getStormRecords();
   const nearbyRanked = storm.stormKey ? getNearbyRankedStorms(storm.stormKey, 10) : [];
-  return <StormDetailClient key={storm.stormKey} storm={storm} records={records} nearbyRanked={nearbyRanked} initialNow={Date.now()} />;
+  const initialNow = Date.now();
+  const initialLiveStrikes = getStormLiveStrikes(storm.stormKey ?? decodeURIComponent(key), initialNow);
+  return <StormDetailClient key={storm.stormKey} storm={storm} records={records} nearbyRanked={nearbyRanked} initialNow={initialNow} initialLiveStrikes={initialLiveStrikes} />;
 }

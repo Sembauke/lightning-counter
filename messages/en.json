@@ -87,6 +87,11 @@
     "dailyBest": "Best storm per day",
     "most": "Most strikes"
   },
+  "stormMetrics": {
+    "liveRate": "Live rate",
+    "liveRateDescription": "Strikes in the last 60 seconds",
+    "perMinute": "/min"
+  },
   "stormLog": {
     "title": "Storm Log",
     "noStorms": "No storms tracked on this day.",
