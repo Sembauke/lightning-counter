@@ -328,7 +328,7 @@ export function upsertCountryPeakRates(rates: Record<string, number>): void {
 export interface BiggestStorm {
   code: string;
   count: number;   // strikes in the storm's best 5-min window
-  rate: number;    // strikes per minute at that peak
+  rate: number;    // highest rolling-minute strike count
   lat: number;     // current/last-tracked centroid
   lon: number;
   city: string | null;
@@ -517,6 +517,16 @@ function selectReplayJson(storedJson: string | null, incoming: StormStrike[] | n
   const selected = selectStormReplaySnapshot(stored, incoming);
   if (selected === stored) return storedJson;
   return selected ? JSON.stringify(selected) : null;
+}
+
+/** Persist a final peak without replacing metadata enriched after the last tracking pass. */
+export function updateStormPeakRate(stormKey: string, rate: number): void {
+  const db = getDb();
+  db.transaction(() => {
+    for (const table of ['storms', 'country_biggest_storms', 'storm_records']) {
+      db.prepare(`UPDATE ${table} SET rate = MAX(rate, ?) WHERE storm_key = ?`).run(rate, stormKey);
+    }
+  })();
 }
 
 /** Persist fading lightning without extending the qualified storm's metrics. */

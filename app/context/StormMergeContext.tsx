@@ -49,6 +49,9 @@ export function StormMergeProvider({ children }: { children: ReactNode }) {
         if (!snapshot || !Number.isFinite(snapshot.at) || !snapshot.rates
           || typeof snapshot.rates !== 'object' || Array.isArray(snapshot.rates)
           || Object.values(snapshot.rates).some(rate => rate !== null && (!Number.isInteger(rate) || rate < 0))) return;
+        if (snapshot.peakRates !== undefined && (!snapshot.peakRates
+          || typeof snapshot.peakRates !== 'object' || Array.isArray(snapshot.peakRates)
+          || Object.values(snapshot.peakRates).some(rate => rate !== null && (!Number.isFinite(rate) || rate < 0)))) return;
         setLiveRateSnapshot(previous => previous && previous.at > snapshot.at ? previous : snapshot);
         setNow(Date.now());
       } catch { /* Keep the last valid rates; the shared clock will expire stale data. */ }

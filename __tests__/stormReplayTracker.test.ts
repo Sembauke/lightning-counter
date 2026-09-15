@@ -46,7 +46,7 @@ function seedTrackedStorm(shortState = false) {
   const strikes: StormStrike[] = Array.from({ length: 200 }, (_, i) => [43, -94, start - 2 * minute + i * 300]);
   const officialWatermark = strikes[strikes.length - 1][2];
   const storm: BiggestStorm = {
-    stormKey: trackedKey, code: 'US', count: 300, rate: 60,
+    stormKey: trackedKey, code: 'US', count: 300, rate: 200,
     lat: 43, lon: -94, city: 'End', date: '2026-09-08',
     originLat: 43, originLon: -94, originCity: 'Start',
     startTime: start - 45 * minute, endTime: start - minute,

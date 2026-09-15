@@ -3,11 +3,12 @@ import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, getTrackedStormKeys, getStormByKey, recordStormAlias, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers, publishStormOwnership, getStormLiveRates } from '../../lib/strikeStream';
+import { peakStormMinuteRate } from '../../lib/stormLiveRate';
 import { nearestCity, MIN_STORM_RATE, type CityTuple, type StrikePoint } from '../../lib/stormClusters';
 import { detectStormFootprints } from '../../lib/stormFootprint';
 import { combineStormLifecycle, lifecycleStrikeId, reconcileStormLifecycle, stormLifecycleSummaries, type StormLifecycleState } from '../../lib/stormLifecycle';
 import { collectReplayTails, rememberReplayAnchors, type ReplayTailStorm } from '../../lib/stormReplayTail';
-import { saveStormReplayOwnership, updateStormReplay } from '../../lib/db';
+import { saveStormReplayOwnership, updateStormPeakRate, updateStormReplay } from '../../lib/db';
 import { compactStormCounting, countStormStrike, emptyStormCounting, mergeStormCounting, remapStormCountingKeys, sharedStormStrikeCount, type StormCountingState } from '../../lib/stormCounting';
 import { restoreStormCounting } from '../../lib/stormCountingMigration';
 import { appendStrikeIntake, loadStrikeIntake, loadIntakeCheckpoint, checkpointStrikeIntake, flushIntakeArchive, type IntakeStrike } from '../../lib/db';
@@ -501,6 +502,17 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
       .filter(cell => !hasTimestampBurst(sampleCell(cell.activeMembers)));
     const matched = new Set<TrackedStorm>();
     const reserved = new Set(observations.filter(cell => cell.activeMembers.length >= MIN_STORM_RATE * WINDOW_MS / 60_000).flatMap(cell => cell.activeMembers));
+    // Preserve a final live burst before this pass can drop its storm below the
+    // detection threshold. Ownership still reflects the preceding active pass.
+    const pendingPeaks = getStormLiveRates(trackedStorms.map(st => st.key), nowMs).peakRates;
+    const peakUpdates = new Set<TrackedStorm>();
+    for (const st of trackedStorms) {
+      const peak = pendingPeaks?.[st.key];
+      if (peak != null && peak > st.peakRate) {
+        st.peakRate = peak;
+        peakUpdates.add(st);
+      }
+    }
     for (const st of trackedStorms) st.currentRate = 0;
     function memberLocation(members: StrikePoint[], parent?: TrackedStorm) {
       const ccCounts: Record<string, number> = {};
@@ -546,7 +558,8 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
       st.lat = lat; st.lon = lon; st.city = city;
       st.lastSeen = nowMs;
       st.currentRate = members.length / 5;
-      if (members.length > st.peakCount) { st.peakCount = members.length; st.peakRate = st.currentRate; }
+      st.peakCount = Math.max(st.peakCount, members.length);
+      st.peakRate = Math.max(st.peakRate, peakStormMinuteRate(members.map(roundPt), nowMs));
       accumulateStrikes(st, members, nowMs);
       matched.add(st);
       for (const p of members) reserved.add(p);
@@ -573,7 +586,8 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
     // Confirmation keeps the existing ancestry-aware accumulation and canonical
     // key adoption, while all pending observations remain separate above.
     function absorbInto(big: TrackedStorm, small: TrackedStorm): number {
-      if (small.peakCount > big.peakCount) { big.peakCount = small.peakCount; big.peakRate = small.peakRate; }
+      big.peakCount = Math.max(big.peakCount, small.peakCount);
+      big.peakRate = Math.max(big.peakRate, small.peakRate);
       if (small.startTime < big.startTime) {
         big.startTime = small.startTime;
         big.originLat = small.originLat; big.originLon = small.originLon; big.originCity = small.originCity;
@@ -645,7 +659,8 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
         const location = memberLocation(whole, big);
         big.lat = location.lat; big.lon = location.lon; big.city = location.city; big.cc = location.cc;
         big.currentRate = whole.length / 5;
-        if (whole.length > big.peakCount) { big.peakCount = whole.length; big.peakRate = big.currentRate; }
+        big.peakCount = Math.max(big.peakCount, whole.length);
+        big.peakRate = Math.max(big.peakRate, peakStormMinuteRate(whole.map(roundPt), nowMs));
       }
     }
 
@@ -660,7 +675,10 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
     // accepts ones that beat the stored count or already hold the record
     const records: BiggestStorm[] = [];
     for (const st of trackedStorms) {
-      if (st.lastSeen !== nowMs) continue;
+      if (st.lastSeen !== nowMs) {
+        if (peakUpdates.has(st)) updateStormPeakRate(st.key, st.peakRate);
+        continue;
+      }
       // Physical backstop: accumulated hops can never exceed what a real storm
       // system could cover in this lifetime
       const maxTravel = ((st.lastSeen - st.startTime) / 3_600_000) * STORM_MAX_KMH;
@@ -788,6 +806,9 @@ function liveRateEvent(now = Date.now()): string {
   const second = Math.floor(now / 1000);
   if (cachedLiveRateEvent?.second !== second) {
     const snapshot = getStormLiveRates(trackedStorms.map(storm => storm.key), now);
+    snapshot.peakRates = Object.fromEntries(trackedStorms.map(storm => [
+      storm.key, Math.max(storm.peakRate, snapshot.peakRates?.[storm.key] ?? 0),
+    ]));
     cachedLiveRateEvent = { second, data: `event: storm-rates\ndata: ${JSON.stringify(snapshot)}\n\n` };
   }
   return cachedLiveRateEvent.data;

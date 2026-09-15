@@ -138,6 +138,12 @@ export default function StormDetailClient({
   const liveRate = storm.stormKey
     ? getStormLiveRate(liveRateSnapshot ?? initialRateSnapshot, storm.stormKey, Math.max(transitionNow, initialNow))
     : null;
+  // Streamed peaks include unflushed activity and remain valid when live rates expire.
+  const observedPeakRate = Math.max(liveStats.rate, liveRate ?? 0,
+    storm.stormKey ? liveRateSnapshot?.peakRates?.[storm.stormKey] ?? 0 : 0);
+  const [peakRate, setPeakRate] = useState(storm.rate);
+  // A delayed poll or missing ownership snapshot must not lower an observed peak.
+  if (observedPeakRate > peakRate) setPeakRate(observedPeakRate);
 
   const [appendedStrikes, setAppendedStrikes] = useState<StormStrike[]>([]);
   // Counts SSE strikes since last DB flush so the counter ticks in real-time
@@ -345,7 +351,7 @@ export default function StormDetailClient({
           )}
           <div className="storm-kpi">
             <span className="storm-kpi-value">
-              {fmtRate(liveStats.rate)}<span className="storm-kpi-unit">/min</span>
+              {fmtRate(peakRate)}<span className="storm-kpi-unit">/min</span>
             </span>
             <span className="storm-kpi-label">Peak rate</span>
           </div>

@@ -61,13 +61,19 @@ it('gives map and detail viewers the same one-second rates, including quiet-wind
   expect(summaries[0].rate).toBe(24); // Detection still uses its stable five-minute average.
   const mapInitial = await event<StormLiveRateSnapshot>(mapReader, 'storm-rates');
   const detailInitial = await event<StormLiveRateSnapshot>(detailReader, 'storm-rates');
-  expect(mapInitial).toEqual({ at: now, rates: { [key]: 120 } });
+  expect(mapInitial).toEqual({ at: now, rates: { [key]: 120 }, peakRates: { [key]: 120 } });
   expect(detailInitial).toEqual(mapInitial);
 
   globals._processStrike(45.005, 12.005, now);
   await vi.advanceTimersByTimeAsync(1000);
   const mapUpdated = await event<StormLiveRateSnapshot>(mapReader, 'storm-rates');
   const detailUpdated = await event<StormLiveRateSnapshot>(detailReader, 'storm-rates');
-  expect(mapUpdated).toEqual({ at: now + 1000, rates: { [key]: 119 } });
+  expect(mapUpdated).toEqual({ at: now + 1000, rates: { [key]: 119 }, peakRates: { [key]: 121 } });
   expect(detailUpdated).toEqual(mapUpdated);
+
+  // A refresh retains the just-observed peak even though activity has already
+  // dropped and the next 30-second database checkpoint has not happened yet.
+  const refreshedReader = (await route.GET()).body!.getReader();
+  readers.push(refreshedReader);
+  expect(await event<StormLiveRateSnapshot>(refreshedReader, 'storm-rates')).toEqual(mapUpdated);
 });

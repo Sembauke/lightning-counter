@@ -1,6 +1,6 @@
 import type { StormStrike } from './db';
 import { buildStormStrikeOwnership, type StormOwnershipSource, type StormStrikeOwnership } from './stormStrikeOwnership';
-import { recentStormStrikes, type StormLiveRateSnapshot } from './stormLiveRate';
+import { peakStormMinuteRate, recentStormStrikes, type StormLiveRateSnapshot } from './stormLiveRate';
 import { STORM_OBSERVATION_GAP_MS } from './stormTransition';
 
 type Subscriber = {
@@ -37,7 +37,7 @@ export function stormStrikeHistory(stormKey: string, saved: StormStrike[] | null
 }
 
 /** Resolve global observations once for the whole requested group of storms. */
-function collectStormLiveStrikes(stormKeys: Iterable<string>, now: number): Map<string, StormStrike[] | null> {
+function collectStormLiveStrikes(stormKeys: Iterable<string>, now: number, windowMs = 60_000): Map<string, StormStrike[] | null> {
   const current = ownership();
   const known = current && Number.isFinite(now)
     && now >= current.publishedAt && now - current.publishedAt <= STORM_OBSERVATION_GAP_MS;
@@ -46,7 +46,7 @@ function collectStormLiveStrikes(stormKeys: Iterable<string>, now: number): Map<
     byStorm.set(key, known && current.has(key) ? current.history(key, now) ?? [] : null);
   }
   if (!known) return byStorm;
-  const cutoff = now - 60_000;
+  const cutoff = now - windowMs;
   const recent = (globalThis as typeof globalThis & {
     _recentStrikes?: Array<{ lat: number; lon: number; time: number }>;
   })._recentStrikes ?? [];
@@ -58,7 +58,7 @@ function collectStormLiveStrikes(stormKeys: Iterable<string>, now: number): Map<
     byStorm.get(owner.key)?.push([point.lat, point.lon, point.time]);
   }
   for (const [key, strikes] of byStorm) {
-    if (strikes) byStorm.set(key, recentStormStrikes(strikes, now));
+    if (strikes) byStorm.set(key, recentStormStrikes(strikes, now, windowMs));
   }
   return byStorm;
 }
@@ -70,8 +70,13 @@ export function getStormLiveStrikes(stormKey: string, now = Date.now()): StormSt
 
 /** The map and detail page receive this same rolling-minute snapshot. */
 export function getStormLiveRates(stormKeys: Iterable<string>, now = Date.now()): StormLiveRateSnapshot {
-  const strikes = collectStormLiveStrikes(stormKeys, now);
-  return { at: now, rates: Object.fromEntries([...strikes].map(([key, points]) => [key, points?.length ?? null])) };
+  // Retain peaks between tracker checkpoints, including for a newly connected viewer.
+  const strikes = collectStormLiveStrikes(stormKeys, now, 5 * 60_000);
+  return {
+    at: now,
+    rates: Object.fromEntries([...strikes].map(([key, points]) => [key, points ? recentStormStrikes(points, now).length : null])),
+    peakRates: Object.fromEntries([...strikes].map(([key, points]) => [key, points ? peakStormMinuteRate(points, now) : null])),
+  };
 }
 
 function registry(): Map<string, Subscriber> {

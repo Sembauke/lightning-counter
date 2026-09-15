@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StormStrike } from '../app/lib/db';
-import { getStormLiveRate, recentStormStrikes } from '../app/lib/stormLiveRate';
+import { getStormLiveRate, peakStormMinuteRate, recentStormStrikes } from '../app/lib/stormLiveRate';
 
 const now = Date.parse('2026-09-13T12:00:30Z');
 const strike = (time: number, lat = 46, lon = 9): StormStrike => [lat, lon, time];
@@ -49,5 +49,26 @@ describe('live storm strike rate', () => {
     expect(getStormLiveRate(snapshot, 'missing', now)).toBeNull();
     expect(getStormLiveRate(snapshot, 'storm', now + 5001)).toBeNull();
     expect(getStormLiveRate(null, 'storm', now)).toBeNull();
+  });
+});
+
+describe('peak storm strike rate', () => {
+  it('captures a one-minute peak between tracking passes after the live rate has fallen', () => {
+    const points = [strike(now - 100_000), strike(now - 90_000), strike(now - 80_000), strike(now)];
+    expect(recentStormStrikes(points, now)).toHaveLength(1);
+    expect(peakStormMinuteRate(points, now)).toBe(3);
+  });
+
+  it('uses a strict rolling-minute boundary and accepts unsorted arrivals', () => {
+    const points = [strike(now), strike(now - 59_999), strike(now - 60_000), strike(now - 120_000)];
+    expect(peakStormMinuteRate(points, now)).toBe(2);
+  });
+
+  it('deduplicates precision variants and ignores future, invalid and expired points', () => {
+    const points = [strike(now, 46.123, 9.123), strike(now, 46.1231, 9.1231),
+      strike(now, 46.124, 9.124), strike(now + 1), strike(now, NaN), strike(now, 91),
+      strike(now, 46, 181), strike(NaN), strike(now - 5 * 60_000), strike(now - 5 * 60_000 - 1)];
+    expect(peakStormMinuteRate(points, now)).toBe(2);
+    expect(peakStormMinuteRate([], now)).toBe(0);
   });
 });

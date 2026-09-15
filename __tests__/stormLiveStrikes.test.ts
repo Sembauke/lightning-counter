@@ -39,7 +39,7 @@ describe('live storm strike observations', () => {
     ], now);
     globals._recentStrikes = [point(10.02, now), point(10.64, now)];
     const rates = getStormLiveRates(['a', 'b', 'missing'], now);
-    expect(rates).toEqual({ at: now, rates: { a: 3, b: 2, missing: null } });
+    expect(rates).toEqual({ at: now, rates: { a: 3, b: 2, missing: null }, peakRates: { a: 3, b: 2, missing: null } });
     expect(rates.rates.a).toBe(getStormLiveStrikes('a', now)?.length);
     expect(rates.rates.b).toBe(getStormLiveStrikes('b', now)?.length);
     expect(getStormLiveRates(['a', 'b'], now + 1000).rates).toEqual({ a: 2, b: 2 });
