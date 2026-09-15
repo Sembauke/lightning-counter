@@ -10,6 +10,7 @@ export interface CountryDetail extends CountrySummary {
     count: number; rate: number; lat: number; lon: number;
     city: string | null; date: string;
     originCity: string | null; startTime: number | null; endTime: number | null;
+    subdivision?: string | null; originSubdivision?: string | null;
     traveledKm: number | null; totalCount: number | null;
     strikes: StormStrike[] | null;
   } | null;

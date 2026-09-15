@@ -6,6 +6,8 @@ import { getStormReplayByKey, getStormRecords, getNearbyRankedStorms } from '../
 import StormDetailClient from './StormDetailClient';
 import { SITE_URL } from '../../lib/site';
 import { getStormLiveStrikes } from '../../lib/strikeStream';
+import { getStormName } from '../../lib/stormName';
+import { getTranslations } from 'next-intl/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -49,7 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const total = storm.totalCount ?? storm.count;
   const city = storm.city ?? `${storm.lat.toFixed(1)}°N ${storm.lon.toFixed(1)}°E`;
   const origin = storm.originCity;
-  const journey = origin && origin !== storm.city ? `${origin} to ${city}` : `near ${city}`;
+  const ts = await getTranslations({ locale: 'en', namespace: 'storms' });
 
   let durationStr = '';
   if (storm.startTime && storm.endTime) {
@@ -69,11 +71,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const codes = storm.countryPath?.length ? storm.countryPath : [storm.code];
   const nearby = nearbyCities(storm.lat, storm.lon, codes);
   // Exclude cities already mentioned in the journey so we don't repeat them
-  const extraCities = nearby.filter(n => n !== city && n !== origin);
+  const extraCities = nearby.filter(n => n !== storm.city && n !== storm.originCity);
 
-  const title = `Lightning Storm ${journey} — ${storm.date}`;
+  const name = getStormName(storm, ts);
+  const title = `Lightning ${name} — ${storm.date}`;
   const nearbyStr = extraCities.length ? ` Also near: ${extraCities.slice(0, 3).join(', ')}.` : '';
-  const description = `Lightning storm ${journey} on ${storm.date}: ${parts}.${nearbyStr}`;
+  const description = `Lightning ${name} on ${storm.date}: ${parts}.${nearbyStr}`;
   const canonical = `${SITE_URL}/storms/${encodeURIComponent(storm.stormKey ?? decodeURIComponent(key))}`;
 
   return {

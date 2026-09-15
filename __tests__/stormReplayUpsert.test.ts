@@ -139,7 +139,10 @@ describe('persisted storm replay snapshots', () => {
       totalCount: 60_000, count: 350, rate: 70, lat: 46.1, lon: 10.5,
       city: 'Venice', endTime: start + 10 * 60 * minute, traveledKm: 200,
     });
-    const { strikes: _actualStrikes, ...actual } = dbModule.getStormByKey(key)!;
+    // Subdivision labels are computed for display, separate from the tracker's persisted fields.
+    const {
+      strikes: _actualStrikes, subdivision: _subdivision, originSubdivision: _originSubdivision, ...actual
+    } = dbModule.getStormByKey(key)!;
     const { strikes: _expectedStrikes, ...expected } = updated;
     expect(actual).toEqual(expected);
     expect(saved()).toHaveLength(501);

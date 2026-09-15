@@ -184,7 +184,7 @@ export default function StormLeaderboard({
   stormKey: string | null;
   locale: string;
   flashKeys: Set<string>;
-  countryName: (code: string) => string;
+  countryName: (code: string, marineName?: string | null) => string;
   label: (row: RankedNeighbor) => string;
 }) {
   const protectedKeys = useRef(new Set<string>());
@@ -249,7 +249,7 @@ export default function StormLeaderboard({
         const contents = <>
           <span className="storm-leaderboard-rank">{rankKnown ? `#${position.rank}` : '…'}</span>
           <span className="storm-leaderboard-name">
-            <CountryFlag code={row.code} name={countryName(row.code)} />
+            <CountryFlag code={row.code} name={countryName(row.code, row.city)} />
             <span className="storm-leaderboard-name-text">{label(row)}</span>
           </span>
           <span className="storm-leaderboard-count">{row.totalCount.toLocaleString(locale)}</span>

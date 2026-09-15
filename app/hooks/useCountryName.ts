@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useLocale } from '../context/LocaleContext';
 
 /** Localized country name from an ISO alpha-2 code, falling back to the code */
-export function useCountryName(): (code: string) => string {
+export function useCountryName(): (code: string, marineName?: string | null) => string {
   const { locale } = useLocale();
 
   const displayNames = useMemo(() => {
@@ -12,8 +12,8 @@ export function useCountryName(): (code: string) => string {
     try { return new Intl.DisplayNames([locale], { type: 'region' }); } catch { return null; }
   }, [locale]);
 
-  return (code: string) => {
-    if (code === 'XO') return 'Open Ocean';
+  return (code: string, marineName?: string | null) => {
+    if (code === 'XO') return marineName || 'Open Ocean';
     try { return displayNames?.of(code) ?? code; } catch { return code; }
   };
 }

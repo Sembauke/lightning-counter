@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { recoverOwnedReplay } from './stormReplayRecovery';
 import { selectStormReplaySnapshot } from './stormReplaySnapshot';
+import { withStormLocationNames } from './stormLocation';
 
 const DB_DIR = process.env.DB_PATH ?? (fs.existsSync('/data') ? '/data' : './tmp');
 const DB_FILE = path.join(DB_DIR, 'lightning.db');
@@ -332,10 +333,12 @@ export interface BiggestStorm {
   lat: number;     // current/last-tracked centroid
   lon: number;
   city: string | null;
+  subdivision?: string | null;
   date: string;
   originLat: number | null;   // where the storm first crossed the threshold
   originLon: number | null;
   originCity: string | null;
+  originSubdivision?: string | null;
   startTime: number | null;   // first tracked strike (epoch ms)
   endTime: number | null;     // last time it was seen above the threshold
   stormKey: string | null;    // identity across tracker passes
@@ -359,7 +362,7 @@ export function getBiggestStorm(code: string): BiggestStorm | null {
   try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt — treat as absent */ }
   let countryPath: string[] | null = null;
   try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
-  return { ...row, strikes, countryPath };
+  return withStormLocationNames({ ...row, strikes, countryPath });
 }
 
 export function upsertBiggestStorms(storms: BiggestStorm[]): void {
@@ -427,7 +430,7 @@ export function getStormRecords(): GlobalStormRecord[] {
     try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt */ }
     let countryPath: string[] | null = null;
     try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
-    return { ...row, strikes, countryPath };
+    return withStormLocationNames({ ...row, strikes, countryPath });
   });
 }
 
@@ -560,7 +563,7 @@ export function getStormsForDate(date: string, code?: string): StormLogRow[] {
   const rows = (code
     ? db.prepare(`${base} AND code = ? ORDER BY end_time DESC, start_time DESC`).all(date, code)
     : db.prepare(`${base} ORDER BY end_time DESC, start_time DESC`).all(date)) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
-  return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
+  return rows.map(r => withStormLocationNames({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
 /** All currently-active storms (end_time within last 10 min), any size, any date — for map rank matching */
@@ -608,7 +611,7 @@ export function getBiggestStormPerDay(): StormLogRow[] {
     WHERE rn = 1
     ORDER BY date DESC
   `).all() as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
-  return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
+  return rows.map(r => withStormLocationNames({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
 /** Top 100 storms of all time by total accumulated strikes */
@@ -630,7 +633,7 @@ export function getTop100Storms(): StormLogRow[] {
     ORDER BY COALESCE(total_count, count) DESC
     LIMIT ?
   `).all(STORM_QUALIFY_MIN_STRIKES, TOP_STORMS_LIMIT) as (Omit<StormLogRow, 'countryPath'> & { countryPath: string | null })[];
-  return rows.map(r => ({ ...r, countryPath: parseCountryPath(r.countryPath) }));
+  return rows.map(r => withStormLocationNames({ ...r, countryPath: parseCountryPath(r.countryPath) }));
 }
 
 /** Keep bookmarks and in-flight replay requests valid after confirmed merges. */
@@ -684,7 +687,7 @@ export function getStormByKey(stormKey: string): BiggestStorm | null {
   try { strikes = row.strikes ? JSON.parse(row.strikes) : null; } catch { /* corrupt */ }
   let countryPath: string[] | null = null;
   try { countryPath = row.countryPath ? JSON.parse(row.countryPath) : null; } catch { /* ignore */ }
-  return { ...row, strikes, countryPath };
+  return withStormLocationNames({ ...row, strikes, countryPath });
 }
 
 /** Archive only replay membership accepted by the tracker, never raw proximity. */
@@ -824,17 +827,31 @@ export interface RankedNeighbor {
   lon: number;
   city: string | null;
   originCity: string | null;
+  subdivision?: string | null;
+  originSubdivision?: string | null;
   date: string;
   totalCount: number;
+}
+
+type RankedNeighborLocation = RankedNeighbor & { originLat: number | null; originLon: number | null };
+
+function namedRankedNeighbor(row: RankedNeighborLocation): RankedNeighbor {
+  const { stormKey, rank, code, lat, lon, city, originCity, date, totalCount, subdivision, originSubdivision } = withStormLocationNames(row);
+  return {
+    stormKey, rank, code, lat, lon, city, originCity, date, totalCount,
+    ...(subdivision ? { subdivision } : {}),
+    ...(originSubdivision ? { originSubdivision } : {}),
+  };
 }
 
 /** The `radius` storms ranked immediately above and below `stormKey` (plus itself) — for a race-leaderboard view centered on this storm's global position */
 export function getNearbyRankedStorms(stormKey: string, radius = 10): RankedNeighbor[] {
   stormKey = resolveStormKey(stormKey);
   const db = getDb();
-  return db.prepare(`
+  const rows = db.prepare(`
     WITH ranked AS (
       SELECT storm_key AS stormKey, code, lat, lon, city, origin_city AS originCity, date,
+             origin_lat AS originLat, origin_lon AS originLon,
              COALESCE(total_count, count) AS totalCount,
              ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC, storm_key ASC) AS rank
       FROM storms
@@ -843,7 +860,8 @@ export function getNearbyRankedStorms(stormKey: string, radius = 10): RankedNeig
     SELECT ranked.* FROM ranked, me
     WHERE ranked.rank BETWEEN me.rank - ? AND me.rank + ?
     ORDER BY ranked.rank ASC
-  `).all(stormKey, radius, radius) as RankedNeighbor[];
+  `).all(stormKey, radius, radius) as RankedNeighborLocation[];
+  return rows.map(namedRankedNeighbor);
 }
 
 export interface StormLeaderboardPage {
@@ -867,6 +885,7 @@ export function getStormLeaderboardPage(stormKey: string, beforeKey?: string): S
     const result = db.prepare(`
       WITH ranked AS (
         SELECT storm_key AS stormKey, code, lat, lon, city, origin_city AS originCity, date,
+               origin_lat AS originLat, origin_lon AS originLon,
                COALESCE(total_count, count) AS totalCount,
                ROW_NUMBER() OVER (ORDER BY COALESCE(total_count, count) DESC, storm_key ASC) AS rank
         FROM storms
@@ -876,14 +895,12 @@ export function getStormLeaderboardPage(stormKey: string, beforeKey?: string): S
       SELECT ranked.*, me.rank AS currentRank FROM ranked, me, anchor
       WHERE ranked.rank BETWEEN anchor.rank - 10 AND anchor.rank + ?
       ORDER BY ranked.rank ASC
-    `).all(key, anchorKey, beforeKey === undefined ? 10 : 0) as Array<RankedNeighbor & { currentRank: number }>;
+    `).all(key, anchorKey, beforeKey === undefined ? 10 : 0) as Array<RankedNeighborLocation & { currentRank: number }>;
     // Including the anchor distinguishes the top of the list from a deleted
     // cursor. Both keys and every rank are read in this same SQLite snapshot.
     if (result.length === 0) return null;
     const currentRank = result[0].currentRank;
-    const rows = result.map(({ stormKey, rank, code, lat, lon, city, originCity, date, totalCount }) => ({
-      stormKey, rank, code, lat, lon, city, originCity, date, totalCount,
-    }));
+    const rows = result.map(namedRankedNeighbor);
     // A known row's ordinal can change when higher storms merge or disappear.
     // Refresh the cursor too, including when there are no rows left above it.
     const anchor = beforeKey === undefined ? undefined : rows.pop();

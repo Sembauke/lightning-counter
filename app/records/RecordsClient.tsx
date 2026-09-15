@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmt } from '../lib/format';
+import { getStormName } from '../lib/stormName';
 import CountryFlag from '../components/CountryFlag';
 import StormMetrics from '../components/StormMetrics';
 import type { StormLogRow } from '../lib/db';
@@ -46,17 +47,6 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
     [baseRows, view]
   );
 
-  function stormName(s: StormLogRow): string {
-    const isXO = s.code === 'XO';
-    const effCity = s.city ?? (isXO ? 'Open Ocean' : null);
-    const effOrigin = s.originCity ?? (isXO ? 'Open Ocean' : null);
-    return effOrigin && effCity && effOrigin !== effCity
-      ? ts('stormFromTo', { from: effOrigin, to: effCity })
-      : effCity
-        ? ts('stormNear', { city: effCity })
-        : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`;
-  }
-
   return (
     <div className="archive-page records-page">
       <div className="archive-toolbar">
@@ -80,7 +70,7 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
           <div className="archive-empty">{t('noData')}</div>
         ) : rankedRows.map(({ s, rank }) => {
           const t2 = rank ? tier(rank) : '';
-          const name = stormName(s);
+          const name = getStormName(s, ts);
           const count = s.totalCount ?? s.count;
 
           const flags = s.countryPath && s.countryPath.length > 1
@@ -90,7 +80,7 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
                   <CountryFlag code={cc} name={countryName(cc)} />
                 </span>
               ))
-            : <CountryFlag code={s.code} name={countryName(s.code)} />;
+            : <CountryFlag code={s.code} name={countryName(s.code, s.city)} />;
 
           return (
             <Link
@@ -106,7 +96,7 @@ export default function RecordsClient({ dailyBest, top100 }: Props) {
                 <span className="hof-flags">
                   {flags}
                   {(!s.countryPath || s.countryPath.length <= 1) && (
-                    <span className="hof-country-name">{countryName(s.code)}</span>
+                    <span className="hof-country-name">{countryName(s.code, s.city)}</span>
                   )}
                 </span>
               </div>

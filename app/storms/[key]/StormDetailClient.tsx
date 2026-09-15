@@ -7,6 +7,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { useViewerTimeZone } from '../../hooks/useViewerTimeZone';
 import { fmtRate, fmtClock, fmtDuration } from '../../lib/format';
+import { getStormName } from '../../lib/stormName';
 import CountryFlag from '../../components/CountryFlag';
 import StormLeaderboard from '../../components/StormLeaderboard';
 import type { BiggestStorm, GlobalStormRecord, StormStrike, RankedNeighbor } from '../../lib/db';
@@ -17,20 +18,6 @@ import { buildStormTimeline, type StormMinuteBucket } from '../../lib/stormTimel
 import { getStormLiveRate, recentStormStrikes, type StormLiveRateSnapshot } from '../../lib/stormLiveRate';
 
 const StormReplayMap = dynamic(() => import('../../components/StormReplayMap'), { ssr: false });
-
-function stormLabel(
-  ts: (key: string, values?: Record<string, string>) => string,
-  city: string | null, originCity: string | null, code: string, lat: number, lon: number,
-): string {
-  const isOcean = code === 'XO';
-  const effCity = city ?? (isOcean ? 'Open Ocean' : null);
-  const effOrigin = originCity ?? (isOcean ? 'Open Ocean' : null);
-  return effOrigin && effCity && effOrigin !== effCity
-    ? ts('stormFromTo', { from: effOrigin, to: effCity })
-    : effCity
-      ? ts('stormNear', { city: effCity })
-      : `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
-}
 
 function TimelineChart({ timeline }: { timeline: StormMinuteBucket[] }) {
   const maxCount = Math.max(...timeline.map(t => t.count), 1);
@@ -75,6 +62,8 @@ interface PollResponse {
   traveledKm: number | null;
   city: string | null;
   originCity: string | null;
+  subdivision?: string | null;
+  originSubdivision?: string | null;
   nearbyRanked: RankedNeighbor[];
 }
 
@@ -87,6 +76,8 @@ interface LiveStats {
   traveledKm: number | null;
   city: string | null;
   originCity: string | null;
+  subdivision?: string | null;
+  originSubdivision?: string | null;
 }
 
 export default function StormDetailClient({
@@ -116,6 +107,8 @@ export default function StormDetailClient({
     traveledKm: storm.traveledKm,
     city: storm.city,
     originCity: storm.originCity,
+    subdivision: storm.subdivision,
+    originSubdivision: storm.originSubdivision,
   });
   // endTime is always a timestamp (last tracker flush); treat storm as live
   // if it was active within the last 10 minutes — same logic as the storms list.
@@ -236,6 +229,8 @@ export default function StormDetailClient({
           traveledKm: data.traveledKm,
           city: data.city,
           originCity: data.originCity,
+          subdivision: data.subdivision,
+          originSubdivision: data.originSubdivision,
         });
         if (data.nearbyRanked) {
           setDisplayNearbyRanked(prev => {
@@ -276,7 +271,7 @@ export default function StormDetailClient({
   stormTotalRef.current = stormTotal;
 
 
-  const name = stormLabel(ts, liveStats.city, liveStats.originCity, storm.code, storm.lat, storm.lon);
+  const name = getStormName({ ...storm, ...liveStats }, ts);
 
   const duration = liveStats.startTime != null && liveStats.endTime != null
     ? liveStats.endTime - liveStats.startTime : null;
@@ -311,8 +306,8 @@ export default function StormDetailClient({
                 ))
               : (
                 <>
-                  <CountryFlag code={storm.code} name={countryName(storm.code)} />
-                  {countryName(storm.code)}
+                  <CountryFlag code={storm.code} name={countryName(storm.code, liveStats.city)} />
+                  {countryName(storm.code, liveStats.city)}
                 </>
               )}
           </span>
@@ -404,7 +399,7 @@ export default function StormDetailClient({
               flashKeys={leaderboardFlashKeys}
               countryName={countryName}
               label={row => row.stormKey === storm.stormKey ? name
-                : stormLabel(ts, row.city, row.originCity, row.code, row.lat, row.lon)}
+                : getStormName(row, ts)}
             />
           </div>
         )}

@@ -25,6 +25,8 @@ export async function GET(
     traveledKm: storm.traveledKm,
     city: storm.city,
     originCity: storm.originCity,
+    subdivision: storm.subdivision,
+    originSubdivision: storm.originSubdivision,
     nearbyRanked,
   });
 }

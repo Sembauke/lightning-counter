@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../../hooks/useCountryName';
 import { fmt, fmtRate, fmtClock } from '../../lib/format';
+import { getStormName } from '../../lib/stormName';
 import CountryFlag from '../../components/CountryFlag';
 import { watchCountryDetail, type CountryDetail } from '../../lib/countryDetailRefresh';
 
@@ -58,15 +59,7 @@ export default function CountryClient() {
           <div className="biggest-storm-card">
             <span className="bsc-title">{t('biggestStorm')}</span>
             <span className="bsc-name">
-              ⚡ {(() => {
-                const ec = biggestStorm.city ?? (code === 'XO' ? 'Open Ocean' : null);
-                const eo = biggestStorm.originCity ?? (code === 'XO' ? 'Open Ocean' : null);
-                return eo && ec && eo !== ec
-                  ? ts('stormFromTo', { from: eo, to: ec })
-                  : ec
-                    ? ts('stormNear', { city: ec })
-                    : `${biggestStorm.lat.toFixed(2)}, ${biggestStorm.lon.toFixed(2)}`;
-              })()}
+              ⚡ {getStormName({ ...biggestStorm, code }, ts)}
             </span>
             <span className="bsc-meta">
               {ts('strikesCount', { count: biggestStorm.totalCount ?? biggestStorm.count })}

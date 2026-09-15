@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getCountryCode } from '../../lib/geoCountry';
+import { getMarineName } from '../../lib/geoMarine';
 import { loadCounters, saveCounters, loadDailyStrikes, saveDailyAndPeaks, upsertCountryPeakRates, pruneGridStrikes, upsertBiggestStorms, upsertStormRecords, upsertStorms, pruneStormStrikes, pruneStormEvents, saveTrackedStorms, loadTrackedStorms, hasTimestampBurst, hasMissingCountryPaths, enrichStormCountryPaths, reconcileCountryPaths, backfillGappedStormTails, deleteStorm, getTrackedStormKeys, getStormByKey, recordStormAlias, recordStormEvent, countSplitEvents, type BiggestStorm, type StormStrike } from '../../lib/db';
 import { dispatchStrike as dispatchToStormSubscribers, publishStormOwnership, getStormLiveRates } from '../../lib/strikeStream';
 import { peakStormMinuteRate } from '../../lib/stormLiveRate';
@@ -519,7 +520,9 @@ function flushIngestion(nowMs = Date.now(), publish = true) {
       for (const m of members) if (m.cc) ccCounts[m.cc] = (ccCounts[m.cc] ?? 0) + 1;
       const cc = Object.entries(ccCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? parent?.cc ?? 'XO';
       const { lat, lon } = meanPos(members);
-      const city = cc === 'XO' ? 'Open Ocean' : (nearestCity(citiesFor(cc), lat, lon)?.name ?? null);
+      const city = Object.keys(ccCounts).length === 0
+        ? getMarineName(lat, lon) ?? 'Open Ocean'
+        : nearestCity(citiesFor(cc), lat, lon)?.name ?? null;
       return { ccCounts, cc, lat, lon, city };
     }
     const plan = reconcileStormLifecycle(trackedStorms, observations, nowMs, (members, parent) => {

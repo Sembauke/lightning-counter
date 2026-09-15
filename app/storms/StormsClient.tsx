@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useCountryName } from '../hooks/useCountryName';
 import { fmt } from '../lib/format';
+import { getStormName } from '../lib/stormName';
 import CountryFlag from '../components/CountryFlag';
 import StormMetrics from '../components/StormMetrics';
 import type { StormLogRow, StormStrike } from '../lib/db';
@@ -181,14 +182,7 @@ export default function StormsClient() {
               const isLive = date === todayUTC() && s.endTime != null && Date.now() - s.endTime < 10 * 60 * 1000;
               const count = s.totalCount ?? s.count;
 
-              const isXO = s.code === 'XO';
-              const effCity = s.city ?? (isXO ? 'Open Ocean' : null);
-              const effOrigin = s.originCity ?? (isXO ? 'Open Ocean' : null);
-              const name = effOrigin && effCity && effOrigin !== effCity
-                ? ts('stormFromTo', { from: effOrigin, to: effCity })
-                : effCity
-                  ? ts('stormNear', { city: effCity })
-                  : `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`;
+              const name = getStormName(s, ts);
 
               const flags = s.countryPath && s.countryPath.length > 1
                 ? s.countryPath.map((cc, i) => (
@@ -205,7 +199,7 @@ export default function StormsClient() {
                         <span className="hof-arrow">›</span>
                       </>
                     )}
-                    <CountryFlag code={s.code} name={countryName(s.code)} />
+                    <CountryFlag code={s.code} name={countryName(s.code, s.city)} />
                   </>
                 );
 
