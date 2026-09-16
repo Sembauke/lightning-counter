@@ -1427,13 +1427,18 @@ a.storm-leaderboard-row:hover { background: rgba(255,220,0,0.05); }
   align-items: center;
   gap: 0.4rem;
   font-size: 0.85rem;
+  line-height: 1.4;
+  min-height: 2.8em;
   color: rgba(255,255,255,0.85);
   min-width: 0;
 }
 .storm-leaderboard-name-text {
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
   overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
 }
 .storm-leaderboard-row--current .storm-leaderboard-name { color: #fff; font-weight: 700; }
